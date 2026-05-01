@@ -1,0 +1,4 @@
+.env
+*.session
+__pycache__/
+telegram_antispam_log.csv
