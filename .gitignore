@@ -1,4 +1,31 @@
-# .env
+# Credenciales
+.env
+
+# Sesión de Telegram
 *.session
+*.session-journal
+
+# Python
 __pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
 telegram_antispam_log.csv
+*.csv
+
+# Respuestas generadas
+respuestas/
+
+# Archivo de pausa
+.pause
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Otros
+logs/
