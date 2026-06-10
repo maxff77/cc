@@ -22,7 +22,8 @@
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
   .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
-  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; align-items: start; }
+  main { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; padding: 14px; align-items: start; }
+  main > section { min-width: 0; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -58,19 +59,22 @@
     border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   ul.lista li.salida { animation: salir .35s ease forwards; }
-  @keyframes salir { to { opacity: 0; transform: translateX(14px); height: 0; padding: 0; margin: 0; } }
+  @keyframes salir { to { opacity: 0; transform: translateX(-14px); height: 0; padding: 0; margin: 0; } }
   .resp { border-left: 3px solid var(--border); padding: 6px 10px; margin: 8px 0; background: var(--panel2); border-radius: 0 7px 7px 0; }
   .resp.ok { border-color: var(--ok); } .resp.rechazada { border-color: var(--bad); }
   .resp .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
   .resp pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
   .cc { color: var(--ok); }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .split { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
   .split-col { min-width: 0; display: flex; flex-direction: column; }
   .split-head { display: flex; align-items: center; gap: 6px; font-size: 11px;
     text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
   .split-head .ttl { margin-right: auto; }
   button.mini { padding: 2px 8px; font-size: 10px; }
+  .sesion-bar { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+  .sesion-bar #sesionActiva { margin-right: auto; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
   .lista-resp { max-height: 300px; overflow: auto; min-width: 0; }
   .cc-line { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ok);
     padding: 4px 6px; border-bottom: 1px solid var(--border);
@@ -130,6 +134,13 @@
       <label>Destinos (coma-separados)</label>
       <input id="destinos" placeholder="bot1, bot2" />
 
+      <label>Sesión de guardado</label>
+      <div class="sesion-bar">
+        <span id="sesionActiva" class="muted">Nueva automática al enviar</span>
+        <button id="btnNuevaSesion" class="ghost mini" title="Empezar una sesión de guardado nueva">Nueva</button>
+        <button id="btnRenombrarActiva" class="ghost mini" title="Renombrar la sesión activa" disabled>Renombrar</button>
+      </div>
+
       <label>Texto a enviar (una línea por mensaje)</label>
       <textarea id="texto" placeholder="Pegá acá el texto…"></textarea>
 
@@ -185,6 +196,11 @@
           <select id="histSesion"></select>
         </div>
       </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnContinuarSesion" class="ghost mini" title="Guardar las próximas respuestas en esta sesión">Continuar esta sesión</button>
+        <button id="btnRenombrarHist" class="ghost mini" title="Ponerle nombre a la sesión seleccionada">Renombrar</button>
+        <button id="btnSeguirActiva" class="ghost mini hidden" title="Volver a la sesión que se está enviando">↻ Ver sesión actual</button>
+      </div>
       <div class="split" style="margin-top:10px">
         <div class="split-col">
           <div class="split-head"><span class="ttl">Completa</span>
@@ -208,6 +224,9 @@
 <script>
 const $ = s => document.querySelector(s);
 let ws, wsTimer;
+let sesionActiva = null;
+let siguiendoActiva = true;   // el historial sigue a la sesión activa por defecto
+let histRefreshTimer;
 
 // ---------- WebSocket ----------
 function conectarWS() {
@@ -231,12 +250,14 @@ function manejarEvento(m) {
       if (m.prefijo_activo) $("#prefijo").value = m.prefijo_activo;
       if (m.destinos && m.destinos.length) $("#destinos").value = m.destinos.join(", ");
       if (m.intervalo != null) $("#intervalo").value = m.intervalo;
+      setSesionActiva(m.sesion_activa);
       break;
     case "cola": renderCola(m.cola); break;
+    case "sesion_activa": setSesionActiva(m.id ? m : null); break;
     case "linea_enviada": quitarLinea(m.linea); break;
     case "progreso": setProgreso(m.actual, m.total, m.eta); break;
     case "contadores": setContadores(m); break;
-    case "respuesta": agregarRespuesta(m); break;
+    case "respuesta": agregarRespuesta(m); if (mostrandoActiva()) programarRefrescoHist(); break;
     case "estado_envio": setEstadoEnvio(m.estado); if (m.estado === "completado" || m.estado === "detenido") refrescarHistorial(); break;
     case "flood": toastResp(`⏳ Flood wait ${m.segundos}s — reintentando…`, "rechazada"); break;
     case "error": toastResp("⚠ " + m.mensaje, "rechazada"); break;
@@ -284,6 +305,25 @@ function setEstadoEnvio(estado) {
   $("#btnDetener").disabled = !(enviando || pausado);
 }
 
+// ---------- Sesión activa ----------
+function setSesionActiva(s) {
+  sesionActiva = (s && s.id) ? s : null;
+  const el = $("#sesionActiva");
+  if (sesionActiva) {
+    el.textContent = sesionActiva.nombre;
+    el.title = `${sesionActiva.nombre} · ${sesionActiva.id} · ${sesionActiva.prefijo}`;
+    el.classList.remove("muted");
+    $("#btnRenombrarActiva").disabled = false;
+  } else {
+    el.textContent = "Nueva automática al enviar";
+    el.title = "";
+    el.classList.add("muted");
+    $("#btnRenombrarActiva").disabled = true;
+  }
+  if (sesionActiva && siguiendoActiva) seguirActiva();
+  actualizarBotonSeguir();
+}
+
 // ---------- Respuestas en vivo ----------
 function agregarRespuesta(m) {
   const div = document.createElement("div");
@@ -323,7 +363,11 @@ async function post(url, body) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {})
   });
-  if (!r.ok) { const t = await r.text(); throw new Error(t); }
+  if (!r.ok) {
+    let msg = await r.text();
+    try { msg = JSON.parse(msg).detail || msg; } catch { /* texto plano */ }
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -350,37 +394,81 @@ $("#btnPegar").onclick = async () => {
 async function cargarPrefijos() {
   const lista = await (await fetch("/api/prefijos")).json();
   const sel = $("#histPrefijo"), dl = $("#prefijosList");
+  const prev = sel.value;
   sel.innerHTML = ""; dl.innerHTML = "";
   lista.forEach(p => {
     sel.appendChild(new Option(p, p));
     dl.appendChild(new Option(p));
   });
-  if (lista.length) cargarSesiones();
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;  // conserva selección
+  return lista;
 }
-async function cargarSesiones() {
+async function cargarSesiones(target) {
   const pref = $("#histPrefijo").value;
   if (!pref) return;
   const lista = await (await fetch(`/api/sesiones/${encodeURIComponent(pref)}`)).json();
   const sel = $("#histSesion");
+  const prev = target || sel.value;
   sel.innerHTML = "";
-  lista.forEach(s => sel.appendChild(new Option(s, s)));
-  cargarArchivo();
+  // Tolera el formato nuevo ({id,nombre}) y el viejo (string), por si el server no se reinició.
+  lista.forEach(s => {
+    const id = (s && typeof s === "object") ? s.id : s;
+    const nombre = (s && typeof s === "object") ? s.nombre : s;
+    sel.appendChild(new Option(nombre, id));
+  });
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;  // conserva/forza selección
+  await cargarArchivo();
 }
 async function cargarArchivo() {
   const pref = $("#histPrefijo").value, ses = $("#histSesion").value;
-  if (!pref || !ses) { $("#histCompleta").textContent = "—"; $("#histFiltrada").textContent = "—"; return; }
+  if (!pref || !ses) { $("#histCompleta").textContent = "—"; $("#histFiltrada").textContent = "—"; actualizarBotonSeguir(); return; }
   const url = t => `/api/respuesta/${encodeURIComponent(pref)}/${encodeURIComponent(ses)}?tipo=${t}`;
+  const cerca = el => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  const elC = $("#histCompleta"), elF = $("#histFiltrada");
+  const abajoC = cerca(elC), abajoF = cerca(elF);
   const [c, f] = await Promise.all([
     fetch(url("completa")).then(r => r.text()),
     fetch(url("filtrada")).then(r => r.text()),
   ]);
-  $("#histCompleta").textContent = c || "(vacío)";
-  $("#histFiltrada").textContent = f || "(vacío)";
+  elC.textContent = c || "(vacío)";
+  elF.textContent = f || "(vacío)";
+  if (abajoC) elC.scrollTop = elC.scrollHeight;   // auto-scroll solo si ya estabas al fondo
+  if (abajoF) elF.scrollTop = elF.scrollHeight;
+  actualizarBotonSeguir();
 }
-function refrescarHistorial() { cargarPrefijos(); }
 
-$("#histPrefijo").onchange = cargarSesiones;
-$("#histSesion").onchange = cargarArchivo;
+// ---------- Seguir la sesión activa en vivo ----------
+function mostrandoActiva() {
+  return !!(sesionActiva && $("#histPrefijo").value === sesionActiva.slug && $("#histSesion").value === sesionActiva.id);
+}
+function programarRefrescoHist() {
+  clearTimeout(histRefreshTimer);
+  histRefreshTimer = setTimeout(() => { if (mostrandoActiva()) cargarArchivo(); }, 400);
+}
+async function seguirActiva() {
+  if (!sesionActiva) return;
+  await cargarPrefijos();
+  const sp = $("#histPrefijo");
+  if ([...sp.options].some(o => o.value === sesionActiva.slug)) sp.value = sesionActiva.slug;
+  await cargarSesiones(sesionActiva.id);
+}
+function evaluarSeguimiento() {
+  siguiendoActiva = mostrandoActiva();
+  actualizarBotonSeguir();
+}
+function actualizarBotonSeguir() {
+  const b = $("#btnSeguirActiva");
+  if (b) b.classList.toggle("hidden", !sesionActiva || mostrandoActiva());
+}
+async function refrescarHistorial() {
+  if (siguiendoActiva && sesionActiva) { await seguirActiva(); return; }
+  await cargarPrefijos();
+  await cargarSesiones();
+}
+
+$("#histPrefijo").onchange = async () => { await cargarSesiones(); evaluarSeguimiento(); };
+$("#histSesion").onchange = async () => { await cargarArchivo(); evaluarSeguimiento(); };
+$("#btnSeguirActiva").onclick = () => { if (sesionActiva) { siguiendoActiva = true; seguirActiva(); } };
 const histPane = t => t === "completa" ? $("#histCompleta") : $("#histFiltrada");
 document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
   try {
@@ -396,6 +484,56 @@ document.querySelectorAll("[data-export]").forEach(b => b.onclick = () => {
   a.download = `${pref}_${ses}_${tipo}.txt`;
   a.click();
 });
+
+// ---------- Manejo de sesiones ----------
+$("#btnNuevaSesion").onclick = async () => {
+  const prefijo = $("#prefijo").value.trim();
+  if (!prefijo) { toastResp("⚠ Poné un prefijo antes de crear la sesión", "rechazada"); return; }
+  const nombre = prompt("Nombre para la nueva sesión (opcional):", "");
+  if (nombre === null) return;  // canceló
+  try {
+    const info = await post("/api/sesion/nueva", { prefijo, nombre: nombre.trim() || null });
+    setSesionActiva(info);
+    refrescarHistorial();
+    toastResp(`✅ Sesión nueva: «${info.nombre}»`, "ok");
+  } catch (e) { toastResp("⚠ " + e.message, "rechazada"); }
+};
+
+$("#btnRenombrarActiva").onclick = () => {
+  if (!sesionActiva) return;
+  renombrarSesion(sesionActiva.prefijo, sesionActiva.id, sesionActiva.nombre);
+};
+
+$("#btnContinuarSesion").onclick = async () => {
+  const prefijo = $("#histPrefijo").value, sesion = $("#histSesion").value;
+  if (!prefijo || !sesion) { toastResp("⚠ Elegí una sesión en el historial", "rechazada"); return; }
+  try {
+    const info = await post("/api/sesion/continuar", { prefijo, sesion });
+    setSesionActiva(info);
+    if (info.prefijo) $("#prefijo").value = info.prefijo;
+    toastResp(`▶ Continuando «${info.nombre}». Verificá el prefijo.`, "ok");
+  } catch (e) { toastResp("⚠ " + e.message, "rechazada"); }
+};
+
+$("#btnRenombrarHist").onclick = () => {
+  const prefijo = $("#histPrefijo").value, sesion = $("#histSesion").value;
+  if (!prefijo || !sesion) { toastResp("⚠ Elegí una sesión en el historial", "rechazada"); return; }
+  const actual = $("#histSesion").selectedOptions[0]?.textContent || "";
+  renombrarSesion(prefijo, sesion, actual);
+};
+
+async function renombrarSesion(prefijo, sesion, actual) {
+  const nombre = prompt("Nuevo nombre para la sesión:", actual || "");
+  if (nombre === null) return;
+  if (!nombre.trim()) { toastResp("⚠ El nombre no puede estar vacío", "rechazada"); return; }
+  try {
+    const r = await post("/api/sesion/renombrar", { prefijo, sesion, nombre: nombre.trim() });
+    // Actualiza el dropdown del historial sin recargar (conserva la selección).
+    [...$("#histSesion").options].forEach(o => { if (o.value === sesion) o.textContent = r.nombre; });
+    if (sesionActiva && sesionActiva.id === sesion) setSesionActiva({ ...sesionActiva, nombre: r.nombre });
+    toastResp(`✏ Renombrada a «${r.nombre}»`, "ok");
+  } catch (e) { toastResp("⚠ " + e.message, "rechazada"); }
+}
 
 // ---------- Login ----------
 $("#btnSendCode").onclick = async () => {
@@ -414,12 +552,15 @@ $("#btnSignIn").onclick = async () => {
 
 // ---------- Init ----------
 async function init() {
-  const cfg = await (await fetch("/api/config")).json();
-  setAuth(cfg.autorizado);
-  if (!$("#destinos").value) $("#destinos").value = cfg.destinos || "";
-  if (!$("#intervalo").value) $("#intervalo").value = cfg.intervalo ?? 8;
-  if (!$("#loginPhone").value) $("#loginPhone").value = cfg.phone || "";
-  cargarPrefijos();
+  try {
+    const cfg = await (await fetch("/api/config")).json();
+    setAuth(cfg.autorizado);
+    if (!$("#destinos").value) $("#destinos").value = cfg.destinos || "";
+    if (!$("#intervalo").value) $("#intervalo").value = cfg.intervalo ?? 8;
+    if (!$("#loginPhone").value) $("#loginPhone").value = cfg.phone || "";
+  } catch (e) { console.error("config:", e); }
+  // El historial se carga aparte: un fallo de /api/config no debe dejar vacíos los selects.
+  refrescarHistorial().catch(e => console.error("historial:", e));
 }
 init();
 conectarWS();

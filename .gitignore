@@ -17,6 +17,12 @@ telegram_antispam_log.csv
 
 # Respuestas generadas
 respuestas/
+telegram_respuestas.txt
+respuestas_bn_*.txt
+
+# Datos de fuerza bruta
+brute_progreso.json
+brute_resultados.txt
 
 # Archivo de pausa
 .pause

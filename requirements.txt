@@ -1,3 +1,5 @@
 pyperclip
 python-dotenv
 telethon
+fastapi
+uvicorn[standard]

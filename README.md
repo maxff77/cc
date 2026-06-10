@@ -35,7 +35,7 @@ source .venv/bin/activate    # macOS / Linux
 pip install -r requirements.txt
 ```
 
-Esto instala: `telethon`, `pyperclip`, `python-dotenv`.
+Esto instala: `telethon`, `pyperclip`, `python-dotenv`, `fastapi`, `uvicorn`.
 
 ---
 
@@ -95,13 +95,42 @@ TELEGRAM_INTERVALO=8.0
 
 ## Uso
 
-### Ejecutar
+Hay dos formas de usarlo: la **interfaz web** (recomendada) o el **CLI por portapapeles** (legacy).
+
+---
+
+### Interfaz web (recomendada)
 
 ```bash
-python auto_sender.py
+python app.py
 ```
 
-La primera vez, Telethon te va a pedir:
+Abre `http://127.0.0.1:8000` en el navegador. En vez de detectar el portapapeles,
+**pegás el texto** en un cuadro y lo enviás desde la UI:
+
+1. Escribí el **prefijo**, los **destinos** (coma-separados) y el **intervalo** — los
+   valores de `.env` vienen precargados pero los podés cambiar sin tocar archivos.
+2. Pegá el texto en el textarea (una línea = un mensaje) y apretá **Enviar**.
+3. La **cola** baja línea por línea a medida que se envían, con barra de progreso, %, ETA
+   y contadores (enviados, ✅ ok, ❌ rechazadas, ⏳ pendientes).
+4. Controlás el lote con **Pausar / Reanudar / Detener** en vivo.
+5. El panel **Respuestas en vivo** muestra cada respuesta del bot (✅/❌) con los datos `CC:`.
+6. El **Historial** te deja navegar respuestas guardadas por prefijo → sesión, ver
+   `completa.txt` / `filtrada.txt` y copiar o exportar la filtrada.
+
+La config (`.env`) y la sesión (`anon.session`) son las mismas que usa el CLI: si ya te
+autenticaste una vez, la web conecta directo. Si no, muestra un formulario de login
+(teléfono → código → 2FA opcional).
+
+---
+
+### CLI por portapapeles (legacy)
+
+```bash
+python auto_sender.py .zo
+```
+
+El prefijo es un argumento **obligatorio**. La primera vez, Telethon te va a pedir:
 1. Tu **número de teléfono** (si no está en `.env`)
 2. Un **código de verificación** que te llega por Telegram
 3. Si tenés **contraseña en dos pasos**, también te la va a pedir
@@ -163,7 +192,8 @@ Si configurás `TELEGRAM_RESPUESTAS_FILE`, las respuestas del bot que contengan 
 ```
 respuestas/
   zo/
-    9999999999_20260607-153000/
+    _ultima -> 2026-06-07_15-30-00   ← atajo a la sesión más reciente
+    2026-06-07_15-30-00/
       completa.txt    ← respuestas completas con timestamp
       filtrada.txt    ← solo los datos después de "CC:", limpios
 ```
@@ -210,12 +240,14 @@ Los mensajes se distribuyen en round-robin entre los destinos.
 
 ```
 .
-├── auto_sender.py          # Script principal
+├── app.py                  # Interfaz web (FastAPI + WebSocket) — recomendada
+├── static/index.html       # Frontend de la UI web
+├── core.py                 # Lógica compartida (prefijo, sesiones, guardado)
+├── auto_sender.py          # CLI legacy por portapapeles
 ├── requirements.txt        # Dependencias de Python
 ├── .env                    # Tu configuración (NO se sube a git)
 ├── .gitignore
 ├── anon.session            # Sesión de Telegram (NO se sube a git)
-├── telegram_antispam_log.csv
 ├── respuestas/             # Respuestas guardadas del bot
 └── README.md
 ```
