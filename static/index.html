@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Telegram Sender</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c232d; --border: #2a313c;
+    --fg: #e6edf3; --muted: #8b949e; --accent: #2f81f7; --ok: #3fb950;
+    --bad: #f85149; --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px; min-width: 0;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, textarea, select {
+    width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 7px; padding: 8px 10px; font: inherit;
+  }
+  textarea { resize: vertical; min-height: 130px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 7px; padding: 9px 14px;
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.ghost { background: var(--panel2); border: 1px solid var(--border); color: var(--fg); }
+  button.warn { background: var(--warn); } button.bad { background: var(--bad); }
+  .btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .counters { display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .counter { font-size: 12px; color: var(--muted); }
+  .counter b { color: var(--fg); font-size: 16px; display: block; }
+  .bar { height: 8px; background: var(--panel2); border-radius: 5px; overflow: hidden; margin: 6px 0; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .eta { font-size: 12px; color: var(--muted); }
+  ul.lista { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
+  ul.lista li {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; padding: 6px 8px;
+    border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  ul.lista li.salida { animation: salir .35s ease forwards; }
+  @keyframes salir { to { opacity: 0; transform: translateX(14px); height: 0; padding: 0; margin: 0; } }
+  .resp { border-left: 3px solid var(--border); padding: 6px 10px; margin: 8px 0; background: var(--panel2); border-radius: 0 7px 7px 0; }
+  .resp.ok { border-color: var(--ok); } .resp.rechazada { border-color: var(--bad); }
+  .resp .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .resp pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .cc { color: var(--ok); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .split-col { min-width: 0; display: flex; flex-direction: column; }
+  .split-head { display: flex; align-items: center; gap: 6px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+  .split-head .ttl { margin-right: auto; }
+  button.mini { padding: 2px 8px; font-size: 10px; }
+  .lista-resp { max-height: 300px; overflow: auto; min-width: 0; }
+  .cc-line { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ok);
+    padding: 4px 6px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  pre.archivo {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 7px; padding: 10px;
+    max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font-size: 12px; font-family: ui-monospace, Menlo, monospace; margin: 0;
+  }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+  .pill.enviando { color: var(--accent); border-color: var(--accent); }
+  .pill.pausado { color: var(--warn); border-color: var(--warn); }
+  .login { max-width: 360px; margin: 60px auto; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Telegram Sender</h1>
+  <span><span id="dot" class="dot"></span> <span id="estadoConn" class="muted">conectando…</span></span>
+  <span id="pillEnvio" class="pill">idle</span>
+</header>
+
+<!-- Login (oculto si anon.session ya está autorizado) -->
+<div id="loginCard" class="panel login hidden">
+  <h2>Iniciar sesión en Telegram</h2>
+  <label>Teléfono (con código de país)</label>
+  <input id="loginPhone" placeholder="+521234567890" />
+  <div class="btns"><button id="btnSendCode">Enviar código</button></div>
+  <div id="loginStep2" class="hidden">
+    <label>Código recibido</label>
+    <input id="loginCode" placeholder="12345" />
+    <label>Contraseña 2FA (si tenés)</label>
+    <input id="loginPass" type="password" placeholder="opcional" />
+    <div class="btns"><button id="btnSignIn">Entrar</button></div>
+  </div>
+  <p id="loginMsg" class="muted"></p>
+</div>
+
+<main id="appMain">
+  <!-- Columna izquierda: envío -->
+  <section>
+    <div class="panel">
+      <h2>Configuración</h2>
+      <div class="row">
+        <div>
+          <label>Prefijo</label>
+          <input id="prefijo" list="prefijosList" placeholder=".zo" />
+          <datalist id="prefijosList"></datalist>
+        </div>
+        <div>
+          <label>Intervalo (s)</label>
+          <input id="intervalo" type="number" step="0.5" min="0" />
+        </div>
+      </div>
+      <label>Destinos (coma-separados)</label>
+      <input id="destinos" placeholder="bot1, bot2" />
+
+      <label>Texto a enviar (una línea por mensaje)</label>
+      <textarea id="texto" placeholder="Pegá acá el texto…"></textarea>
+
+      <div class="btns">
+        <button id="btnEnviar">Enviar</button>
+        <button id="btnPausar" class="warn ghost" disabled>Pausar</button>
+        <button id="btnReanudar" class="ghost" disabled>Reanudar</button>
+        <button id="btnDetener" class="bad" disabled>Detener</button>
+        <button id="btnPegar" class="ghost" title="Pegar desde el portapapeles">Pegar</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>Cola de envío</h2>
+      <div class="counters">
+        <div class="counter">Enviados <b id="cEnviados">0</b></div>
+        <div class="counter">✅ OK <b id="cOk">0</b></div>
+        <div class="counter">❌ Rechazadas <b id="cRech">0</b></div>
+        <div class="counter">⏳ Pendientes <b id="cPend">0</b></div>
+        <div class="counter">En cola <b id="cCola">0</b></div>
+      </div>
+      <div class="bar"><div id="barFill"></div></div>
+      <div class="eta" id="eta">—</div>
+      <ul class="lista" id="colaLista"></ul>
+    </div>
+  </section>
+
+  <!-- Columna derecha: respuestas + historial -->
+  <section>
+    <div class="panel">
+      <h2>Respuestas en vivo</h2>
+      <div class="split">
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Completa</span></div>
+          <div id="respuestas" class="lista-resp"></div>
+        </div>
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Filtrada</span></div>
+          <div id="respuestasFiltrada" class="lista-resp"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>Historial</h2>
+      <div class="row">
+        <div>
+          <label>Prefijo</label>
+          <select id="histPrefijo"></select>
+        </div>
+        <div>
+          <label>Sesión</label>
+          <select id="histSesion"></select>
+        </div>
+      </div>
+      <div class="split" style="margin-top:10px">
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Completa</span>
+            <button class="ghost mini" data-copy="completa">Copiar</button>
+            <button class="ghost mini" data-export="completa">Exportar</button>
+          </div>
+          <pre class="archivo" id="histCompleta">—</pre>
+        </div>
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Filtrada</span>
+            <button class="ghost mini" data-copy="filtrada">Copiar</button>
+            <button class="ghost mini" data-export="filtrada">Exportar</button>
+          </div>
+          <pre class="archivo" id="histFiltrada">—</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let ws, wsTimer;
+
+// ---------- WebSocket ----------
+function conectarWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { setConn(true); };
+  ws.onclose = () => { setConn(false); clearTimeout(wsTimer); wsTimer = setTimeout(conectarWS, 1500); };
+  ws.onmessage = e => manejarEvento(JSON.parse(e.data));
+}
+function setConn(on) {
+  $("#dot").className = "dot " + (on ? "on" : "off");
+  $("#estadoConn").textContent = on ? "conectado" : "desconectado";
+}
+
+function manejarEvento(m) {
+  switch (m.tipo) {
+    case "snapshot":
+      setAuth(m.autorizado);
+      renderCola(m.cola);
+      setContadores(m.contadores);
+      setEstadoEnvio(m.estado_envio);
+      if (m.prefijo_activo) $("#prefijo").value = m.prefijo_activo;
+      if (m.destinos && m.destinos.length) $("#destinos").value = m.destinos.join(", ");
+      if (m.intervalo != null) $("#intervalo").value = m.intervalo;
+      break;
+    case "cola": renderCola(m.cola); break;
+    case "linea_enviada": quitarLinea(m.linea); break;
+    case "progreso": setProgreso(m.actual, m.total, m.eta); break;
+    case "contadores": setContadores(m); break;
+    case "respuesta": agregarRespuesta(m); break;
+    case "estado_envio": setEstadoEnvio(m.estado); if (m.estado === "completado" || m.estado === "detenido") refrescarHistorial(); break;
+    case "flood": toastResp(`⏳ Flood wait ${m.segundos}s — reintentando…`, "rechazada"); break;
+    case "error": toastResp("⚠ " + m.mensaje, "rechazada"); break;
+    case "estado_auth": setAuth(m.autorizado); break;
+  }
+}
+
+// ---------- Cola ----------
+function renderCola(cola) {
+  const ul = $("#colaLista");
+  ul.innerHTML = "";
+  (cola || []).forEach(l => {
+    const li = document.createElement("li");
+    li.textContent = l; li.dataset.linea = l;
+    ul.appendChild(li);
+  });
+  $("#cCola").textContent = (cola || []).length;
+}
+function quitarLinea(linea) {
+  const li = [...$("#colaLista").children].find(x => x.dataset.linea === linea);
+  if (li) { li.classList.add("salida"); setTimeout(() => li.remove(), 360); }
+}
+function setProgreso(actual, total, eta) {
+  const pct = total ? Math.round(actual / total * 100) : 0;
+  $("#barFill").style.width = pct + "%";
+  let etaStr = "—";
+  if (eta != null) etaStr = `ETA ${Math.floor(eta / 60)}m ${Math.round(eta % 60)}s`;
+  $("#eta").textContent = `${pct}% (${actual}/${total}) · ${etaStr}`;
+}
+function setContadores(c) {
+  if (!c) return;
+  $("#cEnviados").textContent = c.enviados ?? 0;
+  $("#cOk").textContent = c.ok ?? 0;
+  $("#cRech").textContent = c.rechazadas ?? 0;
+  $("#cPend").textContent = c.pendientes ?? 0;
+  if (c.en_cola != null) $("#cCola").textContent = c.en_cola;
+}
+function setEstadoEnvio(estado) {
+  const pill = $("#pillEnvio");
+  pill.textContent = estado;
+  pill.className = "pill " + (estado === "enviando" ? "enviando" : estado === "pausado" ? "pausado" : "");
+  const enviando = estado === "enviando", pausado = estado === "pausado";
+  $("#btnPausar").disabled = !enviando;
+  $("#btnReanudar").disabled = !pausado;
+  $("#btnDetener").disabled = !(enviando || pausado);
+}
+
+// ---------- Respuestas en vivo ----------
+function agregarRespuesta(m) {
+  const div = document.createElement("div");
+  div.className = "resp " + (m.estado.startsWith("ok") ? "ok" : "rechazada");
+  const icono = m.estado.startsWith("ok") ? "✅" : "❌";
+  div.innerHTML = `<div class="meta">${icono} ${m.estado}${m.fuente || ""}</div><pre>${escapeHtml(m.texto).slice(0, 600)}</pre>`;
+  const cont = $("#respuestas");
+  cont.prepend(div);
+  while (cont.children.length > 40) cont.lastChild.remove();
+  const filt = $("#respuestasFiltrada");
+  (m.nuevos_cc || []).forEach(cc => {
+    const line = document.createElement("div");
+    line.className = "cc-line";
+    line.textContent = cc;
+    line.title = cc;
+    filt.prepend(line);
+  });
+  while (filt.children.length > 200) filt.lastChild.remove();
+}
+function toastResp(txt, cls) {
+  const div = document.createElement("div");
+  div.className = "resp " + cls;
+  div.innerHTML = `<pre>${escapeHtml(txt)}</pre>`;
+  $("#respuestas").prepend(div);
+}
+function escapeHtml(s) { return (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+// ---------- Auth ----------
+function setAuth(ok) {
+  $("#loginCard").classList.toggle("hidden", ok);
+  $("#appMain").classList.toggle("hidden", !ok);
+}
+
+// ---------- Acciones ----------
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+  if (!r.ok) { const t = await r.text(); throw new Error(t); }
+  return r.json();
+}
+
+$("#btnEnviar").onclick = async () => {
+  const texto = $("#texto").value.trim();
+  if (!texto) return;
+  try {
+    await post("/api/enviar", {
+      texto, prefijo: $("#prefijo").value.trim(),
+      destinos: $("#destinos").value, intervalo: parseFloat($("#intervalo").value) || 0
+    });
+    $("#texto").value = "";
+  } catch (e) { toastResp("⚠ " + e.message, "rechazada"); }
+};
+$("#btnPausar").onclick = () => post("/api/pausar");
+$("#btnReanudar").onclick = () => post("/api/reanudar");
+$("#btnDetener").onclick = () => post("/api/detener");
+$("#btnPegar").onclick = async () => {
+  try { $("#texto").value = await navigator.clipboard.readText(); }
+  catch { toastResp("⚠ El navegador bloqueó el portapapeles", "rechazada"); }
+};
+
+// ---------- Historial ----------
+async function cargarPrefijos() {
+  const lista = await (await fetch("/api/prefijos")).json();
+  const sel = $("#histPrefijo"), dl = $("#prefijosList");
+  sel.innerHTML = ""; dl.innerHTML = "";
+  lista.forEach(p => {
+    sel.appendChild(new Option(p, p));
+    dl.appendChild(new Option(p));
+  });
+  if (lista.length) cargarSesiones();
+}
+async function cargarSesiones() {
+  const pref = $("#histPrefijo").value;
+  if (!pref) return;
+  const lista = await (await fetch(`/api/sesiones/${encodeURIComponent(pref)}`)).json();
+  const sel = $("#histSesion");
+  sel.innerHTML = "";
+  lista.forEach(s => sel.appendChild(new Option(s, s)));
+  cargarArchivo();
+}
+async function cargarArchivo() {
+  const pref = $("#histPrefijo").value, ses = $("#histSesion").value;
+  if (!pref || !ses) { $("#histCompleta").textContent = "—"; $("#histFiltrada").textContent = "—"; return; }
+  const url = t => `/api/respuesta/${encodeURIComponent(pref)}/${encodeURIComponent(ses)}?tipo=${t}`;
+  const [c, f] = await Promise.all([
+    fetch(url("completa")).then(r => r.text()),
+    fetch(url("filtrada")).then(r => r.text()),
+  ]);
+  $("#histCompleta").textContent = c || "(vacío)";
+  $("#histFiltrada").textContent = f || "(vacío)";
+}
+function refrescarHistorial() { cargarPrefijos(); }
+
+$("#histPrefijo").onchange = cargarSesiones;
+$("#histSesion").onchange = cargarArchivo;
+const histPane = t => t === "completa" ? $("#histCompleta") : $("#histFiltrada");
+document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(histPane(b.dataset.copy).textContent);
+    const o = b.textContent; b.textContent = "¡Copiado!"; setTimeout(() => b.textContent = o, 1200);
+  } catch { /* noop */ }
+});
+document.querySelectorAll("[data-export]").forEach(b => b.onclick = () => {
+  const tipo = b.dataset.export, pref = $("#histPrefijo").value, ses = $("#histSesion").value;
+  const blob = new Blob([histPane(tipo).textContent], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${pref}_${ses}_${tipo}.txt`;
+  a.click();
+});
+
+// ---------- Login ----------
+$("#btnSendCode").onclick = async () => {
+  try {
+    await post("/api/login/send_code", { phone: $("#loginPhone").value.trim() });
+    $("#loginStep2").classList.remove("hidden");
+    $("#loginMsg").textContent = "Código enviado. Revisá Telegram.";
+  } catch (e) { $("#loginMsg").textContent = "Error: " + e.message; }
+};
+$("#btnSignIn").onclick = async () => {
+  try {
+    const r = await post("/api/login/sign_in", { code: $("#loginCode").value.trim(), password: $("#loginPass").value || null });
+    if (r.autorizado) { setAuth(true); init(); }
+  } catch (e) { $("#loginMsg").textContent = "Error: " + e.message; }
+};
+
+// ---------- Init ----------
+async function init() {
+  const cfg = await (await fetch("/api/config")).json();
+  setAuth(cfg.autorizado);
+  if (!$("#destinos").value) $("#destinos").value = cfg.destinos || "";
+  if (!$("#intervalo").value) $("#intervalo").value = cfg.intervalo ?? 8;
+  if (!$("#loginPhone").value) $("#loginPhone").value = cfg.phone || "";
+  cargarPrefijos();
+}
+init();
+conectarWS();
+</script>
+</body>
+</html>
