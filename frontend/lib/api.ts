@@ -53,6 +53,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       window.location.assign("/expired");
     }
 
+    // Forced password change (Story 1.6): any client-side call from a flagged
+    // user's open tab routes to the one allowed page. Repeatable 403 (the
+    // session survives), so no cookie/state cleanup is needed here.
+    if (
+      res.status === 403 &&
+      body.code === "password_change_required" &&
+      window.location.pathname !== "/change-password"
+    ) {
+      window.location.assign("/change-password");
+    }
+
     throw new ApiError(res.status, body);
   }
 

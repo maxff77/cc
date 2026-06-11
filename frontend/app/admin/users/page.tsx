@@ -398,6 +398,7 @@ function ClientLifecycleActions({
     <div className="flex flex-col gap-2">
       <RenewAction userId={user.id} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
+      <ResetPasswordAction user={user} onChanged={onChanged} />
     </div>
   );
 }
@@ -595,6 +596,124 @@ function BlockAction({
           onPress={() => mutation.mutate()}
         >
           {mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
+        </Button>
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="secondary"
+          onPress={() => setConfirming(false)}
+        >
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Reset password (Story 1.6) -------------------------------------------
+
+function ResetPasswordAction({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  // The EXACTLY-ONCE display (AC1): lives only in local state; "Listo" clears
+  // it and it is unrecoverable by design (only a new reset produces a new one).
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<{ temp_password: string }>(
+        `/api/admin/users/${user.id}/reset-password`,
+      ),
+    onSuccess: (res) => {
+      setConfirming(false);
+      setError(null);
+      setTempPassword(res.temp_password);
+      // onChanged() (USERS_KEY invalidation) is deferred to "Listo": a
+      // refetch-driven remount here could destroy the one-time password
+      // before the admin copies it.
+    },
+    onError: (err) => {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos completar la acción. Intenta de nuevo.",
+      );
+    },
+  });
+
+  async function copy() {
+    if (!tempPassword) return;
+    try {
+      await navigator.clipboard.writeText(tempPassword);
+      setError(null);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can reject (permissions, non-secure context): never fail
+      // silently on a value that won't be shown again.
+      setError("No se pudo copiar. Selecciónala y cópiala manualmente.");
+    }
+  }
+
+  function dismiss() {
+    setTempPassword(null);
+    setError(null);
+    // Drop the response from the mutation cache too — otherwise the plaintext
+    // outlives the dismissal in mutation.data.
+    mutation.reset();
+    onChanged();
+  }
+
+  if (tempPassword) {
+    return (
+      <div className="flex flex-col gap-2">
+        <span className="font-mono text-sm">{tempPassword}</span>
+        <span className="text-sm text-default-500">
+          Cópiala ahora: no volverá a mostrarse.
+        </span>
+        {error && <span className="text-sm text-danger">{error}</span>}
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" onPress={copy}>
+            {copied ? "Copiada" : "Copiar"}
+          </Button>
+          <Button size="sm" variant="primary" onPress={dismiss}>
+            Listo
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!confirming) {
+    return (
+      <Button size="sm" variant="secondary" onPress={() => setConfirming(true)}>
+        Resetear
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm">
+        ¿Resetear la contraseña de {user.email}? Su sesión se cerrará al
+        instante.
+      </span>
+      {error && <span className="text-sm text-danger">{error}</span>}
+      <div className="flex gap-2">
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="danger"
+          onPress={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Reseteando…" : "Sí, resetear"}
         </Button>
         <Button
           isDisabled={mutation.isPending}

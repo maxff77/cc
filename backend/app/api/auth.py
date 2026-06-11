@@ -5,16 +5,18 @@ server-side session cookie (see Dev Notes / architecture for exact flags).
 """
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_allow_pending_password
 from app.config import settings
 from app.db.base import get_session
 from app.db.models import User
 from app.errors import (
     account_blocked,
+    forbidden,
     invalid_credentials,
+    password_reuse,
     plan_expired,
     too_many_attempts,
 )
@@ -41,6 +43,35 @@ class MeResponse(BaseModel):
 
 class LoginResponse(MeResponse):
     # Where the client should redirect after a successful login.
+    home_path: str
+
+
+class ChangePasswordRequest(BaseModel):
+    # Proof of the temp password (1.6 review): a session that survived the
+    # reset's bulk revoke must not be able to set the new password.
+    current_password: str
+    new_password: str
+
+    @field_validator("current_password", "new_password")
+    @classmethod
+    def _password_max_length(cls, v: str) -> str:
+        # Bound the argon2 input — this endpoint has no login-style throttle,
+        # so an unbounded body would be a cheap CPU-exhaustion vector.
+        if len(v) > 128:
+            raise ValueError("contraseña demasiado larga")
+        return v
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_length(cls, v: str) -> str:
+        # Same boundary contract as creation (admin.py _PASSWORD_MIN = 8):
+        # a short password is a 422.
+        if len(v) < 8:
+            raise ValueError("contraseña demasiado corta")
+        return v
+
+
+class ChangePasswordResponse(BaseModel):
     home_path: str
 
 
@@ -120,12 +151,19 @@ async def login(
     await session.commit()
     _set_session_cookie(response, auth_session.token)
 
+    # The must_change_password flag never blocks login — it steers it (1.6):
+    # a flagged user gets a normal session whose every subsequent request is
+    # gated server-side by deps; home_path routes them to the forced screen.
     return LoginResponse(
         id=user.id,
         email=user.email,
         role=user.role,
         tenant_id=user.tenant_id,
-        home_path=_home_path_for(user.role),
+        home_path=(
+            "/change-password"
+            if user.must_change_password
+            else _home_path_for(user.role)
+        ),
     )
 
 
@@ -152,3 +190,48 @@ async def me(user: User = Depends(get_current_user)) -> MeResponse:
     return MeResponse(
         id=user.id, email=user.email, role=user.role, tenant_id=user.tenant_id
     )
+
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    user: User = Depends(get_current_user_allow_pending_password),
+    session: AsyncSession = Depends(get_session),
+) -> ChangePasswordResponse:
+    """Complete the forced password change (Story 1.6, AC3).
+
+    Serves ONLY the forced flow: a voluntary change is out of MVP scope, hence
+    403 when the flag is not set. Hardening from the 1.6 review:
+
+    - ``current_password`` (the temp password) must be proven, so a session
+      that survived the reset's bulk revoke (a login racing the reset with the
+      OLD credentials) cannot set the new password.
+    - The row is re-read ``FOR UPDATE`` so a reset committing concurrently is
+      not silently overwritten (lost update), and the flag is re-checked on
+      the locked row.
+    - Every OTHER session is revoked on success: a second device that logged
+      in with the leaked temp password dies the moment the change completes.
+      The CURRENT session stays alive (the user continues straight to their
+      home surface — no re-login).
+    """
+    locked = await auth_service.users_repo.get_user_by_id(
+        session, user.id, for_update=True
+    )
+    if locked is None or not locked.must_change_password:
+        raise forbidden()
+    if not auth_service.verify_password(
+        locked.password_hash, body.current_password
+    ):
+        raise invalid_credentials()
+    if auth_service.verify_password(locked.password_hash, body.new_password):
+        raise password_reuse()
+    locked.password_hash = auth_service.hash_password(body.new_password)
+    locked.must_change_password = False
+    await auth_service.users_repo.revoke_all_sessions_for_user(
+        session,
+        locked.id,
+        except_token=request.cookies.get(settings.session_cookie_name),
+    )
+    await session.commit()
+    return ChangePasswordResponse(home_path=_home_path_for(locked.role))

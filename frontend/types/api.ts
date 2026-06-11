@@ -84,6 +84,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/change-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Password
+         * @description Complete the forced password change (Story 1.6, AC3).
+         *
+         *     Serves ONLY the forced flow: a voluntary change is out of MVP scope, hence
+         *     403 when the flag is not set. Hardening from the 1.6 review:
+         *
+         *     - ``current_password`` (the temp password) must be proven, so a session
+         *       that survived the reset's bulk revoke (a login racing the reset with the
+         *       OLD credentials) cannot set the new password.
+         *     - The row is re-read ``FOR UPDATE`` so a reset committing concurrently is
+         *       not silently overwritten (lost update), and the flag is re-checked on
+         *       the locked row.
+         *     - Every OTHER session is revoked on success: a second device that logged
+         *       in with the leaked temp password dies the moment the change completes.
+         *       The CURRENT session stays alive (the user continues straight to their
+         *       home surface — no re-login).
+         */
+        post: operations["change_password_api_auth_change_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/users": {
         parameters: {
             query?: never;
@@ -154,9 +188,8 @@ export interface paths {
          * @description Renew a client's plan by adding days XOR setting a future date (AC1/AC2).
          *
          *     Validation order: target exists & is a client → exactly one mode provided →
-         *     mode-specific bounds (plan_days positive & ``<= PLAN_DAYS_MAX``; expires_at
-         *     strictly future). Login re-reads the new ``expires_at`` so a renewed expired
-         *     client logs in normally (AC2) — no expiry code changes here.
+         *     mode-specific bounds. Login re-reads the new ``expires_at`` so a renewed
+         *     expired client logs in normally (AC2) — no expiry code changes here.
          */
         post: operations["renew_plan_api_admin_users__user_id__renew_post"];
         delete?: never;
@@ -205,10 +238,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/users/{user_id}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Password
+         * @description Reset a client's password to a one-time temp password (AC1).
+         *
+         *     New hash + flag + revoke-all, atomically. Revocation mirrors block (1.5):
+         *     any live session dies instantly, making "log in with the temp password"
+         *     (AC2's entry point) the only path forward. Works on blocked/expired
+         *     clients too — their login gates still apply in the existing order.
+         */
+        post: operations["reset_password_api_admin_users__user_id__reset_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ChangePasswordRequest */
+        ChangePasswordRequest: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
+        };
+        /** ChangePasswordResponse */
+        ChangePasswordResponse: {
+            /** Home Path */
+            home_path: string;
+        };
         /** CreateUserRequest */
         CreateUserRequest: {
             /** Email */
@@ -265,6 +335,11 @@ export interface components {
             plan_days?: number | null;
             /** Expires At */
             expires_at?: string | null;
+        };
+        /** ResetPasswordResponse */
+        ResetPasswordResponse: {
+            /** Temp Password */
+            temp_password: string;
         };
         /** UserListResponse */
         UserListResponse: {
@@ -397,6 +472,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    change_password_api_auth_change_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangePasswordResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -567,6 +675,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_api_admin_users__user_id__reset_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetPasswordResponse"];
                 };
             };
             /** @description Validation Error */

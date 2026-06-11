@@ -121,3 +121,26 @@ def renewal_would_shorten() -> AppError:
             "el acceso usa Bloquear."
         ),
     )
+
+
+# --- Codes this story (1.6) defines --------------------------------------
+
+
+def password_change_required() -> AppError:
+    # Raised by get_current_user for every gated route/API while the
+    # must_change_password flag is set; middleware and lib/api.ts route on it.
+    return AppError(
+        status_code=403,
+        code="password_change_required",
+        message="Elige una contraseña nueva para continuar.",
+    )
+
+
+def password_reuse() -> AppError:
+    # The new password must not equal the current (temp) one, or the
+    # "one-time" property of the temp password dies.
+    return AppError(
+        status_code=400,
+        code="password_reuse",
+        message="Elige una contraseña distinta a la temporal.",
+    )

@@ -33,6 +33,15 @@ def hash_password(raw: str) -> str:
     return _ph.hash(raw)
 
 
+def generate_temp_password() -> str:
+    """One-time temp password for the admin reset action (Story 1.6).
+
+    16 url-safe chars (~96 bits) — paste-safe for out-of-band delivery. The
+    plaintext must exist ONLY in the reset response: never log or persist it.
+    """
+    return secrets.token_urlsafe(12)
+
+
 def verify_password(stored_hash: str, raw: str) -> bool:
     """Return ``True`` iff ``raw`` matches ``stored_hash``.
 

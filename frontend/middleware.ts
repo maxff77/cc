@@ -84,6 +84,17 @@ export async function middleware(request: NextRequest) {
       return redirect;
     }
 
+    // Forced password change (Story 1.6): the session is VALID — the user
+    // needs it to complete the change — so unlike plan_expired the cookie is
+    // KEPT. /change-password itself must pass through (redirect-loop guard).
+    if (body?.code === "password_change_required") {
+      if (request.nextUrl.pathname === "/change-password") {
+        return NextResponse.next();
+      }
+
+      return NextResponse.redirect(new URL("/change-password", request.url));
+    }
+
     return staleSessionRedirect(); // fail safe for any other 403
   }
 

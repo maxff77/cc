@@ -27,6 +27,7 @@ from app.errors import (
     renewal_would_shorten,
     user_not_found,
 )
+from app.services import auth as auth_service
 from app.services import plans as plans_service
 from app.services import users as users_service
 
@@ -285,3 +286,34 @@ async def unblock_user(
 ) -> UserOut:
     """Unblock a client; they can log in again normally (AC4)."""
     return await _set_blocked(session, user_id, blocked=False)
+
+
+# --- Password reset (Story 1.6) -------------------------------------------
+
+
+class ResetPasswordResponse(BaseModel):
+    # The ONLY place the temp plaintext ever appears — never in UserOut, logs,
+    # or the DB (which stores only the argon2id hash).
+    temp_password: str
+
+
+@router.post("/users/{user_id}/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(
+    user_id: int,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> ResetPasswordResponse:
+    """Reset a client's password to a one-time temp password (AC1).
+
+    New hash + flag + revoke-all, atomically. Revocation mirrors block (1.5):
+    any live session dies instantly, making "log in with the temp password"
+    (AC2's entry point) the only path forward. Works on blocked/expired
+    clients too — their login gates still apply in the existing order.
+    """
+    target = await _require_client_target(session, user_id)
+    temp = auth_service.generate_temp_password()
+    target.password_hash = auth_service.hash_password(temp)
+    target.must_change_password = True
+    await users_repo.revoke_all_sessions_for_user(session, target.id)
+    await session.commit()
+    return ResetPasswordResponse(temp_password=temp)
