@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dirección 2 — Tarjetas SaaS</title>
+<style>
+/* ============================================================
+   DIRECCIÓN 2 — TARJETAS SAAS MODERNAS
+   Tarjetas aireadas, espaciado generoso, jerarquía suave,
+   registro fintech-limpio (Vercel / Linear).
+
+   PALETA (fija, tema HeroUI dark — oklch + hex aproximado):
+   --background:        oklch(12% 0.0026 243)          ≈ #0e1012
+   --surface:           oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --surface-secondary: oklch(25.7% 0.0038 243)        ≈ #26292c
+   --surface-tertiary:  oklch(27.21% 0.0038 243)       ≈ #292c2f
+   --border:            oklch(28% 0.0026 243)          ≈ #2b2e31
+   --separator:         oklch(25% 0.0026 243)          ≈ #252729
+   --foreground:        oklch(99.11% 0.0026 243)       ≈ #fbfdff
+   --muted:             oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   --accent:            oklch(55% 0.12 243)            ≈ #3878b0
+   --accent-foreground: oklch(99.11% 0 0)              ≈ #fcfcfc
+   --danger:            oklch(59.4% 0.1977 23.33)      ≈ #e5484d
+   --success:           oklch(73.29% 0.1945 149.51)    ≈ #2fd470
+   --success-fg:        oklch(21.03% 0.0059 149.51)    ≈ #0c2916
+   --warning:           oklch(82.03% 0.1395 75.04)     ≈ #f5b95e
+   --field-background:  oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --field-placeholder: oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   Radio base 0.25rem; las tarjetas escalan a 14px (forma
+   suave, plausible en HeroUI con radius "lg").
+   ============================================================ */
+:root{
+  --background: oklch(12% 0.0026 243);
+  --surface: oklch(21.03% 0.0051 243);
+  --surface-secondary: oklch(25.7% 0.0038 243);
+  --surface-tertiary: oklch(27.21% 0.0038 243);
+  --border: oklch(28% 0.0026 243);
+  --separator: oklch(25% 0.0026 243);
+  --foreground: oklch(99.11% 0.0026 243);
+  --muted: oklch(70.5% 0.0051 243);
+  --accent: oklch(55% 0.12 243);
+  --accent-foreground: oklch(99.11% 0 0);
+  --danger: oklch(59.4% 0.1977 23.33);
+  --success: oklch(73.29% 0.1945 149.51);
+  --success-fg: oklch(21.03% 0.0059 149.51);
+  --warning: oklch(82.03% 0.1395 75.04);
+  --field-background: oklch(21.03% 0.0051 243);
+  --field-placeholder: oklch(70.5% 0.0051 243);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  padding: 32px 24px 64px;
+  -webkit-font-smoothing: antialiased;
+}
+.rationale{
+  max-width: 880px; margin: 0 auto 40px;
+  background: var(--surface); border:1px solid var(--border);
+  padding: 20px 24px; border-radius: 14px;
+}
+.rationale h1{font-size:16px; font-weight:650; margin-bottom:8px; letter-spacing:-.01em}
+.rationale p{font-size:13.5px; line-height:1.6; color:var(--muted)}
+.stage{display:flex; gap:44px; flex-wrap:wrap; justify-content:center; align-items:flex-start}
+.col{display:flex; flex-direction:column; gap:12px}
+.col > .label{font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); text-align:center; font-weight:600}
+
+/* ---- marco de teléfono ---- */
+.phone{
+  width: 390px; height: 820px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  overflow: hidden; display:flex; flex-direction:column;
+  box-shadow: 0 28px 72px oklch(0% 0 0 / .5);
+}
+.statusbar{height:44px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 26px; font-size:13px; font-weight:600}
+.scroll{flex:1; overflow:hidden; padding: 4px 18px 18px; display:flex; flex-direction:column; gap:16px}
+
+/* ---- encabezado aireado ---- */
+.apphead{padding: 8px 4px 0}
+.apphead .hello{font-size:13px; color:var(--muted)}
+.apphead h2{font-size:22px; font-weight:700; letter-spacing:-.02em; margin-top:2px}
+.apphead .row{display:flex; align-items:center; gap:8px; margin-top:10px}
+.chip{
+  display:inline-flex; align-items:center; gap:6px;
+  background: var(--surface); border:1px solid var(--border);
+  border-radius: 999px; padding: 5px 12px; font-size:12px; color:var(--muted);
+}
+.chip .pulse{width:7px;height:7px;border-radius:50%;background:var(--success)}
+.chip.warn .pulse{background:var(--warning)}
+
+/* ---- tarjeta base ---- */
+.card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+}
+.card .title{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px}
+.card .title h3{font-size:13.5px; font-weight:650; letter-spacing:-.01em}
+.card .title .hint{font-size:11.5px; color:var(--muted)}
+
+/* ---- nuevo lote ---- */
+.field{
+  background: var(--field-background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px; font-size: 13px; line-height:1.6;
+  color: var(--field-placeholder); min-height: 84px;
+}
+.field b{color:var(--foreground); font-weight:500; display:block; font-variant-numeric: tabular-nums}
+.selrow{display:flex; gap:10px; margin-top:12px}
+.select{
+  flex:1; display:flex; align-items:center; justify-content:space-between;
+  background: var(--field-background); border:1px solid var(--border);
+  border-radius:10px; padding:10px 14px; font-size:13px;
+}
+.select .ph{color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-right:8px}
+.select .val{font-weight:600}
+.select .caret{color:var(--muted); font-size:10px}
+.cta{
+  margin-top:12px; width:100%;
+  background: var(--accent); color: var(--accent-foreground);
+  border:none; border-radius: 10px; padding: 13px; font-size:14px; font-weight:650;
+  font-family:inherit; letter-spacing:-.01em;
+}
+.cta.secondary{background:var(--surface-secondary); color:var(--foreground)}
+.cta.resume{background: var(--success); color: var(--success-fg)}
+
+/* ---- lote en curso ---- */
+.kpis{display:flex; align-items:baseline; gap:10px}
+.kpis .n{font-size:30px; font-weight:700; letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.kpis .n span{color:var(--muted); font-weight:500; font-size:18px}
+.kpis .eta{margin-left:auto; text-align:right}
+.kpis .eta .v{font-size:15px; font-weight:650; font-variant-numeric:tabular-nums}
+.kpis .eta .k{font-size:11px; color:var(--muted)}
+.bar{height:8px; border-radius:999px; background:var(--surface-tertiary); margin:14px 0 6px; overflow:hidden; position:relative}
+.bar .fill{position:absolute; inset:0; width:28%; border-radius:999px; background:var(--accent)}
+.bar .fill.warn{background:var(--warning); width:46%}
+.bar .fill.full{background:var(--success); width:100%}
+.barmeta{display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted)}
+.ctrls{display:flex; gap:10px; margin-top:14px}
+.ghost{
+  flex:1; background:transparent; border:1px solid var(--border); color:var(--foreground);
+  border-radius:10px; padding:11px; font-size:13px; font-weight:600; font-family:inherit;
+}
+.ghost.stop{color:var(--danger); border-color: oklch(59.4% 0.1977 23.33 / .45)}
+
+/* ---- respuestas en vivo ---- */
+.seg{
+  display:flex; background:var(--surface-secondary); border-radius:10px; padding:3px; margin-bottom:12px;
+}
+.seg div{flex:1; text-align:center; font-size:12.5px; font-weight:600; padding:7px; border-radius:8px; color:var(--muted)}
+.seg div.on{background:var(--surface-tertiary); color:var(--foreground); box-shadow: 0 1px 4px oklch(0% 0 0 / .3)}
+.resp{display:flex; flex-direction:column; gap:8px}
+.respline{
+  display:flex; align-items:center; gap:10px;
+  background:var(--surface-secondary); border-radius:10px; padding:10px 12px;
+  font-size:12.5px;
+}
+.respline .mark{flex:none; width:24px; height:24px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px}
+.respline .mark.ok{background: oklch(73.29% 0.1945 149.51 / .16); color:var(--success)}
+.respline .mark.no{background: oklch(59.4% 0.1977 23.33 / .14); color:var(--danger)}
+.respline .body{flex:1; min-width:0}
+.respline .body .main{font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.respline .body .sub{font-size:11px; color:var(--muted); margin-top:1px}
+.respline .tag{flex:none; font-size:10.5px; font-weight:650; color:var(--success); background: oklch(73.29% 0.1945 149.51 / .14); padding:3px 8px; border-radius:999px}
+.export{
+  margin-top:12px; display:flex; justify-content:space-between; align-items:center;
+  font-size:12.5px; color:var(--muted);
+}
+.export a{color:var(--accent-foreground); font-weight:600; text-decoration:none}
+
+/* ---- banner de pausa (variante) ---- */
+.pausebanner{
+  display:flex; gap:12px; align-items:center;
+  background: oklch(82.03% 0.1395 75.04 / .10);
+  border: 1px solid oklch(82.03% 0.1395 75.04 / .5);
+  border-radius: 14px; padding: 14px 16px;
+}
+.pausebanner .ico{font-size:18px}
+.pausebanner .t{font-size:13px; line-height:1.5}
+.pausebanner .t b{display:block; font-size:13.5px}
+.pausebanner .t span{color:var(--muted); font-size:12px}
+
+/* ---- escritorio: sesiones ---- */
+.desk{
+  width: 760px; background: var(--background);
+  border:1px solid var(--border); border-radius:18px; overflow:hidden;
+  box-shadow: 0 28px 72px oklch(0% 0 0 / .5);
+}
+.desk .dhead{display:flex; align-items:center; gap:14px; padding:18px 24px; border-bottom:1px solid var(--separator)}
+.desk .dhead .logo{width:30px;height:30px;border-radius:9px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:var(--accent-foreground)}
+.desk .dhead h3{font-size:15px; font-weight:650}
+.desk .dhead .sub{font-size:12px; color:var(--muted)}
+.desk .dhead .new{margin-left:auto; background:var(--accent); color:var(--accent-foreground); border:none; border-radius:9px; padding:9px 16px; font-size:12.5px; font-weight:650; font-family:inherit}
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:20px 24px 24px}
+.scard{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px}
+.scard .top{display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px}
+.scard h4{font-size:13.5px; font-weight:650}
+.scard .slug{font-size:11px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums}
+.pill{font-size:10.5px; font-weight:650; padding:3px 9px; border-radius:999px}
+.pill.live{background: oklch(55% 0.12 243 / .2); color: var(--accent-foreground)}
+.pill.done{background: var(--surface-tertiary); color: var(--muted)}
+.scard .stats{display:flex; gap:18px; font-size:12px; color:var(--muted); margin-top:8px}
+.scard .stats b{display:block; color:var(--foreground); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums}
+.scard .minibar{height:5px; border-radius:999px; background:var(--surface-tertiary); margin-top:12px; overflow:hidden; position:relative}
+.scard .minibar i{position:absolute; inset:0; background:var(--accent); border-radius:999px}
+</style>
+</head>
+<body>
+
+<div class="rationale">
+  <h1>Dirección 2 · SaaS de tarjetas — “fintech limpio”</h1>
+  <p>Registro Vercel/Linear: tarjetas aireadas sobre fondo profundo, espaciado generoso y jerarquía suave donde cada tarea (pegar lote, mirar progreso, leer respuestas) vive en su propia tarjeta. Transmite producto pago y confiable: el cliente siente un panel de facturación, no un script. La variante en pausa convierte el banner ámbar y el botón “Reanudar” en los únicos puntos calientes de la pantalla.</p>
+</div>
+
+<div class="stage">
+
+  <!-- ============ TELÉFONO 1: HERO — enviando ============ -->
+  <div class="col">
+    <div class="label">Hero · lote en curso</div>
+    <div class="phone">
+      <div class="statusbar"><span>09:41</span><span>●●●</span></div>
+      <div class="scroll">
+
+        <div class="apphead">
+          <div class="hello">Distribuidora Norte · plan Pro</div>
+          <h2>Espacio de envío</h2>
+          <div class="row">
+            <span class="chip"><span class="pulse"></span> Conectado a Telegram</span>
+            <span class="chip">Sesión: Lote mayorista junio</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="title">
+            <h3>Lote en curso</h3>
+            <span class="hint">prefijo <b style="color:var(--foreground)">.zo</b></span>
+          </div>
+          <div class="kpis">
+            <div class="n">34<span>/120</span></div>
+            <div class="eta">
+              <div class="v">11:28</div>
+              <div class="k">ETA · 8 s por línea</div>
+            </div>
+          </div>
+          <div class="bar"><div class="fill"></div></div>
+          <div class="barmeta"><span>28 % enviado</span><span>86 líneas en cola</span></div>
+          <div class="ctrls">
+            <button class="ghost">⏸ Pausar</button>
+            <button class="ghost stop">⏹ Detener</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="title">
+            <h3>Respuestas en vivo</h3>
+            <span class="hint">29 capturadas</span>
+          </div>
+          <div class="seg">
+            <div class="on">Completa · 29</div>
+            <div>Filtrada · 12</div>
+          </div>
+          <div class="resp">
+            <div class="respline">
+              <div class="mark ok">✓</div>
+              <div class="body">
+                <div class="main">CC: 4716 02•• •••• 5530 | 04/27</div>
+                <div class="sub">09:40:51 · @checker_bot</div>
+              </div>
+              <div class="tag">nueva</div>
+            </div>
+            <div class="respline">
+              <div class="mark ok">✓</div>
+              <div class="body">
+                <div class="main">CC: 4539 88•• •••• 0021 | 07/27</div>
+                <div class="sub">09:40:58 · @checker_bot</div>
+              </div>
+            </div>
+            <div class="respline">
+              <div class="mark no">✕</div>
+              <div class="body">
+                <div class="main">Rechazada — línea 031</div>
+                <div class="sub">09:41:02 · no se guarda en Filtrada</div>
+              </div>
+            </div>
+          </div>
+          <div class="export">
+            <span>filtrada.txt se actualiza al instante</span>
+            <a href="#">Exportar .txt →</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="title">
+            <h3>Nuevo lote</h3>
+            <span class="hint">se anexa al actual</span>
+          </div>
+          <div class="field">
+            Pegá aquí las líneas, una por renglón…
+            <b>5180 33•• •••• 4419|06|27|•••</b>
+          </div>
+          <div class="selrow">
+            <div class="select"><span><span class="ph">Prefijo</span><span class="val">.zo</span></span><span class="caret">▼</span></div>
+            <div class="select"><span><span class="ph">Intervalo</span><span class="val">8 s</span></span><span class="caret">▼</span></div>
+          </div>
+          <button class="cta">Agregar a la cola</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TELÉFONO 2: VARIANTE — en pausa ============ -->
+  <div class="col">
+    <div class="label">Variante · lote en pausa</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:02</span><span>●●●</span></div>
+      <div class="scroll">
+
+        <div class="apphead">
+          <div class="hello">Distribuidora Norte · plan Pro</div>
+          <h2>Espacio de envío</h2>
+          <div class="row">
+            <span class="chip warn"><span class="pulse"></span> Lote en pausa</span>
+          </div>
+        </div>
+
+        <div class="pausebanner">
+          <span class="ico">⏸</span>
+          <div class="t">
+            <b>Pausaste el lote en la línea 55.</b>
+            <span>Nada se pierde: la cola queda intacta y las respuestas se siguen capturando.</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="title">
+            <h3>Lote en pausa</h3>
+            <span class="hint">prefijo <b style="color:var(--foreground)">.zo</b></span>
+          </div>
+          <div class="kpis">
+            <div class="n">55<span>/120</span></div>
+            <div class="eta">
+              <div class="v">— : —</div>
+              <div class="k">ETA al reanudar: ~8 min</div>
+            </div>
+          </div>
+          <div class="bar"><div class="fill warn"></div></div>
+          <div class="barmeta"><span>46 % enviado</span><span>65 líneas en cola</span></div>
+          <div class="ctrls">
+            <button class="cta resume" style="margin-top:0">▶ Reanudar envío</button>
+          </div>
+          <div class="ctrls">
+            <button class="ghost stop">⏹ Detener y vaciar cola</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="title">
+            <h3>Respuestas en vivo</h3>
+            <span class="hint">siguen llegando en pausa</span>
+          </div>
+          <div class="seg">
+            <div>Completa · 49</div>
+            <div class="on">Filtrada · 21</div>
+          </div>
+          <div class="resp">
+            <div class="respline">
+              <div class="mark ok">✓</div>
+              <div class="body">
+                <div class="main">4929 16•• •••• 7702 | 01/29</div>
+                <div class="sub">10:01:44 · deduplicada por sesión</div>
+              </div>
+              <div class="tag">nueva</div>
+            </div>
+            <div class="respline">
+              <div class="mark ok">✓</div>
+              <div class="body">
+                <div class="main">4485 70•• •••• 9023 | 12/28</div>
+                <div class="sub">10:01:12</div>
+              </div>
+            </div>
+          </div>
+          <div class="export">
+            <span>21 CC únicas esta sesión</span>
+            <a href="#">Exportar .txt →</a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECUNDARIA ESCRITORIO ============ -->
+  <div class="col">
+    <div class="label">Secundaria escritorio · sesiones del prefijo .zo</div>
+    <div class="desk">
+      <div class="dhead">
+        <div class="logo">cc</div>
+        <div>
+          <h3>Sesiones — .zo</h3>
+          <div class="sub">4 sesiones · última actividad hoy 10:02</div>
+        </div>
+        <button class="new">+ Nueva sesión</button>
+      </div>
+      <div class="grid">
+        <div class="scard">
+          <div class="top">
+            <div>
+              <h4>Lote mayorista junio</h4>
+              <div class="slug">2026-06-10_09-32-04</div>
+            </div>
+            <span class="pill live">En curso</span>
+          </div>
+          <div class="stats">
+            <div><b>55/120</b>líneas</div>
+            <div><b>21</b>CC filtradas</div>
+            <div><b>49</b>respuestas</div>
+          </div>
+          <div class="minibar"><i style="width:46%"></i></div>
+        </div>
+        <div class="scard">
+          <div class="top">
+            <div>
+              <h4>Reposición semanal</h4>
+              <div class="slug">2026-06-08_18-05-11</div>
+            </div>
+            <span class="pill done">Cerrada</span>
+          </div>
+          <div class="stats">
+            <div><b>200/200</b>líneas</div>
+            <div><b>61</b>CC filtradas</div>
+            <div><b>188</b>respuestas</div>
+          </div>
+          <div class="minibar"><i style="width:100%; background:var(--success)"></i></div>
+        </div>
+        <div class="scard">
+          <div class="top">
+            <div>
+              <h4>Prueba catálogo .zo</h4>
+              <div class="slug">2026-06-05_11-48-37</div>
+            </div>
+            <span class="pill done">Cerrada</span>
+          </div>
+          <div class="stats">
+            <div><b>45/45</b>líneas</div>
+            <div><b>9</b>CC filtradas</div>
+            <div><b>41</b>respuestas</div>
+          </div>
+          <div class="minibar"><i style="width:100%; background:var(--success)"></i></div>
+        </div>
+        <div class="scard" style="display:flex;align-items:center;justify-content:center;border-style:dashed;color:var(--muted);font-size:13px">
+          Continuar una sesión anterior…
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

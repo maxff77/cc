@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dirección 1 — Consola de operador</title>
+<style>
+/* ============================================================
+   DIRECCIÓN 1 — CONSOLA DE OPERADOR
+   Densa, orientada a datos, numerales monoespaciados, filas
+   compactas, energía de terminal.
+
+   PALETA (fija, tema HeroUI dark — oklch + hex aproximado):
+   --background:        oklch(12% 0.0026 243)          ≈ #0e1012
+   --surface:           oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --surface-secondary: oklch(25.7% 0.0038 243)        ≈ #26292c
+   --surface-tertiary:  oklch(27.21% 0.0038 243)       ≈ #292c2f
+   --border:            oklch(28% 0.0026 243)          ≈ #2b2e31
+   --separator:         oklch(25% 0.0026 243)          ≈ #252729
+   --foreground:        oklch(99.11% 0.0026 243)       ≈ #fbfdff
+   --muted:             oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   --accent:            oklch(55% 0.12 243)            ≈ #3878b0
+   --accent-foreground: oklch(99.11% 0 0)              ≈ #fcfcfc
+   --danger:            oklch(59.4% 0.1977 23.33)      ≈ #e5484d
+   --success:           oklch(73.29% 0.1945 149.51)    ≈ #2fd470
+   --success-fg:        oklch(21.03% 0.0059 149.51)    ≈ #0c2916
+   --warning:           oklch(82.03% 0.1395 75.04)     ≈ #f5b95e
+   --field-background:  oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --field-placeholder: oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   Radio base: 0.25rem (esta dirección lo reduce a 2px en
+   componentes internos: lenguaje de forma angular/terminal).
+   ============================================================ */
+:root{
+  --background: oklch(12% 0.0026 243);
+  --surface: oklch(21.03% 0.0051 243);
+  --surface-secondary: oklch(25.7% 0.0038 243);
+  --surface-tertiary: oklch(27.21% 0.0038 243);
+  --border: oklch(28% 0.0026 243);
+  --separator: oklch(25% 0.0026 243);
+  --foreground: oklch(99.11% 0.0026 243);
+  --muted: oklch(70.5% 0.0051 243);
+  --accent: oklch(55% 0.12 243);
+  --accent-foreground: oklch(99.11% 0 0);
+  --danger: oklch(59.4% 0.1977 23.33);
+  --success: oklch(73.29% 0.1945 149.51);
+  --success-fg: oklch(21.03% 0.0059 149.51);
+  --warning: oklch(82.03% 0.1395 75.04);
+  --field-background: oklch(21.03% 0.0051 243);
+  --field-placeholder: oklch(70.5% 0.0051 243);
+  --mono: 'SF Mono', ui-monospace, 'Cascadia Mono', Menlo, monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  padding: 32px 24px 64px;
+}
+.rationale{
+  max-width: 880px; margin: 0 auto 36px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  padding: 16px 20px; border-radius: 0.25rem;
+}
+.rationale h1{font-size:15px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; font-family:var(--mono); color:var(--accent-foreground)}
+.rationale p{font-size:13.5px; line-height:1.55; color:var(--muted)}
+.stage{display:flex; gap:40px; flex-wrap:wrap; justify-content:center; align-items:flex-start}
+.col{display:flex; flex-direction:column; gap:10px}
+.col > .label{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); text-align:center}
+
+/* ---- marco de teléfono (~390px) ---- */
+.phone{
+  width: 390px; height: 800px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  overflow: hidden;
+  display:flex; flex-direction:column;
+  box-shadow: 0 24px 64px oklch(0% 0 0 / .5);
+}
+.statusbar{
+  height: 34px; flex:none;
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 0 18px; font-family: var(--mono); font-size: 11px; color: var(--muted);
+}
+/* ---- barra de título estilo terminal ---- */
+.topbar{
+  flex:none; display:flex; align-items:center; gap:8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  background: var(--surface); font-family: var(--mono); font-size: 12px;
+}
+.topbar .sys{color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex:none}
+.dot.warn{background:var(--warning)}
+.topbar .right{margin-left:auto; color:var(--muted); font-size:11px}
+
+/* ---- fila de parámetros densa ---- */
+.params{
+  flex:none; display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1px;
+  background: var(--separator); border-bottom: 1px solid var(--border);
+}
+.param{background: var(--surface); padding: 7px 10px}
+.param .k{font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); display:block; margin-bottom:2px}
+.param .v{font-family:var(--mono); font-size:12.5px; color:var(--foreground); display:flex; align-items:center; gap:4px}
+.param .v .caret{color:var(--muted); font-size:9px}
+.param.sel{outline:1px solid var(--accent); outline-offset:-1px}
+
+/* ---- entrada de lote compacta ---- */
+.batch{flex:none; border-bottom:1px solid var(--border); background:var(--field-background)}
+.batch .head{display:flex; justify-content:space-between; align-items:center; padding:6px 12px 0; font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted)}
+.batch pre{
+  font-family:var(--mono); font-size:11.5px; line-height:1.7; color:var(--foreground);
+  padding: 6px 12px 8px; white-space:pre; overflow:hidden; max-height:84px;
+}
+.batch pre .ln{color:var(--muted); opacity:.55}
+.batch .actions{display:flex; gap:1px; background:var(--separator); border-top:1px solid var(--separator)}
+.btn{
+  font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  border:none; padding:9px 0; flex:1; text-align:center; cursor:default;
+  background: var(--surface-secondary); color: var(--foreground); border-radius:0;
+}
+.btn.primary{background: var(--accent); color: var(--accent-foreground)}
+.btn.danger-ghost{color: var(--danger); background: var(--surface)}
+.btn.warn-ghost{color: var(--warning); background: var(--surface)}
+.btn.success-solid{background: var(--success); color: var(--success-fg)}
+
+/* ---- panel de cola ---- */
+.queue{flex:none; border-bottom:1px solid var(--border)}
+.qhead{display:flex; align-items:baseline; gap:10px; padding:8px 12px 4px; font-family:var(--mono)}
+.qhead .big{font-size:20px; font-weight:600}
+.qhead .big .dim{color:var(--muted); font-weight:400}
+.qhead .eta{margin-left:auto; font-size:11px; color:var(--muted)}
+.qhead .eta b{color:var(--foreground); font-weight:600}
+.progress{height:4px; margin:4px 12px 8px; background:var(--surface-tertiary); position:relative; border-radius:2px; overflow:hidden}
+.progress .fill{position:absolute; inset:0; width:28%; background:var(--accent)}
+.progress .fill.paused{background:var(--warning)}
+.rows{font-family:var(--mono); font-size:11px; line-height:1; }
+.row{display:flex; gap:8px; padding:5px 12px; border-top:1px solid var(--separator); align-items:center}
+.row .idx{color:var(--muted); width:30px; flex:none}
+.row .line{flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--foreground)}
+.row .st{flex:none; font-size:10px; letter-spacing:.06em}
+.row.sent .line{color:var(--muted)}
+.row.sent .st{color:var(--success)}
+.row.active{background: oklch(55% 0.12 243 / .12)}
+.row.active .st{color: var(--accent-foreground)}
+.row.pending .st{color:var(--muted)}
+
+/* ---- respuestas: dos paneles ---- */
+.responses{flex:1; display:flex; flex-direction:column; min-height:0}
+.tabs{display:flex; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase}
+.tab{padding:8px 14px; color:var(--muted); border-right:1px solid var(--separator)}
+.tab.on{color:var(--foreground); box-shadow: inset 0 -2px 0 var(--accent)}
+.tab .count{color:var(--accent-foreground); background:var(--accent); border-radius:2px; padding:1px 5px; margin-left:6px; font-size:9.5px}
+.tabs .export{margin-left:auto; padding:8px 12px; color:var(--accent-foreground); border-left:1px solid var(--separator); background:var(--surface)}
+.log{flex:1; overflow:hidden; font-family:var(--mono); font-size:10.5px; line-height:1.8; padding:8px 12px; background:var(--background)}
+.log .t{color:var(--muted)}
+.log .ok{color:var(--success)}
+.log .cc{color:var(--accent-foreground)}
+.log .new{background: oklch(73.29% 0.1945 149.51 / .14)}
+
+/* ---- banner FloodWait (informativo, no error) ---- */
+.flood{
+  flex:none; display:flex; gap:10px; align-items:flex-start;
+  background: oklch(82.03% 0.1395 75.04 / .12);
+  border-top: 1px solid var(--warning); border-bottom: 1px solid var(--warning);
+  padding: 9px 12px;
+}
+.flood .ico{font-family:var(--mono); color:var(--warning); font-size:13px; flex:none}
+.flood .txt{font-size:12px; line-height:1.45; color:var(--foreground)}
+.flood .txt b{font-family:var(--mono); color:var(--warning); font-weight:600}
+.flood .txt small{display:block; color:var(--muted); font-size:11px; margin-top:2px}
+
+/* ---- variante escritorio: lista de sesiones ---- */
+.desk{
+  width: 720px; background: var(--background);
+  border:1px solid var(--border); border-radius:8px; overflow:hidden;
+  box-shadow: 0 24px 64px oklch(0% 0 0 / .5);
+}
+.desk .topbar{font-size:12.5px}
+.desk table{width:100%; border-collapse:collapse; font-size:12px}
+.desk th{
+  font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); text-align:left; padding:8px 14px; background:var(--surface);
+  border-bottom:1px solid var(--border);
+}
+.desk td{padding:9px 14px; border-bottom:1px solid var(--separator); font-family:var(--mono); font-size:11.5px}
+.desk td.name{font-family:'Public Sans', system-ui, sans-serif; font-size:12.5px; font-weight:600}
+.desk td .slug{color:var(--muted); font-family:var(--mono); font-size:10.5px; margin-left:8px; font-weight:400}
+.desk tr.live td{background: oklch(55% 0.12 243 / .10)}
+.badge{font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; padding:2px 6px; border-radius:2px; text-transform:uppercase}
+.badge.live{background:var(--accent); color:var(--accent-foreground)}
+.badge.done{background:var(--surface-tertiary); color:var(--muted)}
+.badge.cc{background: oklch(73.29% 0.1945 149.51 / .18); color:var(--success)}
+.desk .ftr{padding:8px 14px; font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--surface)}
+</style>
+</head>
+<body>
+
+<div class="rationale">
+  <h1>Dirección 1 · Consola de operador</h1>
+  <p>Para el cliente que opera lotes todo el día: máxima densidad de información en una sola pantalla, numerales monoespaciados para que las cifras no “salten”, y filas compactas estilo terminal. La jerarquía la marca el dato (034/120, ETA) y no la decoración; los controles de pausa/detención están siempre visibles sin desplazarse. La variante muestra el estado FloodWait como aviso informativo ámbar, nunca como error.</p>
+</div>
+
+<div class="stage">
+
+  <!-- ============ TELÉFONO 1: HERO — enviando ============ -->
+  <div class="col">
+    <div class="label">Hero · estado “enviando”</div>
+    <div class="phone">
+      <div class="statusbar"><span>09:41</span><span>LTE ▮▮▮</span></div>
+
+      <div class="topbar">
+        <span class="dot"></span>
+        <span>cc&nbsp;/&nbsp;envío</span>
+        <span class="sys">— lote #2026-06-10_09-32</span>
+        <span class="right">@usuario</span>
+      </div>
+
+      <div class="params">
+        <div class="param sel">
+          <span class="k">Prefijo</span>
+          <span class="v">.zo <span class="caret">▾</span></span>
+        </div>
+        <div class="param">
+          <span class="k">Destino</span>
+          <span class="v">@checker_bot</span>
+        </div>
+        <div class="param">
+          <span class="k">Intervalo</span>
+          <span class="v">8.0 s</span>
+        </div>
+      </div>
+
+      <div class="batch">
+        <div class="head"><span>Lote pegado</span><span>120 líneas · 0 duplicadas</span></div>
+        <pre><span class="ln">001</span>  4532 71•• •••• 8841|09|27|•••
+<span class="ln">002</span>  5412 90•• •••• 1276|02|28|•••
+<span class="ln">003</span>  4024 55•• •••• 3309|11|26|•••</pre>
+        <div class="actions">
+          <button class="btn warn-ghost">▮▮ Pausar</button>
+          <button class="btn danger-ghost">■ Detener</button>
+        </div>
+      </div>
+
+      <div class="queue">
+        <div class="qhead">
+          <span class="big">034<span class="dim">/120</span></span>
+          <span class="eta">ETA <b>11:28</b> · 8.0 s/línea</span>
+        </div>
+        <div class="progress"><div class="fill"></div></div>
+        <div class="rows">
+          <div class="row sent">
+            <span class="idx">033</span>
+            <span class="line">.zo 4716 02•• •••• 5530|04|27|•••</span>
+            <span class="st">ENVIADA</span>
+          </div>
+          <div class="row active">
+            <span class="idx">034</span>
+            <span class="line">.zo 4532 71•• •••• 8841|09|27|•••</span>
+            <span class="st">ENVIANDO…</span>
+          </div>
+          <div class="row pending">
+            <span class="idx">035</span>
+            <span class="line">.zo 5412 90•• •••• 1276|02|28|•••</span>
+            <span class="st">EN COLA</span>
+          </div>
+          <div class="row pending">
+            <span class="idx">036</span>
+            <span class="line">.zo 4024 55•• •••• 3309|11|26|•••</span>
+            <span class="st">EN COLA</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="responses">
+        <div class="tabs">
+          <div class="tab on">Completa <span class="count">29</span></div>
+          <div class="tab">Filtrada <span class="count">12</span></div>
+          <div class="export">↓ .txt</div>
+        </div>
+        <div class="log">
+<span class="t">[09:40:51]</span> <span class="ok">✅</span> Aprobada · CC: 4716 02•• •••• 5530<br>
+<span class="t">[09:40:58]</span> <span class="ok">✅</span> Aprobada · CC: 4539 88•• •••• 0021<br>
+<span class="t">[09:41:02]</span> ❌ Rechazada · revisar línea 031<br>
+<span class="t">[09:41:09]</span> <span class="ok">✅</span> <span class="new">CC nueva → filtrada.txt</span><br>
+<span class="t">[09:41:09]</span> <span class="cc">CC: 4532 71•• •••• 8841</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TELÉFONO 2: VARIANTE — FloodWait ============ -->
+  <div class="col">
+    <div class="label">Variante · FloodWait (info, no error)</div>
+    <div class="phone">
+      <div class="statusbar"><span>09:47</span><span>LTE ▮▮▮</span></div>
+
+      <div class="topbar">
+        <span class="dot warn"></span>
+        <span>cc&nbsp;/&nbsp;envío</span>
+        <span class="sys">— en espera</span>
+        <span class="right">@usuario</span>
+      </div>
+
+      <div class="params">
+        <div class="param sel">
+          <span class="k">Prefijo</span>
+          <span class="v">.zo <span class="caret">▾</span></span>
+        </div>
+        <div class="param">
+          <span class="k">Destino</span>
+          <span class="v">@checker_bot</span>
+        </div>
+        <div class="param">
+          <span class="k">Intervalo</span>
+          <span class="v">8.0 s</span>
+        </div>
+      </div>
+
+      <div class="flood">
+        <span class="ico">⏳</span>
+        <div class="txt">
+          Telegram pidió esperar <b>45 s</b> — reanudamos solos.
+          <small>La línea 042 se reintenta automáticamente. No es un error: es el límite de ritmo de Telegram.</small>
+        </div>
+      </div>
+
+      <div class="queue">
+        <div class="qhead">
+          <span class="big">041<span class="dim">/120</span></span>
+          <span class="eta">ETA <b>11:43</b> · pausa de 0:38 restante</span>
+        </div>
+        <div class="progress"><div class="fill paused" style="width:34%"></div></div>
+        <div class="rows">
+          <div class="row sent">
+            <span class="idx">041</span>
+            <span class="line">.zo 4929 16•• •••• 7702|01|29|•••</span>
+            <span class="st">ENVIADA</span>
+          </div>
+          <div class="row active">
+            <span class="idx">042</span>
+            <span class="line">.zo 5180 33•• •••• 4419|06|27|•••</span>
+            <span class="st" style="color:var(--warning)">ESPERA 0:38</span>
+          </div>
+          <div class="row pending">
+            <span class="idx">043</span>
+            <span class="line">.zo 4485 70•• •••• 9023|12|28|•••</span>
+            <span class="st">EN COLA</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="batch" style="border-top:1px solid var(--border)">
+        <div class="actions">
+          <button class="btn warn-ghost">▮▮ Pausar</button>
+          <button class="btn danger-ghost">■ Detener</button>
+        </div>
+      </div>
+
+      <div class="responses">
+        <div class="tabs">
+          <div class="tab">Completa <span class="count">35</span></div>
+          <div class="tab on">Filtrada <span class="count">14</span></div>
+          <div class="export">↓ .txt</div>
+        </div>
+        <div class="log">
+<span class="cc">4716 02•• •••• 5530|04|27</span><br>
+<span class="cc">4539 88•• •••• 0021|07|27</span><br>
+<span class="cc">4532 71•• •••• 8841|09|27</span><br>
+<span class="cc">5412 90•• •••• 1276|02|28</span><br>
+<span class="cc new">4929 16•• •••• 7702|01|29</span> <span class="ok">← nueva</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECUNDARIA ESCRITORIO: sesiones ============ -->
+  <div class="col">
+    <div class="label">Secundaria escritorio · historial de sesiones</div>
+    <div class="desk">
+      <div class="topbar">
+        <span class="dot"></span>
+        <span>cc&nbsp;/&nbsp;sesiones</span>
+        <span class="sys">— prefijo .zo</span>
+        <span class="right">3 prefijos · 17 sesiones</span>
+      </div>
+      <table>
+        <tr>
+          <th>Sesión</th><th>Estado</th><th>Líneas</th><th>CC filtradas</th><th>Creada</th><th></th>
+        </tr>
+        <tr class="live">
+          <td class="name">Lote mayorista junio<span class="slug">2026-06-10_09-32-04</span></td>
+          <td><span class="badge live">En curso</span></td>
+          <td>041/120</td>
+          <td><span class="badge cc">14 nuevas</span></td>
+          <td>hoy 09:32</td>
+          <td style="color:var(--accent-foreground)">Abrir →</td>
+        </tr>
+        <tr>
+          <td class="name">Reposición semanal<span class="slug">2026-06-08_18-05-11</span></td>
+          <td><span class="badge done">Cerrada</span></td>
+          <td>200/200</td>
+          <td><span class="badge cc">61</span></td>
+          <td>08 jun 18:05</td>
+          <td style="color:var(--muted)">Continuar</td>
+        </tr>
+        <tr>
+          <td class="name">Prueba catálogo .zo<span class="slug">2026-06-05_11-48-37</span></td>
+          <td><span class="badge done">Cerrada</span></td>
+          <td>45/45</td>
+          <td><span class="badge cc">9</span></td>
+          <td>05 jun 11:48</td>
+          <td style="color:var(--muted)">Continuar</td>
+        </tr>
+      </table>
+      <div class="ftr">_ultima → 2026-06-10_09-32-04 · exportar: completa.txt | filtrada.txt</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

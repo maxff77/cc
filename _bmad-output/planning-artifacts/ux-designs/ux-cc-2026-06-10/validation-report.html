@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UX Design Validation: cc</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>cc — UX Design Validation Report</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/ux-designs/ux-cc-2026-06-10/</div>
+      </div>
+    </header>
+
+    <div class="synthesis">
+      <p>The pair is a clean, extractable contract: every PRD journey lands in a named Key Flow, every token reference in both spines resolves to a defined DESIGN.md frontmatter token, routes / WS events / state machine / error contract are verbatim from architecture, and the confirmed mock plus theme import are linked inline with spines-win-on-conflict stated in both files. No critical or high findings. The two medium findings (light-mode gap in the amber alpha tints; no login-error treatment) are the only places a downstream builder would have to invent something user-facing; everything else is low-severity polish.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Flow coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Token completeness</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Component coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">State coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Visual reference coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Bloat &amp; overspecification</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Inheritance discipline</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-strong)">strong</div>
+      </div>
+    </div>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Flow coverage</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Extracted the five verbatim PRD journeys (FR9, FR10, FR15, FR17, FR5) plus the implied admin lifecycle (FR1/FR4/FR6/FR7) and FR20 support journey. Mapped against EXPERIENCE.md Key Flows 1–5: FR9+FR15 → Flow 1; FR17 → Flow 2; FR1/FR4/FR6/FR7 → Flow 3; FR5 → Flow 4; FR20 → Flow 5. FR10 (round-robin) is backend behavior, correctly surfaced only through the honest-ETA rule. All five flows have a named protagonist (Marcos, Laura, "the owner"), numbered steps, and an explicit <strong>Climax</strong> beat; Flows 1–3 have failure paths. The user's verbatim climax ("hands-off, zero manual work") is Flow 1's climax, as the decision log requires.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">FR17's "renombrar" is never exercised in a flow</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">It exists only as a behavioral rule in the Session row pattern. The rule is complete ("inline, persisted via REST"), so this is coverage style, not a gap.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Optionally add a rename beat to Flow 2 step 2.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Flows 4 and 5 have no failure path</h3>
+              <span class="finding-location">EXPERIENCE.md Key Flows</span>
+            </header>
+            <div class="finding-note">Flow 4 is itself a failure scenario, defensible; Flow 5 leaves "client has no sessions / session missing" unhandled.</div>
+            <div class="finding-fix"><strong>Fix:</strong> One line in Flow 5 (empty tenant view → same empty-Historial copy).</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Token completeness</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Extracted all frontmatter tokens (24 color pairs, 6 typography roles, 3 radius, 6 spacing, 10 component objects) and every <code>{path.to.token}</code> reference in DESIGN.md prose and component objects, plus the 8 token references in EXPERIENCE.md. <strong>All resolve.</strong> Color tokens carry oklch values with light/<code>-dark</code> pairs throughout (accent/success intentionally identical across modes, matching the import). Values verified digit-for-digit against <code>imports/heroui-theme.css</code> (independent spot-check of accent, background, border, danger, warning, success-foreground — matches; consistent with <code>.working/reconcile-heroui-theme.md</code> PASS). Typography is fully literal-valued; nothing left semantic that shouldn't be. Contrast targets are absent — judged against the decision log's explicit MVP cut (a11y = HeroUI defaults only), so flagged but not critical.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Amber alpha tints hardcode the dark-mode warning literal with no light pair</h3>
+              <span class="finding-location">DESIGN.md frontmatter lines ~109, 136–137</span>
+            </header>
+            <div class="finding-note"><code>components.state-pill.paused-bg</code> and <code>components.flood-notice.background/border</code> use <code>oklch(82.03% 0.1395 75.04 / …)</code> (= <code>warning-dark</code>), while light-mode warning is <code>oklch(78.19% 0.1593 71.03)</code>. DESIGN.md promises "light fully supported" and bans "dark-only hardcoding" in its own Do's and Don'ts. A light-mode builder gets the wrong hue or invents one.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Add <code>-dark</code> pairs for the three tint values, or express them as <code>{colors.warning}</code> at alpha so they track the mode.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">No contrast targets stated for load-bearing combinations</h3>
+              <span class="finding-location">DESIGN.md Colors</span>
+            </header>
+            <div class="finding-note">Muted on surface, success text on <code>new-highlight</code> tint, amber countdown on amber tint. Consistent with the explicit user decision to skip a11y extras for MVP — flagged honestly, not critical.</div>
+            <div class="finding-fix"><strong>Fix:</strong> None for MVP; record in the post-MVP revisit list.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Unreferenced token and off-scale gap</h3>
+              <span class="finding-location">DESIGN.md Layout &amp; Spacing</span>
+            </header>
+            <div class="finding-note"><code>{spacing.margin-desktop}</code> is defined but never referenced, and Layout &amp; Spacing introduces a 10px inter-block gap that sits outside the spacing scale.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Reference the token in the desktop paragraph; promote 10px to a spacing token or round to <code>{spacing.3}</code>.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Component coverage</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Extracted every component name used anywhere in either spine. DESIGN.md Components: Progress ring, State pill, Prefijo chip, Control buttons, Dual-view tabs, Data row, FloodWait notice, Bottom nav, Session row, Fields, Modal/Table (admin). EXPERIENCE.md Component Patterns: Lote textarea, Prefijo selector, Progress ring, Control buttons, State pill, Dual-view tabs/panels, Export button, FloodWait notice, Session row, ETA display, Admin user table, Prefijo catalog table. All shared names carry real rules on both sides (visual deltas with token refs in DESIGN; state-machine-driven behavior, REST/WS bindings in EXPERIENCE) — none are one-word descriptions.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Five EXPERIENCE-only components have no identically-named DESIGN.md row</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">Lote textarea / Prefijo selector → "Fields", Export button → inside "Dual-view tabs", ETA display → inside "Progress ring" flank, Admin user table / Prefijo catalog table → "Modal / Table (admin)". Every mapping exists but is implicit.</div>
+            <div class="finding-fix"><strong>Fix:</strong> A parenthetical in each EXPERIENCE row naming its DESIGN.md anchor (e.g. "visuals: DESIGN.md Fields").</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Bottom nav and Prefijo chip have no behavioral row in EXPERIENCE.md</h3>
+              <span class="finding-location">DESIGN.md Bottom nav</span>
+            </header>
+            <div class="finding-note">The live-dot semantics (success while sending, warning while paused) live only in the visual spec. Both are near-passive, so impact is small.</div>
+            <div class="finding-fix"><strong>Fix:</strong> One Component Patterns row for Bottom nav stating the dot is driven by <code>batch.state</code>.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>State coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Walked all eight IA surfaces against the State Patterns table. Covered: Envío idle/cold/FloodWait/send-error, Historial empty/cold, Empty Filtrada, forced password change, plan expirado, permission denied (middleware redirect, no blocked screen), live-follow detach. Offline is explicitly cut per the decision log (WS auto-reconnect + snapshot only) and the spine states this — not a miss. Generic REST loading/error conventions (TanStack <code>isPending</code>/<code>isError</code> + <code>{code, message}</code> mapping) cover the long tail.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Login has no error treatment</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns / IA Login row</span>
+            </header>
+            <div class="finding-note">Wrong credentials, blocked account (Bloquear in Flow 3 step 4 produces "immediate lockout" with no stated login-time message). The generic code→Spanish mapping exists but the copy is load-bearing and user-facing; a builder will invent it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Two State Patterns rows — invalid credentials and blocked-account copy at <code>/login</code>.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Admin surfaces' empty states are uncovered</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note"><code>/admin/users</code> with no clients, <code>/admin/prefixes</code> empty catalog, <code>/admin/tenants/[id]</code> with no sessions; the Cold load row names only Envío/Historial. The decision log itself triaged this ("admin empty/cold states generic").</div>
+            <div class="finding-fix"><strong>Fix:</strong> One row "Empty admin table → HeroUI Table empty slot + one Spanish sentence + primary action".</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Empty Completa is uncovered</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">Only Empty Filtrada has copy (lote running, no responses captured yet).</div>
+            <div class="finding-fix"><strong>Fix:</strong> Mirror the Filtrada row ("Aún no hay respuestas.").</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Visual reference coverage</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Inventory: <code>imports/heroui-theme.css</code>; <code>.working/</code> visual artifacts = <code>direction-cabina-refinada.html</code> (confirmed) plus four rejected explorations (<code>direction-consola-operador.html</code>, <code>direction-cabina-datos.html</code>, <code>direction-mensajeria.html</code>, <code>direction-tarjetas-saas.html</code>). The theme import is linked in DESIGN.md frontmatter sources, Brand &amp; Style, and Colors, named as "canonical token source". The confirmed mock is linked inline in DESIGN.md Brand &amp; Style (naming exactly what it illustrates: mobile Envío sending/paused, Historial, desktop Envío) and in EXPERIENCE.md IA ("composition reference"). Spines-win-on-conflict is stated in both files' header blockquotes. No references to the nonexistent <code>mockups/</code> or <code>wireframes/</code> dirs. The decision log records which surfaces are mock-covered vs spine-only (user's explicit "Ninguna más").</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">The four rejected direction mocks sit in .working/ unmarked</h3>
+              <span class="finding-location">.working/</span>
+            </header>
+            <div class="finding-note">Only the decision log says they're dead. A consumer scanning the folder cannot tell <code>direction-cabina-datos.html</code> (superseded by <code>-refinada</code>) from the confirmed file without it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Nothing required; optionally a one-line "superseded — see .decision-log.md" comment or a <code>rejected/</code> subfolder.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Bloat &amp; overspecification</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>Both files are lean. DESIGN.md carries editorial voice where allowed (Brand &amp; Style) and tokens elsewhere; EXPERIENCE.md is table-first with no decorative narrative — flow prose is tied to decisions and the user's verbatim climax. Foundation restates just enough stack to anchor the contract; the ETA <code>G×n</code> restatement is load-bearing (drives the honest-ETA rule), not bloat. No persona/FR restatement beyond inline FR citations.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">FloodWait notice spec self-conflicts</h3>
+              <span class="finding-location">DESIGN.md Components, FloodWait notice</span>
+            </header>
+            <div class="finding-note">"12px <code>{typography.body}</code> text" but <code>typography.body</code> is 14px. A builder must pick one.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Drop "12px" or define/point to a smaller role (<code>data-mono</code> is already 11px).</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">A few magic pixel numbers outside the token scale</h3>
+              <span class="finding-location">DESIGN.md Layout &amp; Spacing / Components</span>
+            </header>
+            <div class="finding-note">10px block gap, 6px live dot, ~128px ring. The ring and dot are reasonable approximations; the gap belongs in spacing.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Tokenize or mark as approximate.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Inheritance discipline</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>All <code>sources</code> frontmatter entries resolve on disk (verified). FR names cited verbatim and correctly (FR9, FR12, FR15, FR17, FR18, FR19, FR20 — each checked against prd.md). Routes table, WS event names (<code>batch.progress</code>, <code>batch.line_sent</code>, <code>batch.state</code>, <code>response.captured</code>, <code>flood.wait</code>, <code>session.active</code>, <code>auth.state</code>, <code>error</code>, snapshot-first), batch state machine (<code>idle | sending | paused | stopping</code>), action endpoints (<code>/api/batches/{id}/pause|resume|stop</code>), and error contract (<code>{code, message}</code> Spanish) are all verbatim from architecture.md. Glossary terms (cliente, prefijo, sesión, lote, Completa/Filtrada) identical across PRD, decision log, and both spines. Every EXPERIENCE.md token reference resolves by name to DESIGN.md frontmatter, including dotted paths (<code>{components.progress-ring.color-sending}</code>/<code>.color-paused</code>).</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Source path conventions differ between the spines</h3>
+              <span class="finding-location">DESIGN.md / EXPERIENCE.md frontmatter sources</span>
+            </header>
+            <div class="finding-note">DESIGN.md sources are workspace-relative (<code>imports/…</code>, <code>.working/…</code>), EXPERIENCE.md mixes repo-root-relative (<code>_bmad-output/…</code>) with workspace-relative (<code>.decision-log.md</code>). All resolve, but a mechanical extractor needs two base paths.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Normalize to one convention.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Frontmatter component keys are singular where prose is plural</h3>
+              <span class="finding-location">DESIGN.md frontmatter / Components</span>
+            </header>
+            <div class="finding-note"><code>control-button</code> vs "Control buttons"; <code>dual-view-tabs</code> vs "Dual-view tabs / panels". Resolvable by inspection, trivial drift.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Align key names with section headings.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-strong">strong</span>
+        </summary>
+        <div class="dim-body">
+          <div class="dim-judgment">
+            <p>DESIGN.md body sections are in canonical order with all eight present: Brand &amp; Style → Colors → Typography → Layout &amp; Spacing → Elevation &amp; Depth → Shapes → Components → Do's and Don'ts. Frontmatter uses the spec's keys with correct types (flat kebab-case colors, nested typography, components with <code>{path}</code> refs). EXPERIENCE.md has all required defaults (Foundation, IA, Voice and Tone, Component Patterns, State Patterns, Interaction Primitives, Accessibility Floor, Key Flows) plus the triggered Responsive &amp; Platform section — correctly triggered by the mobile-first user override, which it names explicitly. Inspiration &amp; Anti-patterns is dropped; defensible (rejected directions documented in the decision log; banned-pattern list lives in Interaction Primitives). The Accessibility Floor honestly states the MVP cut rather than silently omitting the section — exactly right. No invented sections.</p>
+          </div>
+        </div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Key Flows precedes Responsive &amp; Platform</h3>
+              <span class="finding-location">EXPERIENCE.md section order</span>
+            </header>
+            <div class="finding-note">Both shape examples place Key Flows last. The order lock is spec'd for DESIGN.md only, so this is a convention deviation, not a violation.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Move Responsive &amp; Platform above Key Flows.</div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">DESIGN.md frontmatter adds keys beyond the spec's seven</h3>
+              <span class="finding-location">DESIGN.md frontmatter</span>
+            </header>
+            <div class="finding-note"><code>status</code>/<code>updated</code>/<code>sources</code> are extras (the spec's example DESIGN files don't carry them). Harmless and aids traceability; a strict spec-conformant parser should tolerate unknown keys.</div>
+            <div class="finding-fix"><strong>Fix:</strong> None, or note them as workspace extensions.</div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li><strong>Cross-refs:</strong> every <code>{path.to.token}</code> in both files resolves against DESIGN.md frontmatter — zero broken references found in a full extraction pass (colors ×15 distinct, typography ×6, rounded ×3, spacing ×2, components ×5 incl. dotted sub-paths).</li>
+        <li><strong>Theme reconciliation independently confirmed:</strong> spot-checked accent, background, border, danger, warning, success-foreground light+dark against <code>imports/heroui-theme.css</code> — digit-for-digit matches; the "inherit verbatim" clause correctly enumerates the unlisted tokens (focus, overlay, scrollbar, segment, default, field-border/foreground, surface-*-foreground).</li>
+        <li><strong>Name inconsistencies:</strong> singular frontmatter keys vs plural headings (<code>control-button</code>); EXPERIENCE-only component names without same-named DESIGN rows (§3); "Dual-view tabs" vs "Dual-view tabs / panels". All resolvable by inspection.</li>
+        <li><strong>Internal value conflict:</strong> FloodWait notice "12px" vs <code>{typography.body}</code> 14px (§6) — the only place the spines contradict themselves.</li>
+        <li><strong>Frontmatter completeness:</strong> both spines carry <code>name</code>/<code>status: draft</code>/<code>updated</code>/<code>sources</code>; all source paths resolve on disk (two base-path conventions, §7). <code>status: draft</code> is accurate pre-review.</li>
+        <li><strong>ASSUMPTION hygiene:</strong> 7 <code>[ASSUMPTION:]</code> tags found across the spines, matching the decision log's triage list exactly (admin surfaces extend the system; Detener instant / confirm only Eliminar; continuar-while-live guard; /expired contact targets; no owner priority controls; no tablet layout; admin mobile = responsive tables). All marked non-blocking; none hides a load-bearing decision that the consumer can't proceed without.</li>
+        <li><strong>No dangling artifact paths:</strong> spines reference only <code>.working/direction-cabina-refinada.html</code> and <code>imports/heroui-theme.css</code>; <code>mockups/</code>/<code>wireframes/</code> are never cited (they don't exist).</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: _bmad-output/planning-artifacts/ux-designs/ux-cc-2026-06-10/review-rubric.md</span>
+        <span>Generated: 2026-06-10</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,12 +1,17 @@
 # Telegram Auto-Sender
 
-Herramienta que monitorea tu portapapeles y reenvía mensajes a un chat de Telegram usando una cuenta de usuario (no un bot). Diseñada para enviar líneas a bots que procesan comandos tipo `.zo`, con sistema anti-spam adaptativo integrado.
+Herramienta que envía líneas de texto a uno o más chats de Telegram usando una **cuenta de usuario** (no un bot), agregando un prefijo a cada línea (ej: `dato1` → `.zo dato1`). Las respuestas del bot que contienen ✅ se guardan automáticamente en disco, con los datos `CC:` extraídos a un archivo filtrado.
+
+Tiene dos interfaces que comparten la misma lógica y la misma sesión de Telegram:
+
+- **Interfaz web** (`app.py`) — la recomendada: pegás el texto, ves la cola bajar línea por línea, pausás/reanudás/detenés en vivo, y navegás el historial de respuestas.
+- **CLI por portapapeles** (`auto_sender.py`) — legacy: monitorea el portapapeles y envía lo que copies.
 
 ---
 
 ## Requisitos previos
 
-- **Python 3.9+** instalado ([descargar](https://www.python.org/downloads/))
+- **Python 3.10+** instalado ([descargar](https://www.python.org/downloads/))
 - Una **cuenta de Telegram** con número de teléfono
 - Credenciales de la API de Telegram (se explican abajo)
 
@@ -54,8 +59,6 @@ Necesitás un **API ID** y un **API Hash** de Telegram. Solo se obtienen una vez
 
 ## Configuración
 
-### Crear el archivo `.env`
-
 En la raíz del proyecto, creá un archivo llamado `.env` con este contenido:
 
 ```env
@@ -64,40 +67,20 @@ TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
 TELEGRAM_PHONE=+5491123456789
 
-# Destino: nombre de usuario del bot o chat (sin @)
-TELEGRAM_DESTINO=ZephyrChkV3Bot
+# Destino(s): nombre de usuario del bot o chat (sin @), separados por coma
+TELEGRAM_DESTINO=MiBotDestino
 
-# Prefijo que se agrega a cada línea (default: .zo)
-TELEGRAM_PREFIJO=.zo
-
-# Intervalo base entre mensajes en segundos (default: 8.0)
+# Intervalo entre mensajes en segundos (default: 8.0)
 TELEGRAM_INTERVALO=8.0
 ```
 
-### Variables opcionales
-
-| Variable | Default | Descripción |
-|---|---|---|
-| `TELEGRAM_ANTISPAM_COOLDOWN` | `90.0` | Segundos de pausa cuando se detecta anti-spam |
-| `TELEGRAM_RESPUESTA_ESPERA` | `1.5` | Segundos a esperar por respuesta después de cada envío |
-| `TELEGRAM_ANTISPAM_KEYWORDS` | `antispam,anti spam,...` | Palabras clave separadas por coma que activan el cooldown |
-| `TELEGRAM_ADAPTIVE_INCREMENTO` | `0.6` | Segundos que suma al intervalo tras cada anti-spam |
-| `TELEGRAM_ADAPTIVE_EXTRA_MAX` | `3.0` | Máximo de segundos extra adaptativos |
-| `TELEGRAM_ADAPTIVE_RECUPERACION` | `0.2` | Segundos que baja el intervalo tras envíos limpios |
-| `TELEGRAM_ADAPTIVE_RECUPERACION_CADA` | `5` | Cada cuántos envíos limpios baja el ritmo |
-| `TELEGRAM_LOG_FILE` | `telegram_antispam_log.csv` | Archivo de log (sin contenido sensible) |
-| `TELEGRAM_LOG_MAX_SIZE_MB` | `10` | Tamaño máximo del log antes de rotar |
-| `TELEGRAM_LOG_MAX_FILES` | `5` | Cantidad de archivos de log a conservar |
-| `TELEGRAM_RESPUESTAS_FILE` | *(vacío)* | Si se setea, guarda respuestas ✅ en carpeta `respuestas/` |
-| `TELEGRAM_TIEMPO_RESPUESTA` | `30` | Timeout para esperar respuestas |
+Esas son **todas** las variables. En la interfaz web, destino e intervalo son solo
+valores precargados: los podés cambiar desde la UI sin tocar archivos. El prefijo
+no tiene variable de entorno — se escribe en la UI o se pasa como argumento al CLI.
 
 ---
 
 ## Uso
-
-Hay dos formas de usarlo: la **interfaz web** (recomendada) o el **CLI por portapapeles** (legacy).
-
----
 
 ### Interfaz web (recomendada)
 
@@ -105,24 +88,38 @@ Hay dos formas de usarlo: la **interfaz web** (recomendada) o el **CLI por porta
 python app.py
 ```
 
-Abre `http://127.0.0.1:8000` en el navegador. En vez de detectar el portapapeles,
-**pegás el texto** en un cuadro y lo enviás desde la UI:
+Abre solo el navegador en `http://127.0.0.1:8000`. Desde ahí:
 
 1. Escribí el **prefijo**, los **destinos** (coma-separados) y el **intervalo** — los
-   valores de `.env` vienen precargados pero los podés cambiar sin tocar archivos.
-2. Pegá el texto en el textarea (una línea = un mensaje) y apretá **Enviar**.
-3. La **cola** baja línea por línea a medida que se envían, con barra de progreso, %, ETA
-   y contadores (enviados, ✅ ok, ❌ rechazadas, ⏳ pendientes).
-4. Controlás el lote con **Pausar / Reanudar / Detener** en vivo.
-5. El panel **Respuestas en vivo** muestra cada respuesta del bot (✅/❌) con los datos `CC:`.
-6. El **Historial** te deja navegar respuestas guardadas por prefijo → sesión, ver
-   `completa.txt` / `filtrada.txt` y copiar o exportar la filtrada.
+   valores de `.env` vienen precargados. El campo prefijo sugiere prefijos ya usados
+   (ojo: sugiere el nombre de carpeta, sin el punto inicial — ej: `zo`, no `.zo`).
+2. Pegá el texto en el textarea (una línea = un mensaje) — el botón **Pegar** lo trae
+   del portapapeles — y apretá **Enviar**. Si hay un envío en curso, las líneas nuevas
+   se **anexan** a la cola (sin duplicar las que siguen pendientes), manteniendo los
+   destinos, el intervalo y la sesión del lote en curso.
+3. La **cola** baja línea por línea, con barra de progreso, %, ETA y contadores
+   (enviados, ✅ ok, ❌ rechazadas, ⏳ pendientes, en cola). Los contadores acumulan
+   mientras el servidor corre — no se reinician entre lotes.
+4. Controlás el lote con **Pausar / Reanudar / Detener** en vivo (detener vacía la cola).
+5. El panel **Respuestas en vivo** tiene dos columnas: **Completa** (cada respuesta
+   del bot con su ✅/❌; muestra las últimas 40) y **Filtrada** (solo los datos `CC:`
+   nuevos; muestra los últimos 200). El archivo en disco siempre tiene todo.
+6. Las respuestas se guardan en **sesiones de guardado** con nombre: el botón
+   **Nueva** crea una (con nombre opcional), **Renombrar** la renombra, y si no creás
+   ninguna se crea una automática al enviar.
+7. El **Historial** navega las respuestas guardadas por prefijo → sesión, mostrando
+   `completa.txt` y `filtrada.txt` lado a lado, cada una con **Copiar** y **Exportar**.
+   Por defecto **sigue en vivo** la sesión activa (se refresca solo con cada respuesta);
+   si navegás a otra sesión, el botón **↻ Ver sesión actual** te trae de vuelta.
+   **Continuar esta sesión** reanuda una sesión vieja sin duplicar datos `CC:` ya guardados.
 
-La config (`.env`) y la sesión (`anon.session`) son las mismas que usa el CLI: si ya te
-autenticaste una vez, la web conecta directo. Si no, muestra un formulario de login
-(teléfono → código → 2FA opcional).
+La config (`.env`) y la sesión de Telegram (`anon.session`) son las mismas que usa el
+CLI: si ya te autenticaste una vez, la web conecta directo. Si no, muestra un formulario
+de login (teléfono → código → 2FA opcional).
 
----
+> Nota: no se puede crear ni continuar una sesión de guardado mientras hay un envío
+> en curso o pausado — el servidor lo rechaza con un error. Esperá a que termine el
+> lote o presioná **Detener**.
 
 ### CLI por portapapeles (legacy)
 
@@ -130,84 +127,60 @@ autenticaste una vez, la web conecta directo. Si no, muestra un formulario de lo
 python auto_sender.py .zo
 ```
 
-El prefijo es un argumento **obligatorio**. La primera vez, Telethon te va a pedir:
-1. Tu **número de teléfono** (si no está en `.env`)
-2. Un **código de verificación** que te llega por Telegram
-3. Si tenés **contraseña en dos pasos**, también te la va a pedir
+El prefijo es un argumento posicional **obligatorio** (único argumento; no hay flags).
+Destino, teléfono e intervalo salen de `.env` (si falta alguno, el script avisa y sale).
+La primera vez, Telethon te va a pedir:
+
+1. Un **código de verificación** que te llega por Telegram
+2. Si tenés **contraseña en dos pasos**, también te la va a pedir
 
 > La sesión se guarda en `anon.session`. Mientras no lo borres, no vas a tener que autenticarte de nuevo.
 
-### Cómo funciona
+Cómo funciona:
 
 1. **Copiá texto** al portapapeles (Ctrl+C / Cmd+C)
-2. El script detecta el texto nuevo automáticamente
-3. Agrega el prefijo a cada línea (ej: `dato1` → `.zo dato1`)
-4. Envía cada línea al destino con el intervalo configurado
-5. Escucha respuestas del bot y las muestra en consola
+2. El script detecta el texto nuevo automáticamente (copiar lo mismo dos veces no re-envía)
+3. Agrega el prefijo a cada línea y descarta líneas duplicadas del lote
+4. Envía cada línea al destino con el intervalo configurado, mostrando progreso y ETA
+5. Escucha respuestas del bot, las muestra en consola y las guarda en `respuestas/`
 
-### Modo simulación
-
-Para probar sin enviar mensajes reales:
-
-```bash
-python auto_sender.py --dry-run
-```
-
-### Cambiar prefijo
-
-```bash
-python auto_sender.py --prefijo ".otro"
-```
-
-### Pausar y reanudar
-
-Mientras el script corre, podés pausarlo creando un archivo `.pause` en la carpeta del proyecto:
-
-```bash
-touch .pause    # pausar
-rm .pause       # reanudar
-```
-
-### Salir
-
-Presioná `Ctrl+C`.
+Para salir: `Ctrl+C`. (El CLI no tiene pausa — pausar/reanudar existe solo en la web.)
 
 ---
 
-## Sistema anti-spam adaptativo
+## Manejo de límites de Telegram
 
-El bot tiene un sistema que se adapta automáticamente:
-
-- **Si el bot destino responde con "antispam" o "flood"**: el script pausa automáticamente por el cooldown configurado (default 90s)
-- **El intervalo entre envíos sube** gradualmente si se detectan varios anti-spams seguidos
-- **El intervalo baja de a poco** cuando los envíos pasan sin problemas
-- **Si Telegram impone un `FloodWaitError`**: el script espera exactamente lo que Telegram pide
+El intervalo entre envíos es **constante** (`TELEGRAM_INTERVALO`, editable en la web).
+Si Telegram impone un `FloodWaitError`, el programa espera los segundos que Telegram
+pide y reintenta la **misma** línea — no se pierde ninguna. Cualquier otro error de
+envío también reintenta la misma línea (cada 2 s en la web): si una línea falla
+siempre, bloquea la cola hasta que presiones **Detener**.
 
 ---
 
-## Respuestas del bot
+## Respuestas guardadas
 
-Si configurás `TELEGRAM_RESPUESTAS_FILE`, las respuestas del bot que contengan ✅ se guardan automáticamente:
+Las respuestas del bot que contienen ✅ se guardan **siempre** (no hay que activar nada),
+organizadas por prefijo y sesión:
 
 ```
 respuestas/
-  zo/
-    _ultima -> 2026-06-07_15-30-00   ← atajo a la sesión más reciente
-    2026-06-07_15-30-00/
-      completa.txt    ← respuestas completas con timestamp
-      filtrada.txt    ← solo los datos después de "CC:", limpios
+  zo/                              ← slug del prefijo (.zo → zo)
+    _ultima -> 2026-06-09_21-30-00   ← atajo a la sesión más reciente
+    2026-06-09_21-30-00/
+      completa.txt    ← todas las respuestas, con timestamp
+      filtrada.txt    ← solo los datos después de "CC:", sin duplicados
+      meta.json       ← nombre de la sesión y prefijo original (solo sesiones de la web)
 ```
 
----
-
-## Logs
-
-El archivo `telegram_antispam_log.csv` registra cada intento de envío con:
-- Timestamp, ID del lote, posición del mensaje
-- Resultado (`ok`, `antispam`, `flood_wait`)
-- Métricas de tiempo y estado adaptativo
-
-El log rota automáticamente al alcanzar 10 MB (configurable).
+- Los datos `CC:` se deduplican **por sesión**: el mismo dato no se escribe dos veces
+  en `filtrada.txt` (cada dato se corta en la palabra `Status` si aparece).
+- Las **ediciones** de mensajes del bot también se capturan: una respuesta que pasa
+  de ⏳ a ✅ se guarda cuando llega la edición, y una edición ❌→✅ corrige los contadores.
+- **Continuar** una sesión vieja (desde el Historial de la web) precarga lo ya guardado,
+  así los re-envíos no duplican datos.
+- El nombre visible de cada sesión vive en `meta.json` (editable con **Renombrar**);
+  el nombre de la carpeta (timestamp) es el ID estable.
 
 ---
 
@@ -227,11 +200,12 @@ Los mensajes se distribuyen en round-robin entre los destinos.
 
 | Problema | Solución |
 |---|---|
-| `Falta TELEGRAM_API_ID` | Completá las credenciales en `.env` |
+| `Falta TELEGRAM_API_ID` / `Falta TELEGRAM_PHONE` / `Falta TELEGRAM_DESTINO` | Completá esas variables en `.env` |
 | `No se encontro @usuario` | Abrí Telegram, buscá al usuario y empezá una conversación. Después volvé a ejecutar |
-| `FloodWaitError` | El script lo maneja solo. Esperá |
+| `FloodWaitError` | El programa lo maneja solo. Esperá |
 | Se pide verificación cada vez | No borres `anon.session` |
 | No se envían mensajes | Verificá que el destino sea correcto y que puedas enviarle mensajes manualmente desde Telegram |
+| La web muestra el formulario de login | Falta autorizar la cuenta: teléfono → código → 2FA, una sola vez |
 | `pyperclip` no funciona en Linux | Instalá `xclip` o `xsel`: `sudo apt install xclip` |
 
 ---
@@ -241,13 +215,13 @@ Los mensajes se distribuyen en round-robin entre los destinos.
 ```
 .
 ├── app.py                  # Interfaz web (FastAPI + WebSocket) — recomendada
-├── static/index.html       # Frontend de la UI web
-├── core.py                 # Lógica compartida (prefijo, sesiones, guardado)
+├── static/index.html       # Frontend de la UI web (sin build, vanilla JS)
+├── core.py                 # Lógica compartida (prefijo, sesiones, guardado, CC:)
 ├── auto_sender.py          # CLI legacy por portapapeles
 ├── requirements.txt        # Dependencias de Python
 ├── .env                    # Tu configuración (NO se sube a git)
 ├── .gitignore
 ├── anon.session            # Sesión de Telegram (NO se sube a git)
-├── respuestas/             # Respuestas guardadas del bot
+├── respuestas/             # Respuestas guardadas, por prefijo/sesión
 └── README.md
 ```

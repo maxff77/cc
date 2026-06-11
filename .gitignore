@@ -10,6 +10,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 
 # Logs
 telegram_antispam_log.csv
