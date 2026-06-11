@@ -11,7 +11,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.base import get_session
+from app.db.base import async_session_factory, get_session
 from app.db.models import User
 from app.errors import forbidden, not_authenticated, plan_expired
 from app.services import auth as auth_service
@@ -38,11 +38,14 @@ async def get_current_user(
     # Lazy, auth-time plan expiry (AC1/AC3): the FIRST request after a client's
     # plan lapses revokes their session and returns 403 plan_expired; any later
     # request with the now-revoked cookie falls into the 401 branch above. The
-    # commit must persist even though the request fails — get_session yields a
-    # session whose transaction the caller owns (see app.db.base).
+    # revoke commits on its OWN short-lived session so this dependency stays
+    # read-only on the request-scoped one — committing that mid-dependency
+    # would also persist anything an earlier dependency had staged on it, even
+    # though the request then fails with 403.
     if plans_service.is_plan_expired(user):
-        await auth_service.revoke_session(session, token)
-        await session.commit()
+        async with async_session_factory() as revoke_db:
+            await auth_service.revoke_session(revoke_db, token)
+            await revoke_db.commit()
         raise plan_expired()
     return user
 

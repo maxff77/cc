@@ -6,78 +6,35 @@ verification used. Each run seeds throwaway owner/admin accounts with unique
 emails and deletes everything it created on teardown, so the dev DB is left
 clean and reruns don't collide.
 
+Seed/login/cleanup helpers are shared via ``tests.conftest``.
+
 Run (from backend/, venv active):  pytest tests/test_admin_users.py
 """
 
-import uuid
 from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
-from app.db.base import async_session_factory
-from app.db.models import Tenant, User
-from app.db.repos import users as users_repo
+from app.db.models import User
 from app.main import app
-from app.services.auth import hash_password
 from httpx import ASGITransport, AsyncClient
 
-PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
-
-
-def _email(role: str) -> str:
-    return f"test-{role}-{uuid.uuid4().hex[:8]}@cc.test"
-
-
-async def _seed(role: str) -> User:
-    """Create a fresh user (own tenant) directly, bypassing the API."""
-    async with async_session_factory() as session:
-        tenant = await users_repo.create_tenant(session, name=f"t-{uuid.uuid4().hex}")
-        user = await users_repo.create_user(
-            session,
-            tenant_id=tenant.id,
-            email=_email(role),
-            password_hash=hash_password(PASSWORD),
-            role=role,
-            expires_at=None,
-        )
-        await session.commit()
-        return user
-
-
-async def _login(client: AsyncClient, email: str) -> None:
-    res = await client.post(
-        "/api/auth/login", json={"email": email, "password": PASSWORD}
-    )
-    assert res.status_code == 200, res.text
-
-
-async def _cleanup(emails: set[str]) -> None:
-    """Delete every user created during the test, plus its tenant."""
-    async with async_session_factory() as session:
-        for email in emails:
-            user = await users_repo.get_by_email(session, email)
-            if user is None:
-                continue
-            tenant = await session.get(Tenant, user.tenant_id)
-            await session.delete(user)
-            if tenant is not None:
-                await session.delete(tenant)
-        await session.commit()
+from tests.conftest import cleanup_users, login, seed_user, unique_email
 
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def ctx() -> AsyncIterator[dict[str, object]]:
     """Seed an owner + an admin, log each in, and clean up afterwards."""
     created: set[str] = set()
-    owner = await _seed("owner")
-    admin = await _seed("admin")
+    owner = await seed_user("owner")
+    admin = await seed_user("admin")
     created.update({owner.email, admin.email})
 
     transport = ASGITransport(app=app)
     owner_client = AsyncClient(transport=transport, base_url="http://test")
     admin_client = AsyncClient(transport=transport, base_url="http://test")
-    await _login(owner_client, owner.email)
-    await _login(admin_client, admin.email)
+    await login(owner_client, owner.email)
+    await login(admin_client, admin.email)
 
     yield {
         "owner_client": owner_client,
@@ -89,7 +46,7 @@ async def ctx() -> AsyncIterator[dict[str, object]]:
 
     await owner_client.aclose()
     await admin_client.aclose()
-    await _cleanup(created)
+    await cleanup_users(created)
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -100,7 +57,7 @@ async def test_admin_creates_client_with_expiry_and_fresh_tenant(
     created: set[str] = ctx["created"]  # type: ignore[assignment]
     admin: User = ctx["admin"]  # type: ignore[assignment]
 
-    email = _email("client")
+    email = unique_email("client")
     created.add(email)
     res = await admin_client.post(
         "/api/admin/users",
@@ -118,7 +75,7 @@ async def test_duplicate_email_is_email_taken(ctx: dict[str, object]) -> None:
     admin_client: AsyncClient = ctx["admin_client"]  # type: ignore[assignment]
     created: set[str] = ctx["created"]  # type: ignore[assignment]
 
-    email = _email("client")
+    email = unique_email("client")
     created.add(email)
     payload = {"email": email, "password": "pw123456", "role": "client", "plan_days": 10}
     first = await admin_client.post("/api/admin/users", json=payload)
@@ -134,7 +91,7 @@ async def test_client_requires_positive_plan_days(ctx: dict[str, object]) -> Non
 
     res = await admin_client.post(
         "/api/admin/users",
-        json={"email": _email("client"), "password": "pw123456", "role": "client"},
+        json={"email": unique_email("client"), "password": "pw123456", "role": "client"},
     )
     assert res.status_code == 400
     assert res.json()["code"] == "invalid_plan_days"
@@ -146,7 +103,7 @@ async def test_admin_creating_admin_is_forbidden(ctx: dict[str, object]) -> None
 
     res = await admin_client.post(
         "/api/admin/users",
-        json={"email": _email("admin"), "password": "pw123456", "role": "admin"},
+        json={"email": unique_email("admin"), "password": "pw123456", "role": "admin"},
     )
     assert res.status_code == 403
     assert res.json()["code"] == "forbidden"
@@ -174,7 +131,7 @@ async def test_owner_creates_and_deletes_admin(ctx: dict[str, object]) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     created: set[str] = ctx["created"]  # type: ignore[assignment]
 
-    email = _email("admin")
+    email = unique_email("admin")
     created.add(email)
     res = await owner_client.post(
         "/api/admin/users",
@@ -194,7 +151,7 @@ async def test_owner_deleting_a_client_is_forbidden(ctx: dict[str, object]) -> N
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     created: set[str] = ctx["created"]  # type: ignore[assignment]
 
-    email = _email("client")
+    email = unique_email("client")
     created.add(email)
     res = await owner_client.post(
         "/api/admin/users",

@@ -4,7 +4,7 @@ baseline_commit: 330365d05ec7591722bfa45605fe2552e967c63c
 
 # Story 1.4: Expiración automática del plan y lockout total
 
-Status: review
+Status: done
 
 ## Story
 
@@ -226,16 +226,37 @@ claude-opus-4-8 (Opus 4.8, 1M context)
 - No migration / no new deps / no env vars / no `types/api.ts` change — `users.expires_at` (migration #3) is only READ. `services/plans.py` created with the expiry check ONLY; renew/block is Story 1.5.
 - Manual psql/browser walkthrough (Task 8) is covered equivalently by the automated ASGI tests (expired login → 403, mid-session → 403→401 revoke, owner/admin unaffected, active client OK); the live browser walk is left for reviewer/QA.
 
+### Code Review (2026-06-11) — 10 findings, all fixed
+
+High-effort review (7 finder angles → 1-vote verify). 10 findings survived; 1 refuted (request-time `is_blocked` gap — Story 1.5 closes it by revoking sessions at block time). Fixes:
+
+1. **Middleware `/me` fail-closed on backend blips** — backend-unreachable/5xx is now treated as NON-authoritative: continue outside `/admin`, fail closed only on the `/admin` role gate. Prevents a transient backend hiccup (or a prod hairpin-fetch failure) from bouncing every valid session to `/login`.
+2. **One-shot `plan_expired` 403 could be consumed by the wrong request** — three-part fix: (a) prefetch requests (`next-router-prefetch`/`purpose`/`sec-purpose` headers) skip the `/me` fetch so a speculative prefetch never burns the single 403; (b) `lib/api.ts` gained a global handler — any client-side call receiving 403 `plan_expired` routes to `/expired` (loop-guarded); (c) the middleware 401/other-403 branch now deletes the stale cookie so later navigations short-circuit on the no-cookie branch.
+3. **Fail-open admin role gate** — a 200 `/me` with unparseable body now fails closed to `/login` (previously `role: undefined` fell through to `next()`).
+4. **Throttle masked `plan_expired`** — `login_throttle.reset` moved BEFORE the expiry check in `login()`: correct password clears the counter, so a throttled expired client sees `plan_expired`, not 429.
+5. **Mid-dependency commit on the request-scoped session** — the expiry revoke now commits on its own short-lived session (`async_session_factory`); `get_current_user` stays read-only on the shared request session.
+6. **Stuck "Entrando…" via bfcache** — `setSubmitting(false)` moved to `finally` in the login submit handler.
+7. **Active user landing on `/expired`** — the page now probes `/api/auth/me` on mount and bounces anyone with a valid session to their home surface.
+8. **Contact-panel duplication** — extracted `frontend/components/contact-panel.tsx`, shared by the login blocked notice and `/expired`.
+9. **Test-helper duplication** — `PASSWORD`/`unique_email`/`seed_user`/`login`/`cleanup_users` moved to `backend/tests/conftest.py`; both test modules import them.
+10. **Dual clock authority** — documented in `services/plans.py` as a deliberate exception to the SQL-`now()` convention (pure module, day-scale deadlines).
+
+Also: matcher broadened to exclude all of `_next/` and any path with a file extension (public assets no longer trigger a backend `/me`). Post-fix gates: backend `pytest` 22 passed; frontend `eslint` + `tsc --noEmit` + `next build` all green.
+
 ### File List
 
 - `backend/app/errors.py` — EXTEND: `plan_expired()` factory.
-- `backend/app/services/plans.py` — NEW: `is_plan_expired(user)` pure predicate.
-- `backend/app/api/auth.py` — EXTEND: expiry gate in `login()`.
-- `backend/app/api/deps.py` — EXTEND: expiry gate + session revoke/commit in `get_current_user`.
-- `backend/tests/test_plan_expiry.py` — NEW: 5 ASGI integration tests.
-- `frontend/app/expired/page.tsx` — NEW: hard-lockout page.
-- `frontend/middleware.ts` — EXTEND: `/me` for all protected routes, `/expired` redirect + cookie delete, matcher exclusion.
-- `frontend/app/login/page.tsx` — EXTEND: `plan_expired` → `/expired` redirect.
+- `backend/app/services/plans.py` — NEW: `is_plan_expired(user)` pure predicate (review: clock-source note).
+- `backend/app/api/auth.py` — EXTEND: expiry gate in `login()` (review: throttle reset moved before it).
+- `backend/app/api/deps.py` — EXTEND: expiry gate + session revoke in `get_current_user` (review: revoke commits on its own session).
+- `backend/tests/conftest.py` — EXTEND (review): shared seed/login/cleanup helpers.
+- `backend/tests/test_plan_expiry.py` — NEW: 5 ASGI integration tests (review: uses conftest helpers).
+- `backend/tests/test_admin_users.py` — EXTEND (review): uses conftest helpers.
+- `frontend/app/expired/page.tsx` — NEW: hard-lockout page (review: bounces active sessions home; uses ContactPanel).
+- `frontend/components/contact-panel.tsx` — NEW (review): shared WhatsApp/Telegram panel.
+- `frontend/middleware.ts` — EXTEND: `/me` for all protected routes, `/expired` redirect + cookie delete, matcher exclusion (review: prefetch skip, fail-open-on-backend-down outside /admin, fail-closed parse, stale-cookie cleanup, static-asset exclusion).
+- `frontend/lib/api.ts` — EXTEND (review): global `plan_expired` → `/expired` routing.
+- `frontend/app/login/page.tsx` — EXTEND: `plan_expired` handling (review: defers to api.ts; `finally` submit reset; ContactPanel reuse).
 
 ## Change Log
 
@@ -243,3 +264,4 @@ claude-opus-4-8 (Opus 4.8, 1M context)
 |------------|-------------------------------------------------------------|
 | 2026-06-11 | Story 1.4 drafted (context engine). Status → ready-for-dev. |
 | 2026-06-11 | Story 1.4 implemented: auth-time plan expiry gate (login + get_current_user) with session revocation, `plan_expired` error, `/expired` page, middleware expiry redirect, login redirect. All gates green. Status → review. |
+| 2026-06-11 | Code review: 10 findings fixed (middleware availability/fail-open/prefetch, one-shot 403 consumption, throttle-vs-expiry order, scoped revoke commit, login submit reset, /expired active-user bounce, ContactPanel + test-helper dedup, clock note). All gates green. Status → done. |

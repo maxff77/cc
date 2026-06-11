@@ -105,12 +105,17 @@ async def login(
     if user.is_blocked:
         raise account_blocked()
 
+    # The password checked out, so clear the failure counter BEFORE the expiry
+    # check — otherwise earlier typos linger and a throttled expired client
+    # gets 429 too_many_attempts instead of learning the real plan_expired
+    # state (and one later typo would re-trip the 429).
+    auth_service.login_throttle.reset(body.email, ip)
+
     # Reveal expiry only AFTER the password checks out (same reasoning as the
     # blocked check above). No session row is created for an expired client.
     if plans_service.is_plan_expired(user):
         raise plan_expired()
 
-    auth_service.login_throttle.reset(body.email, ip)
     auth_session = await auth_service.create_session(session, user)
     await session.commit()
     _set_session_cookie(response, auth_session.token)

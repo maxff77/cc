@@ -27,6 +27,12 @@ def is_plan_expired(user: User) -> bool:
 
     ``expires_at`` is timezone-aware (timestamptz), so it is compared against
     ``datetime.now(UTC)``; stripping tzinfo would raise ``TypeError``.
+
+    Clock source: this uses the APP clock — a deliberate exception to the
+    repo convention of deciding expiry in SQL (``func.now()``, see
+    ``repos/users.get_active_session_with_user``). This module is pure (no DB
+    round-trip available) and plan deadlines are day-scale, so seconds of
+    app/DB clock skew cannot move the lockout meaningfully.
     """
     if user.role != "client":
         return False

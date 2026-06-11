@@ -1,8 +1,9 @@
 "use client";
 
-import { Button } from "@heroui/react";
+import { useEffect } from "react";
 
-import { siteConfig } from "@/config/site";
+import { ContactPanel } from "@/components/contact-panel";
+import { api } from "@/lib/api";
 
 // Hard-lockout surface for an expired client (UX flow 4: never a dead-end —
 // always the external renewal channel). No nav, no partial access, no actions
@@ -12,6 +13,22 @@ const MESSAGE =
   "Tu plan venció. Escríbenos por WhatsApp o Telegram y lo reactivamos.";
 
 export default function ExpiredPage() {
+  // /expired sits outside the middleware matcher (a freshly-locked-out client
+  // has had their session revoked, so the page must load without one). That
+  // also means an ACTIVE user can land here via Back button or stale bookmark
+  // after a renewal — probe /me and bounce anyone with a valid session home.
+  useEffect(() => {
+    api
+      .get<{ role: string }>("/api/auth/me")
+      .then((me) => {
+        window.location.replace(me.role === "client" ? "/" : "/admin/users");
+      })
+      .catch(() => {
+        // 401 (the expected case for a locked-out visitor) or network error →
+        // stay on the lockout page.
+      });
+  }, []);
+
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
       <div className="w-full max-w-sm">
@@ -19,35 +36,7 @@ export default function ExpiredPage() {
           Tu plan venció
         </h1>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-danger/40 bg-danger/10 p-4">
-          <p className="text-sm">{MESSAGE}</p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              onPress={() =>
-                window.open(
-                  siteConfig.contact.whatsapp,
-                  "_blank",
-                  "noopener,noreferrer",
-                )
-              }
-            >
-              WhatsApp
-            </Button>
-            <Button
-              variant="secondary"
-              onPress={() =>
-                window.open(
-                  siteConfig.contact.telegram,
-                  "_blank",
-                  "noopener,noreferrer",
-                )
-              }
-            >
-              Telegram
-            </Button>
-          </div>
-        </div>
+        <ContactPanel message={MESSAGE} />
       </div>
     </main>
   );

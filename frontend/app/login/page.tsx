@@ -12,7 +12,7 @@ import {
 } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
-import { siteConfig } from "@/config/site";
+import { ContactPanel } from "@/components/contact-panel";
 
 interface LoginResponse {
   id: number;
@@ -59,11 +59,8 @@ export default function LoginPage() {
           // AC2: inline field-level error; email stays filled; no redirect.
           setCredentialError(COPY.invalid_credentials);
         } else if (err.code === "plan_expired") {
-          // Expired client re-logging in lands on the hard-lockout page, not an
-          // inline error. Full navigation so middleware re-evaluates.
-          window.location.assign("/expired");
-
-          return;
+          // lib/api.ts already routed to /expired (the hard-lockout page);
+          // suppress the generic banner while that navigation lands.
         } else if (err.code === "account_blocked") {
           setNotice({ kind: "blocked" });
         } else if (err.code === "too_many_attempts") {
@@ -77,6 +74,10 @@ export default function LoginPage() {
           message: "No pudimos conectar. Intenta de nuevo.",
         });
       }
+    } finally {
+      // Always re-enable the form: window.location.assign() doesn't block, and
+      // bfcache can restore this page (Back button) with its last rendered
+      // state — a missed reset would leave the button stuck on "Entrando…".
       setSubmitting(false);
     }
   }
@@ -95,35 +96,7 @@ export default function LoginPage() {
         )}
 
         {notice?.kind === "blocked" && (
-          <div className="mb-4 flex flex-col gap-3 rounded-lg border border-danger/40 bg-danger/10 p-4">
-            <p className="text-sm">{COPY.account_blocked}</p>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onPress={() =>
-                  window.open(
-                    siteConfig.contact.whatsapp,
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-              >
-                WhatsApp
-              </Button>
-              <Button
-                variant="secondary"
-                onPress={() =>
-                  window.open(
-                    siteConfig.contact.telegram,
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-              >
-                Telegram
-              </Button>
-            </div>
-          </div>
+          <ContactPanel className="mb-4" message={COPY.account_blocked} />
         )}
 
         <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
