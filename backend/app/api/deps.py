@@ -13,15 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.base import async_session_factory, get_session
 from app.db.models import User
-from app.errors import forbidden, not_authenticated, plan_expired
+from app.errors import (
+    forbidden,
+    not_authenticated,
+    password_change_required,
+    plan_expired,
+)
 from app.services import auth as auth_service
 from app.services import plans as plans_service
 
 
-async def get_current_user(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-) -> User:
+async def _resolve_session_user(request: Request, session: AsyncSession) -> User:
     """Resolve the authenticated user from the session cookie.
 
     Raises ``not_authenticated`` (401) when the cookie is absent or the session
@@ -51,6 +53,36 @@ async def get_current_user(
         await _revoke_own_session(token)
         raise plan_expired()
     return user
+
+
+async def get_current_user(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """``_resolve_session_user`` + the forced-password-change gate (Story 1.6).
+
+    Gate order: blocked → expired → flag. Unlike those two, the flag gate does
+    NOT revoke the session (it is legitimate — the user needs it to complete
+    the change) and the 403 is repeatable (not one-shot like ``plan_expired``),
+    so middleware/prefetch consumption is harmless.
+    """
+    user = await _resolve_session_user(request, session)
+    if user.must_change_password:
+        raise password_change_required()
+    return user
+
+
+async def get_current_user_allow_pending_password(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """``_resolve_session_user`` WITHOUT the flag gate.
+
+    Used EXCLUSIVELY by the change-password endpoint — the single hole the
+    architecture mandates ("flag on user; middleware blocks everything except
+    the change-password endpoint").
+    """
+    return await _resolve_session_user(request, session)
 
 
 async def _revoke_own_session(token: str) -> None:

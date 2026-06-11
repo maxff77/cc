@@ -141,7 +141,7 @@ async def mark_session_revoked(session: AsyncSession, token: str) -> None:
 
 
 async def revoke_all_sessions_for_user(
-    session: AsyncSession, user_id: int
+    session: AsyncSession, user_id: int, *, except_token: str | None = None
 ) -> None:
     """Revoke every live auth session for ``user_id`` in one statement.
 
@@ -150,12 +150,15 @@ async def revoke_all_sessions_for_user(
     ``update()`` keeps it race-free in one round trip; this is the immediate
     lockout backing ``block_user`` (Story 1.5). The user's next request then
     falls into ``get_current_user``'s ``not_authenticated`` (401) branch.
+
+    ``except_token`` spares one session: the forced password change (1.6)
+    revokes every OTHER session — any second temp-password login dies — while
+    the session that completed the change continues.
     """
-    await session.execute(
-        update(AuthSession)
-        .where(
-            AuthSession.user_id == user_id,
-            AuthSession.revoked_at.is_(None),
-        )
-        .values(revoked_at=datetime.now(UTC))
+    stmt = update(AuthSession).where(
+        AuthSession.user_id == user_id,
+        AuthSession.revoked_at.is_(None),
     )
+    if except_token is not None:
+        stmt = stmt.where(AuthSession.token != except_token)
+    await session.execute(stmt.values(revoked_at=datetime.now(UTC)))

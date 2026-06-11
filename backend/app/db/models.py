@@ -44,6 +44,11 @@ class User(Base):
     is_blocked: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
+    # Set by the admin password-reset action (Story 1.6); read at auth time.
+    # While True, get_current_user 403s everything except change-password.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     # plan expiry; set at client creation = now + plan_days. Enforcement/lockout
     # is Story 1.4. Nullable: owner/admin rows carry no plan; only 'client' rows
     # get an expires_at.
