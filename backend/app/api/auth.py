@@ -12,8 +12,14 @@ from app.api.deps import get_current_user
 from app.config import settings
 from app.db.base import get_session
 from app.db.models import User
-from app.errors import account_blocked, invalid_credentials, too_many_attempts
+from app.errors import (
+    account_blocked,
+    invalid_credentials,
+    plan_expired,
+    too_many_attempts,
+)
 from app.services import auth as auth_service
+from app.services import plans as plans_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -98,6 +104,11 @@ async def login(
     # (AC4) reaches the real owner — not anyone enumerating emails.
     if user.is_blocked:
         raise account_blocked()
+
+    # Reveal expiry only AFTER the password checks out (same reasoning as the
+    # blocked check above). No session row is created for an expired client.
+    if plans_service.is_plan_expired(user):
+        raise plan_expired()
 
     auth_service.login_throttle.reset(body.email, ip)
     auth_session = await auth_service.create_session(session, user)

@@ -58,6 +58,12 @@ export default function LoginPage() {
         if (err.code === "invalid_credentials") {
           // AC2: inline field-level error; email stays filled; no redirect.
           setCredentialError(COPY.invalid_credentials);
+        } else if (err.code === "plan_expired") {
+          // Expired client re-logging in lands on the hard-lockout page, not an
+          // inline error. Full navigation so middleware re-evaluates.
+          window.location.assign("/expired");
+
+          return;
         } else if (err.code === "account_blocked") {
           setNotice({ kind: "blocked" });
         } else if (err.code === "too_many_attempts") {

@@ -88,3 +88,14 @@ def user_not_found() -> AppError:
         code="user_not_found",
         message="Usuario no encontrado.",
     )
+
+
+# --- Codes this story (1.4) defines --------------------------------------
+
+
+def plan_expired() -> AppError:
+    return AppError(
+        status_code=403,
+        code="plan_expired",
+        message="Tu plan venció. Escríbenos por WhatsApp o Telegram y lo reactivamos.",
+    )

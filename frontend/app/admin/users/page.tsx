@@ -114,37 +114,42 @@ export default function AdminUsersPage() {
         )}
 
         {users.data && (
-          <Table aria-label="Usuarios">
-            <Table.Header>
-              <Table.Column isRowHeader>Correo</Table.Column>
-              <Table.Column>Rol</Table.Column>
-              <Table.Column>Vence</Table.Column>
-              <Table.Column>Acciones</Table.Column>
-            </Table.Header>
-            <Table.Body renderEmptyState={() => "Todavía no hay clientes."}>
-              {users.data.items.map((u) => (
-                <Table.Row key={u.id}>
-                  <Table.Cell>{u.email}</Table.Cell>
-                  <Table.Cell>{u.role}</Table.Cell>
-                  <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
-                  <Table.Cell>
-                    {isOwner && u.role === "admin" ? (
-                      <DeleteAdminAction
-                        email={u.email}
-                        userId={u.id}
-                        onDeleted={() =>
-                          queryClient.invalidateQueries({
-                            queryKey: USERS_KEY,
-                          })
-                        }
-                      />
-                    ) : (
-                      "—"
-                    )}
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
+          <Table>
+            <Table.Content aria-label="Usuarios">
+              <Table.Header>
+                <Table.Column isRowHeader>Correo</Table.Column>
+                <Table.Column>Rol</Table.Column>
+                <Table.Column>Vence</Table.Column>
+                <Table.Column>Acciones</Table.Column>
+              </Table.Header>
+              <Table.Body
+                items={users.data.items}
+                renderEmptyState={() => "Todavía no hay clientes."}
+              >
+                {(u) => (
+                  <Table.Row id={u.id}>
+                    <Table.Cell>{u.email}</Table.Cell>
+                    <Table.Cell>{u.role}</Table.Cell>
+                    <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
+                    <Table.Cell>
+                      {isOwner && u.role === "admin" ? (
+                        <DeleteAdminAction
+                          email={u.email}
+                          userId={u.id}
+                          onDeleted={() =>
+                            queryClient.invalidateQueries({
+                              queryKey: USERS_KEY,
+                            })
+                          }
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </Table.Cell>
+                  </Table.Row>
+                )}
+              </Table.Body>
+            </Table.Content>
           </Table>
         )}
       </section>
