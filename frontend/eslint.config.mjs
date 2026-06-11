@@ -27,6 +27,7 @@ export default defineConfig([globalIgnores([
     "**/*.css",
     "**/.changeset",
     "**/dist",
+    "types/api.ts",
     "esm/*",
     "public/*",
     "tests/*",

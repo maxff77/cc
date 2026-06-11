@@ -6,7 +6,7 @@ via new Alembic migrations (no tables ahead of need).
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -40,6 +40,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     # 'owner' | 'admin' | 'client' — enforced in app logic (Story 1.3)
     role: Mapped[str] = mapped_column(String(20))
+    # Read at login (Story 1.2); the admin action that sets it is Story 1.5.
+    is_blocked: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -60,7 +64,15 @@ class AuthSession(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    # Opaque cookie value (secrets.token_urlsafe(32) ≈ 43 chars). The cookie
+    # carries only this token; the server resolves it — unguessable + DB-backed,
+    # so no signing is needed.
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Set on logout/revocation; a session is valid iff revoked_at IS NULL.
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
