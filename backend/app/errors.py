@@ -61,3 +61,30 @@ def forbidden() -> AppError:
         code="forbidden",
         message="No tienes permiso para acceder a esto.",
     )
+
+
+# --- Codes this story (1.3) defines --------------------------------------
+
+
+def email_taken() -> AppError:
+    return AppError(
+        status_code=409,
+        code="email_taken",
+        message="Ya existe un cliente con ese email.",
+    )
+
+
+def invalid_plan_days() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_plan_days",
+        message="Indica los días del plan.",
+    )
+
+
+def user_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="user_not_found",
+        message="Usuario no encontrado.",
+    )

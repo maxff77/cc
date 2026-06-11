@@ -37,6 +37,7 @@
 generated: 2026-06-11
 last_updated: 2026-06-11
 project: cc
+# 1-3 → review 2026-06-11
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
@@ -46,7 +47,7 @@ development_status:
   epic-1: in-progress
   1-1-inicializar-proyecto-desde-starter-esqueleto-backend: review
   1-2-login-y-logout-con-email-contrasena: review
-  1-3-alta-manual-de-clientes-y-gestion-de-roles: backlog
+  1-3-alta-manual-de-clientes-y-gestion-de-roles: review
   1-4-expiracion-automatica-del-plan-y-lockout-total: backlog
   1-5-renovar-plan-y-bloquear-desbloquear-cliente: backlog
   1-6-reset-de-contrasena-con-cambio-forzado: backlog

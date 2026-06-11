@@ -4,13 +4,14 @@ The single place SQL queries for authentication live. Services orchestrate
 over these; routers never query the ORM directly.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.db.models import AuthSession, User
+from app.db.models import AuthSession, Tenant, User
 
 
 async def get_by_email(session: AsyncSession, email: str) -> User | None:
@@ -28,6 +29,69 @@ async def get_by_email(session: AsyncSession, email: str) -> User | None:
         .limit(1)
     )
     return (await session.execute(stmt)).scalars().first()
+
+
+# --- User / tenant management (Story 1.3) --------------------------------
+#
+# Admin/owner user-management queries are intentionally GLOBAL (cross-tenant):
+# an admin manages all clients regardless of tenant, so list/get/delete here
+# carry NO tenant filter. The authorization boundary is the route's
+# ``require_role`` dependency, not a tenant_id scope. (This is distinct from
+# client-owned data, which IS tenant-scoped — Epics 2/3.)
+
+
+async def create_tenant(session: AsyncSession, name: str) -> Tenant:
+    """Insert and flush a fresh tenant (one tenant per user)."""
+    tenant = Tenant(name=name)
+    session.add(tenant)
+    await session.flush()
+    return tenant
+
+
+async def create_user(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    email: str,
+    password_hash: str,
+    role: str,
+    expires_at: datetime | None,
+) -> User:
+    """Insert and flush a fresh user row."""
+    user = User(
+        tenant_id=tenant_id,
+        email=email,
+        password_hash=password_hash,
+        role=role,
+        expires_at=expires_at,
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def list_by_roles(
+    session: AsyncSession, roles: Sequence[str]
+) -> list[User]:
+    """Return all users whose role is in ``roles`` (GLOBAL — not tenant-scoped).
+
+    Ordered by id for a stable listing. Injecting a tenant filter here would
+    break admin user management (an admin would see only their own empty
+    tenant) — see the module note above.
+    """
+    stmt = select(User).where(User.role.in_(roles)).order_by(User.id)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """Return the user with this id, or ``None`` (GLOBAL — not tenant-scoped)."""
+    return await session.get(User, user_id)
+
+
+async def delete_user(session: AsyncSession, user: User) -> None:
+    """Delete a user row (its now-empty tenant may be left orphaned — MVP-ok)."""
+    await session.delete(user)
+    await session.flush()
 
 
 async def get_active_session_with_user(
