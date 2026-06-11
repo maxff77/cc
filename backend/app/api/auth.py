@@ -12,8 +12,14 @@ from app.api.deps import get_current_user
 from app.config import settings
 from app.db.base import get_session
 from app.db.models import User
-from app.errors import account_blocked, invalid_credentials, too_many_attempts
+from app.errors import (
+    account_blocked,
+    invalid_credentials,
+    plan_expired,
+    too_many_attempts,
+)
 from app.services import auth as auth_service
+from app.services import plans as plans_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -99,7 +105,17 @@ async def login(
     if user.is_blocked:
         raise account_blocked()
 
+    # The password checked out, so clear the failure counter BEFORE the expiry
+    # check — otherwise earlier typos linger and a throttled expired client
+    # gets 429 too_many_attempts instead of learning the real plan_expired
+    # state (and one later typo would re-trip the 429).
     auth_service.login_throttle.reset(body.email, ip)
+
+    # Reveal expiry only AFTER the password checks out (same reasoning as the
+    # blocked check above). No session row is created for an expired client.
+    if plans_service.is_plan_expired(user):
+        raise plan_expired()
+
     auth_session = await auth_service.create_session(session, user)
     await session.commit()
     _set_session_cookie(response, auth_session.token)

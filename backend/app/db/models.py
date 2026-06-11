@@ -44,6 +44,12 @@ class User(Base):
     is_blocked: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
+    # plan expiry; set at client creation = now + plan_days. Enforcement/lockout
+    # is Story 1.4. Nullable: owner/admin rows carry no plan; only 'client' rows
+    # get an expires_at.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

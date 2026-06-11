@@ -40,6 +40,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       body = { code: "unknown_error", message: "Ocurrió un error inesperado." };
     }
+
+    // Total lockout (Story 1.4): the backend answers 403 plan_expired exactly
+    // ONCE — it revokes the session as it does — so whichever call consumes it
+    // must route to the lockout page instead of surfacing a per-page error.
+    // (Skip when already there: the /expired page itself probes /me.)
+    if (
+      res.status === 403 &&
+      body.code === "plan_expired" &&
+      window.location.pathname !== "/expired"
+    ) {
+      window.location.assign("/expired");
+    }
+
     throw new ApiError(res.status, body);
   }
 
@@ -55,4 +68,5 @@ export const api = {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
