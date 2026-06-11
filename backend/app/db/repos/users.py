@@ -7,7 +7,7 @@ over these; routers never query the ORM directly.
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -83,9 +83,16 @@ async def list_by_roles(
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
-    """Return the user with this id, or ``None`` (GLOBAL — not tenant-scoped)."""
-    return await session.get(User, user_id)
+async def get_user_by_id(
+    session: AsyncSession, user_id: int, *, for_update: bool = False
+) -> User | None:
+    """Return the user with this id, or ``None`` (GLOBAL — not tenant-scoped).
+
+    ``for_update=True`` locks the row (``SELECT … FOR UPDATE``) until commit —
+    required by read-modify-write callers (e.g. plan renewal) so two concurrent
+    mutations serialize instead of silently losing one write.
+    """
+    return await session.get(User, user_id, with_for_update=for_update)
 
 
 async def delete_user(session: AsyncSession, user: User) -> None:
@@ -131,3 +138,24 @@ async def mark_session_revoked(session: AsyncSession, token: str) -> None:
     ).scalar_one_or_none()
     if row is not None and row.revoked_at is None:
         row.revoked_at = datetime.now(UTC)
+
+
+async def revoke_all_sessions_for_user(
+    session: AsyncSession, user_id: int
+) -> None:
+    """Revoke every live auth session for ``user_id`` in one statement.
+
+    Sets ``revoked_at`` on all of the user's rows where it IS NULL — the bulk,
+    per-user variant of ``mark_session_revoked`` (which is per-token). A single
+    ``update()`` keeps it race-free in one round trip; this is the immediate
+    lockout backing ``block_user`` (Story 1.5). The user's next request then
+    falls into ``get_current_user``'s ``not_authenticated`` (401) branch.
+    """
+    await session.execute(
+        update(AuthSession)
+        .where(
+            AuthSession.user_id == user_id,
+            AuthSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )

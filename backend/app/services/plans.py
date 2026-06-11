@@ -1,16 +1,21 @@
-"""Plan service: plan-expiry predicate (Story 1.4).
+"""Plan service: expiry predicate (1.4) + renew/extend & block/unblock (1.5).
 
-Pure domain logic over a ``User`` row — no DB, no FastAPI — same purity rule as
-``services/auth``'s password helpers. The router/dependency layer maps the
-result into the ``plan_expired`` error contract and the session invalidation.
+The expiry predicate stays pure domain logic over a ``User`` row. The renew/
+block/unblock operations need the DB, so they take an ``AsyncSession`` like
+``services/users.create_account`` does: the service orchestrates and flushes,
+the router maps errors and commits. The router validates inputs BEFORE calling.
 
-Story 1.5 extends THIS file with renew/extend and block/unblock; this story
-adds only the read-side expiry check.
+Clock source: this module deliberately uses the APP clock (``datetime.now(UTC)``)
+— the documented exception to the SQL-``now()`` convention (see
+``is_plan_expired``). ``compute_renewed_expiry`` keeps that.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
+from app.db.repos import users as users_repo
 
 
 def is_plan_expired(user: User) -> bool:
@@ -39,3 +44,57 @@ def is_plan_expired(user: User) -> bool:
     if user.expires_at is None:
         return False
     return user.expires_at <= datetime.now(UTC)
+
+
+def compute_renewed_expiry(current: datetime | None, plan_days: int) -> datetime:
+    """Return the new expiry when adding ``plan_days`` to a plan.
+
+    Anchored on ``max(now(UTC), current)``: renewing an ACTIVE plan extends it
+    from its current expiry (days stack — paying early loses no days), while
+    renewing an EXPIRED plan grants days from TODAY. The latter is essential for
+    AC2 — anchoring on ``current`` alone would let an admin add 30 days to a plan
+    that lapsed 60 days ago and still leave the account expired, so the renewal
+    would not restore access.
+
+    ``current`` is timezone-aware (timestamptz); ``None`` (no prior plan) anchors
+    on now.
+    """
+    now = datetime.now(UTC)
+    anchor = now if current is None else max(current, now)
+    return anchor + timedelta(days=plan_days)
+
+
+async def renew_plan(
+    session: AsyncSession, user: User, new_expiry: datetime
+) -> User:
+    """Set ``user``'s plan expiry and flush (caller commits).
+
+    The router resolves the renewal mode into ``new_expiry`` (add-days via
+    ``compute_renewed_expiry``, or a validated future ``expires_at`` verbatim)
+    and is responsible for fetching ``user`` with a row lock — this is a
+    read-modify-write, and without ``FOR UPDATE`` two concurrent renewals would
+    silently lose one of the extensions.
+    """
+    user.expires_at = new_expiry
+    await session.flush()
+    return user
+
+
+async def set_blocked(session: AsyncSession, user: User, *, blocked: bool) -> User:
+    """Set ``user.is_blocked`` and flush (caller commits). Idempotent.
+
+    Blocking ALSO bulk-revokes every live auth session in the same transaction
+    — the immediate-lockout mechanism: the user's next request hits
+    ``get_current_user``'s 401 branch, and their next login shows the blocked
+    notice (Story 1.2's ``account_blocked``). ``get_current_user`` additionally
+    checks ``is_blocked`` per request (1.5 review), closing the race where a
+    login concurrent with the block commits a session after the bulk revoke ran.
+
+    Unblocking does NOT restore the revoked sessions — the client simply logs
+    in again (AC4).
+    """
+    user.is_blocked = blocked
+    if blocked:
+        await users_repo.revoke_all_sessions_for_user(session, user.id)
+    await session.flush()
+    return user

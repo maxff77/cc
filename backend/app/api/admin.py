@@ -10,17 +10,24 @@ are GLOBAL/cross-tenant by design (an admin manages all clients) — see the
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, field_validator
+from pydantic import AwareDatetime, BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.db.base import get_session
 from app.db.models import User
 from app.db.repos import users as users_repo
-from app.errors import forbidden, invalid_plan_days, user_not_found
+from app.errors import (
+    forbidden,
+    invalid_plan_days,
+    invalid_renewal,
+    renewal_would_shorten,
+    user_not_found,
+)
+from app.services import plans as plans_service
 from app.services import users as users_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -44,6 +51,13 @@ _PASSWORD_MIN = 8
 PLAN_DAYS_MAX = 36500
 
 
+def _validate_plan_days(days: int | None) -> int:
+    """Single copy of the plan-days bounds policy (creation AND renewal)."""
+    if days is None or days <= 0 or days > PLAN_DAYS_MAX:
+        raise invalid_plan_days()
+    return days
+
+
 class CreateUserRequest(BaseModel):
     email: str
     password: str
@@ -64,6 +78,15 @@ class CreateUserRequest(BaseModel):
         if len(v) < _PASSWORD_MIN:
             raise ValueError("contraseña demasiado corta")
         return v
+
+
+class RenewPlanRequest(BaseModel):
+    # Exactly one mode per request (FR4: "add days or set a new expiration
+    # date"); the route enforces the XOR and the bounds. AwareDatetime rejects a
+    # naive datetime at the boundary — ``expires_at`` is timestamptz and naive
+    # comparisons raise TypeError (1.4 lesson).
+    plan_days: int | None = None
+    expires_at: AwareDatetime | None = None
 
 
 class UserOut(BaseModel):
@@ -124,12 +147,11 @@ async def create_user(
     if body.role == "admin" and actor.role != "owner":
         raise forbidden()
 
-    plan_days = body.plan_days
-    if body.role == "client":
-        if plan_days is None or plan_days <= 0 or plan_days > PLAN_DAYS_MAX:
-            raise invalid_plan_days()
-    else:
-        plan_days = None  # admins carry no plan
+    plan_days = (
+        _validate_plan_days(body.plan_days)
+        if body.role == "client"
+        else None  # admins carry no plan
+    )
 
     user = await users_service.create_account(
         session,
@@ -161,3 +183,105 @@ async def delete_user(
         raise forbidden()
     await users_repo.delete_user(session, target)
     await session.commit()
+
+
+# --- Client lifecycle: renew / block / unblock (Story 1.5) ----------------
+#
+# Non-CRUD actions as POST verb-suffix routes (architecture's
+# ``/api/batches/{id}/pause`` convention). All gated by the module-level
+# require_admin_or_owner singleton (FR4: "admin or owner"). Each follows
+# delete_user's shape: target lookup → role guard → action → commit → _to_out.
+# Targets are clients only — owner/admin rows carry no plan and admins are
+# managed by the owner (1.3); a non-client target is forbidden().
+
+
+async def _require_client_target(
+    session: AsyncSession, user_id: int
+) -> User:
+    """Resolve a client target or raise (404 unknown, 403 non-client).
+
+    The row is fetched ``FOR UPDATE``: all three lifecycle actions mutate it,
+    and renew in particular is a read-modify-write (concurrent renewals must
+    serialize, not lose an extension).
+    """
+    target = await users_repo.get_user_by_id(session, user_id, for_update=True)
+    if target is None:
+        raise user_not_found()
+    if target.role != "client":
+        raise forbidden()
+    return target
+
+
+@router.post("/users/{user_id}/renew", response_model=UserOut)
+async def renew_plan(
+    user_id: int,
+    body: RenewPlanRequest,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Renew a client's plan by adding days XOR setting a future date (AC1/AC2).
+
+    Validation order: target exists & is a client → exactly one mode provided →
+    mode-specific bounds. Login re-reads the new ``expires_at`` so a renewed
+    expired client logs in normally (AC2) — no expiry code changes here.
+    """
+    target = await _require_client_target(session, user_id)
+
+    if body.plan_days is not None:
+        if body.expires_at is not None:
+            raise invalid_renewal()  # both modes at once
+        _validate_plan_days(body.plan_days)
+        new_expiry = plans_service.compute_renewed_expiry(
+            target.expires_at, body.plan_days
+        )
+    elif body.expires_at is not None:
+        # AwareDatetime guarantees tz-aware. A past/now date is a lockout, not
+        # a renewal (block is the tool for that); the upper bound mirrors
+        # PLAN_DAYS_MAX so a stored far-future expiry can never overflow a
+        # later add-days renewal (anchor + timedelta vs datetime.max).
+        now = datetime.now(UTC)
+        if body.expires_at <= now or body.expires_at > now + timedelta(
+            days=PLAN_DAYS_MAX
+        ):
+            raise invalid_renewal()
+        # Renew never shortens: an earlier-than-current date silently cuts an
+        # active plan — that is a destructive action, not a renewal.
+        if target.expires_at is not None and body.expires_at < target.expires_at:
+            raise renewal_would_shorten()
+        new_expiry = body.expires_at
+    else:
+        raise invalid_renewal()  # neither mode
+
+    user = await plans_service.renew_plan(session, target, new_expiry)
+    await session.commit()
+    return _to_out(user)
+
+
+async def _set_blocked(
+    session: AsyncSession, user_id: int, *, blocked: bool
+) -> UserOut:
+    """Shared body of the block/unblock routes."""
+    target = await _require_client_target(session, user_id)
+    user = await plans_service.set_blocked(session, target, blocked=blocked)
+    await session.commit()
+    return _to_out(user)
+
+
+@router.post("/users/{user_id}/block", response_model=UserOut)
+async def block_user(
+    user_id: int,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Block a client and revoke their live sessions immediately (AC3)."""
+    return await _set_blocked(session, user_id, blocked=True)
+
+
+@router.post("/users/{user_id}/unblock", response_model=UserOut)
+async def unblock_user(
+    user_id: int,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Unblock a client; they can log in again normally (AC4)."""
+    return await _set_blocked(session, user_id, blocked=False)

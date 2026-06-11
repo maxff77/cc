@@ -8,13 +8,16 @@ signature change is fixed in one place.
 """
 
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 
+import pytest_asyncio
 from app.db.base import async_session_factory
 from app.db.models import Tenant, User
 from app.db.repos import users as users_repo
+from app.main import app
 from app.services.auth import hash_password
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
 
@@ -51,6 +54,38 @@ async def login(client: AsyncClient, email: str) -> None:
         "/api/auth/login", json={"email": email, "password": PASSWORD}
     )
     assert res.status_code == 200, res.text
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def ctx() -> AsyncIterator[dict[str, object]]:
+    """Seed an owner + an admin, log each in, and clean up afterwards.
+
+    Shared by the admin API modules (test_admin_users, test_admin_lifecycle).
+    Tests add the per-test emails they seed to ``ctx["created"]`` so the
+    teardown removes them too.
+    """
+    created: set[str] = set()
+    owner = await seed_user("owner")
+    admin = await seed_user("admin")
+    created.update({owner.email, admin.email})
+
+    transport = ASGITransport(app=app)
+    owner_client = AsyncClient(transport=transport, base_url="http://test")
+    admin_client = AsyncClient(transport=transport, base_url="http://test")
+    await login(owner_client, owner.email)
+    await login(admin_client, admin.email)
+
+    yield {
+        "owner_client": owner_client,
+        "admin_client": admin_client,
+        "owner": owner,
+        "admin": admin,
+        "created": created,
+    }
+
+    await owner_client.aclose()
+    await admin_client.aclose()
+    await cleanup_users(created)
 
 
 async def cleanup_users(emails: set[str]) -> None:
