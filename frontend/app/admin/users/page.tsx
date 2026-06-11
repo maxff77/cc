@@ -42,6 +42,13 @@ interface Me {
 const USERS_KEY = ["admin-users"] as const;
 const ME_KEY = ["me"] as const;
 
+// `type="number"` still lets through strings Number.parseInt silently
+// mis-reads ("1e2" → 1, "30.5" → 30) or that serialize as null (NaN) — gate on
+// plain digits before trusting the value.
+function isPositiveInt(value: string): boolean {
+  return /^\d+$/.test(value.trim()) && Number(value) > 0;
+}
+
 function formatExpiry(iso: string | null): string {
   if (!iso) return "—";
 
@@ -120,6 +127,7 @@ export default function AdminUsersPage() {
                 <Table.Column isRowHeader>Correo</Table.Column>
                 <Table.Column>Rol</Table.Column>
                 <Table.Column>Vence</Table.Column>
+                <Table.Column>Estado</Table.Column>
                 <Table.Column>Acciones</Table.Column>
               </Table.Header>
               <Table.Body
@@ -132,7 +140,27 @@ export default function AdminUsersPage() {
                     <Table.Cell>{u.role}</Table.Cell>
                     <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
                     <Table.Cell>
-                      {isOwner && u.role === "admin" ? (
+                      {u.role !== "client" ? (
+                        "—"
+                      ) : u.is_blocked ? (
+                        <span className="font-medium text-danger">
+                          Bloqueado
+                        </span>
+                      ) : (
+                        <span className="text-default-500">Activo</span>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {u.role === "client" ? (
+                        <ClientLifecycleActions
+                          user={u}
+                          onChanged={() =>
+                            queryClient.invalidateQueries({
+                              queryKey: USERS_KEY,
+                            })
+                          }
+                        />
+                      ) : isOwner && u.role === "admin" ? (
                         <DeleteAdminAction
                           email={u.email}
                           userId={u.id}
@@ -179,7 +207,7 @@ function CreateUserForm({
     mutationFn: () => {
       const payload: Record<string, unknown> = { email, password, role: kind };
 
-      if (kind === "client") payload.plan_days = Number.parseInt(planDays, 10);
+      if (kind === "client") payload.plan_days = Number(planDays);
 
       return api.post<UserOut>("/api/admin/users", payload);
     },
@@ -207,6 +235,12 @@ function CreateUserForm({
     setEmailError(null);
     setPlanError(null);
     setBanner(null);
+
+    if (kind === "client" && !isPositiveInt(planDays)) {
+      setPlanError("Indica un número entero de días.");
+
+      return;
+    }
     mutation.mutate();
   }
 
@@ -337,6 +371,230 @@ function DeleteAdminAction({
           onPress={() => mutation.mutate()}
         >
           {mutation.isPending ? "Eliminando…" : "Sí, eliminar"}
+        </Button>
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="secondary"
+          onPress={() => setConfirming(false)}
+        >
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Client lifecycle: renew + block/unblock (Story 1.5) -----------------
+
+function ClientLifecycleActions({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <RenewAction userId={user.id} onChanged={onChanged} />
+      <BlockAction user={user} onChanged={onChanged} />
+    </div>
+  );
+}
+
+function RenewAction({
+  userId,
+  onChanged,
+}: {
+  userId: number;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [days, setDays] = useState("");
+  const [date, setDate] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      // Exactly one mode: días → plan_days; otherwise the date as end-of-day
+      // in the ADMIN'S timezone (not hardcoded Z) — formatExpiry renders in
+      // local time, so this keeps the Vence column showing the picked day.
+      const payload = days.trim()
+        ? { plan_days: Number(days) }
+        : { expires_at: new Date(`${date}T23:59:59`).toISOString() };
+
+      return api.post<UserOut>(`/api/admin/users/${userId}/renew`, payload);
+    },
+    onSuccess: () => {
+      setOpen(false);
+      setDays("");
+      setDate("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => {
+      // Backend sends Spanish in `message` for invalid_renewal / invalid_plan_days.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos renovar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  function submit() {
+    setError(null);
+    const hasDays = days.trim() !== "";
+    const hasDate = date.trim() !== "";
+
+    if (hasDays === hasDate) {
+      setError("Completa solo Días o solo Hasta.");
+
+      return;
+    }
+    if (hasDays && !isPositiveInt(days)) {
+      setError("Indica un número entero de días.");
+
+      return;
+    }
+    mutation.mutate();
+  }
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="secondary" onPress={() => setOpen(true)}>
+        Renovar
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <TextField
+          className="flex flex-col gap-1 sm:w-24"
+          name="plan_days"
+          type="number"
+          value={days}
+          onChange={(v) => {
+            setDays(v);
+            if (error) setError(null);
+          }}
+        >
+          <Label>Días</Label>
+          <Input placeholder="30" />
+        </TextField>
+
+        <TextField
+          className="flex flex-col gap-1"
+          name="expires_at"
+          type="date"
+          value={date}
+          onChange={(v) => {
+            setDate(v);
+            if (error) setError(null);
+          }}
+        >
+          <Label>Hasta</Label>
+          <Input />
+        </TextField>
+      </div>
+
+      {error && <span className="text-sm text-danger">{error}</span>}
+
+      <div className="flex gap-2">
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="primary"
+          onPress={submit}
+        >
+          {mutation.isPending ? "Renovando…" : "Renovar"}
+        </Button>
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="secondary"
+          onPress={() => {
+            setOpen(false);
+            setError(null);
+          }}
+        >
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BlockAction({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const action = user.is_blocked ? "unblock" : "block";
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<UserOut>(`/api/admin/users/${user.id}/${action}`),
+    onSuccess: () => {
+      setConfirming(false);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos completar la acción. Intenta de nuevo.",
+      );
+    },
+  });
+
+  // Unblock restores access (not destructive) → acts on a single press.
+  if (user.is_blocked) {
+    return (
+      <div className="flex flex-col gap-1">
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="secondary"
+          onPress={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Desbloqueando…" : "Desbloquear"}
+        </Button>
+        {error && <span className="text-sm text-danger">{error}</span>}
+      </div>
+    );
+  }
+
+  // Block closes the client's live session → inline confirm (DeleteAdminAction idiom).
+  if (!confirming) {
+    return (
+      <Button size="sm" variant="danger" onPress={() => setConfirming(true)}>
+        Bloquear
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm">
+        ¿Bloquear a {user.email}? Su sesión se cerrará al instante.
+      </span>
+      {error && <span className="text-sm text-danger">{error}</span>}
+      <div className="flex gap-2">
+        <Button
+          isDisabled={mutation.isPending}
+          size="sm"
+          variant="danger"
+          onPress={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
         </Button>
         <Button
           isDisabled={mutation.isPending}

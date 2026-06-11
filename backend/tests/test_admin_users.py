@@ -11,42 +11,14 @@ Seed/login/cleanup helpers are shared via ``tests.conftest``.
 Run (from backend/, venv active):  pytest tests/test_admin_users.py
 """
 
-from collections.abc import AsyncIterator
-
 import pytest
-import pytest_asyncio
 from app.db.models import User
-from app.main import app
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from tests.conftest import cleanup_users, login, seed_user, unique_email
+from tests.conftest import unique_email
 
-
-@pytest_asyncio.fixture(loop_scope="session")
-async def ctx() -> AsyncIterator[dict[str, object]]:
-    """Seed an owner + an admin, log each in, and clean up afterwards."""
-    created: set[str] = set()
-    owner = await seed_user("owner")
-    admin = await seed_user("admin")
-    created.update({owner.email, admin.email})
-
-    transport = ASGITransport(app=app)
-    owner_client = AsyncClient(transport=transport, base_url="http://test")
-    admin_client = AsyncClient(transport=transport, base_url="http://test")
-    await login(owner_client, owner.email)
-    await login(admin_client, admin.email)
-
-    yield {
-        "owner_client": owner_client,
-        "admin_client": admin_client,
-        "owner": owner,
-        "admin": admin,
-        "created": created,
-    }
-
-    await owner_client.aclose()
-    await admin_client.aclose()
-    await cleanup_users(created)
+# The shared `ctx` fixture (owner + admin, logged in, self-cleaning) lives in
+# tests/conftest.py.
 
 
 @pytest.mark.asyncio(loop_scope="session")

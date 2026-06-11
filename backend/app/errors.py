@@ -99,3 +99,25 @@ def plan_expired() -> AppError:
         code="plan_expired",
         message="Tu plan venció. Escríbenos por WhatsApp o Telegram y lo reactivamos.",
     )
+
+
+# --- Codes this story (1.5) defines --------------------------------------
+
+
+def invalid_renewal() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_renewal",
+        message="Indica los días del plan o una fecha de vencimiento futura.",
+    )
+
+
+def renewal_would_shorten() -> AppError:
+    return AppError(
+        status_code=400,
+        code="renewal_would_shorten",
+        message=(
+            "La fecha indicada es anterior al vencimiento actual. Para cortar "
+            "el acceso usa Bloquear."
+        ),
+    )

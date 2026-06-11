@@ -35,19 +35,34 @@ async def get_current_user(
         raise not_authenticated()
 
     user = auth_session.user
+    # Blocked check BEFORE expiry (mirrors login's gate order). Block-time
+    # revocation (services/plans.set_blocked) covers sessions that existed when
+    # the block ran, but a login racing the block can commit its session AFTER
+    # the bulk revoke — this per-request check closes that hole (1.5 review).
+    # 401 (not 403) keeps the documented UX: middleware → /login → the login
+    # attempt shows the blocked notice (account_blocked).
+    if user.is_blocked:
+        await _revoke_own_session(token)
+        raise not_authenticated()
     # Lazy, auth-time plan expiry (AC1/AC3): the FIRST request after a client's
     # plan lapses revokes their session and returns 403 plan_expired; any later
-    # request with the now-revoked cookie falls into the 401 branch above. The
-    # revoke commits on its OWN short-lived session so this dependency stays
-    # read-only on the request-scoped one — committing that mid-dependency
-    # would also persist anything an earlier dependency had staged on it, even
-    # though the request then fails with 403.
+    # request with the now-revoked cookie falls into the 401 branch above.
     if plans_service.is_plan_expired(user):
-        async with async_session_factory() as revoke_db:
-            await auth_service.revoke_session(revoke_db, token)
-            await revoke_db.commit()
+        await _revoke_own_session(token)
         raise plan_expired()
     return user
+
+
+async def _revoke_own_session(token: str) -> None:
+    """Revoke ``token`` on its OWN short-lived session and commit.
+
+    ``get_current_user`` must stay read-only on the request-scoped session —
+    committing that mid-dependency would also persist anything an earlier
+    dependency had staged on it, even though the request then fails.
+    """
+    async with async_session_factory() as revoke_db:
+        await auth_service.revoke_session(revoke_db, token)
+        await revoke_db.commit()
 
 
 def require_role(

@@ -38,6 +38,7 @@ generated: 2026-06-11
 last_updated: 2026-06-11
 project: cc
 # 1-3 → review 2026-06-11
+# 1-5 → review 2026-06-11 (code review: 10 findings fixed, gates green)
 # 1-4 → done 2026-06-11 (code review: 10 findings fixed)
 project_key: NOKEY
 tracking_system: file-system
@@ -50,7 +51,7 @@ development_status:
   1-2-login-y-logout-con-email-contrasena: review
   1-3-alta-manual-de-clientes-y-gestion-de-roles: review
   1-4-expiracion-automatica-del-plan-y-lockout-total: done
-  1-5-renovar-plan-y-bloquear-desbloquear-cliente: backlog
+  1-5-renovar-plan-y-bloquear-desbloquear-cliente: review
   1-6-reset-de-contrasena-con-cambio-forzado: backlog
   1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: backlog
   epic-1-retrospective: optional
