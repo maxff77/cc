@@ -1,0 +1,81 @@
+# generated: 2026-06-11
+# last_updated: 2026-06-11
+# project: cc
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+#
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-06-11
+last_updated: 2026-06-11T00:00:00Z
+project: cc
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # Epic 1: Plataforma accesible y cuentas de clientes
+  epic-1: in-progress
+  1-1-inicializar-proyecto-desde-starter-esqueleto-backend: review
+  1-2-login-y-logout-con-email-contrasena: backlog
+  1-3-alta-manual-de-clientes-y-gestion-de-roles: backlog
+  1-4-expiracion-automatica-del-plan-y-lockout-total: backlog
+  1-5-renovar-plan-y-bloquear-desbloquear-cliente: backlog
+  1-6-reset-de-contrasena-con-cambio-forzado: backlog
+  1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Envío en lote controlado
+  epic-2: backlog
+  2-1-catalogo-global-de-prefijos: backlog
+  2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: backlog
+  2-3-pausar-reanudar-y-detener-con-eta-honesto: backlog
+  2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: backlog
+  2-5-endurecimiento-del-pipeline-de-envio: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Captura de respuestas, sesiones e historial
+  epic-3: backlog
+  3-1-captura-y-atribucion-de-respuestas-del-bot: backlog
+  3-2-vistas-completa-filtrada-en-vivo-en-envio: backlog
+  3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: backlog
+  3-4-continuar-una-sesion-con-dedup-preservado: backlog
+  3-5-exportar-resultados-como-txt: backlog
+  3-6-vista-de-soporte-cross-tenant-para-owner-admins: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Protección operativa de la cuenta (guardarraíl de baneo)
+  epic-4: backlog
+  4-1-watchdog-de-respuestas-y-deteccion-de-perdida-de-sesion: backlog
+  4-2-admission-control-con-cola-de-espera: backlog
+  4-3-observabilidad-del-guardarrail-de-baneo: backlog
+  4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: backlog
+  epic-4-retrospective: optional

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dirección 3 — Mensajería nativa</title>
+<style>
+/* ============================================================
+   DIRECCIÓN 3 — MENSAJERÍA NATIVA (registro Telegram)
+   La pantalla de envío ES un chat: burbujas para líneas
+   enviadas y respuestas del bot, compositor inferior para
+   pegar el lote, acciones alcanzables con el pulgar.
+
+   PALETA (fija, tema HeroUI dark — oklch + hex aproximado):
+   --background:        oklch(12% 0.0026 243)          ≈ #0e1012
+   --surface:           oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --surface-secondary: oklch(25.7% 0.0038 243)        ≈ #26292c
+   --surface-tertiary:  oklch(27.21% 0.0038 243)       ≈ #292c2f
+   --border:            oklch(28% 0.0026 243)          ≈ #2b2e31
+   --separator:         oklch(25% 0.0026 243)          ≈ #252729
+   --foreground:        oklch(99.11% 0.0026 243)       ≈ #fbfdff
+   --muted:             oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   --accent:            oklch(55% 0.12 243)            ≈ #3878b0  (burbuja saliente)
+   --accent-foreground: oklch(99.11% 0 0)              ≈ #fcfcfc
+   --danger:            oklch(59.4% 0.1977 23.33)      ≈ #e5484d
+   --success:           oklch(73.29% 0.1945 149.51)    ≈ #2fd470
+   --success-fg:        oklch(21.03% 0.0059 149.51)    ≈ #0c2916
+   --warning:           oklch(82.03% 0.1395 75.04)     ≈ #f5b95e
+   --field-background:  oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --field-placeholder: oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   Radio base 0.25rem; las burbujas usan 16px con esquina
+   recortada (4px) hacia el emisor, patrón clásico de chat.
+   ============================================================ */
+:root{
+  --background: oklch(12% 0.0026 243);
+  --surface: oklch(21.03% 0.0051 243);
+  --surface-secondary: oklch(25.7% 0.0038 243);
+  --surface-tertiary: oklch(27.21% 0.0038 243);
+  --border: oklch(28% 0.0026 243);
+  --separator: oklch(25% 0.0026 243);
+  --foreground: oklch(99.11% 0.0026 243);
+  --muted: oklch(70.5% 0.0051 243);
+  --accent: oklch(55% 0.12 243);
+  --accent-foreground: oklch(99.11% 0 0);
+  --danger: oklch(59.4% 0.1977 23.33);
+  --success: oklch(73.29% 0.1945 149.51);
+  --success-fg: oklch(21.03% 0.0059 149.51);
+  --warning: oklch(82.03% 0.1395 75.04);
+  --field-background: oklch(21.03% 0.0051 243);
+  --field-placeholder: oklch(70.5% 0.0051 243);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  padding: 32px 24px 64px;
+}
+.rationale{
+  max-width: 880px; margin: 0 auto 36px;
+  background: var(--surface); border:1px solid var(--border);
+  padding: 18px 22px; border-radius: 16px;
+}
+.rationale h1{font-size:15.5px; font-weight:700; margin-bottom:8px}
+.rationale p{font-size:13.5px; line-height:1.6; color:var(--muted)}
+.stage{display:flex; gap:44px; flex-wrap:wrap; justify-content:center; align-items:flex-start}
+.col{display:flex; flex-direction:column; gap:12px}
+.col > .label{font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); text-align:center; font-weight:600}
+
+/* ---- marco de teléfono ---- */
+.phone{
+  width: 390px; height: 820px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  overflow: hidden; display:flex; flex-direction:column;
+  box-shadow: 0 28px 72px oklch(0% 0 0 / .5);
+}
+.statusbar{height:42px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 26px; font-size:13px; font-weight:600}
+
+/* ---- cabecera de chat ---- */
+.chathead{
+  flex:none; display:flex; align-items:center; gap:12px;
+  padding: 8px 16px 10px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.chathead .back{color:var(--accent-foreground); font-size:20px}
+.avatar{
+  width:40px; height:40px; border-radius:50%; flex:none;
+  background: var(--accent); color:var(--accent-foreground);
+  display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+}
+.avatar.green{background: var(--success); color: var(--success-fg)}
+.chathead .who{flex:1; min-width:0}
+.chathead .who .t{font-size:15px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chathead .who .s{font-size:12px; color:var(--muted); margin-top:1px}
+.chathead .who .s.live{color:var(--success)}
+.chathead .who .s.warn{color:var(--warning)}
+.chathead .menu{color:var(--muted); font-size:18px}
+
+/* ---- progreso “mensaje fijado” ---- */
+.pinned{
+  flex:none; background: var(--surface);
+  border-bottom:1px solid var(--border);
+  padding: 8px 16px 10px;
+}
+.pinned .row1{display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px}
+.pinned .row1 b{font-weight:700; font-variant-numeric:tabular-nums}
+.pinned .row1 .eta{color:var(--muted); font-variant-numeric:tabular-nums}
+.pbar{height:5px; border-radius:999px; background:var(--surface-tertiary); overflow:hidden; position:relative}
+.pbar i{position:absolute; inset:0; width:28%; background:var(--accent); border-radius:999px}
+.pbar i.warn{background:var(--warning); width:35%}
+
+/* ---- hilo de chat ---- */
+.thread{
+  flex:1; overflow:hidden; padding: 14px 14px 8px;
+  display:flex; flex-direction:column; gap:8px;
+  background:
+    radial-gradient(circle at 20% 15%, oklch(21.03% 0.0051 243 / .5) 0, transparent 45%),
+    radial-gradient(circle at 85% 70%, oklch(21.03% 0.0051 243 / .4) 0, transparent 40%),
+    var(--background);
+}
+.daychip{
+  align-self:center; font-size:11px; color:var(--muted);
+  background: var(--surface); border-radius:999px; padding:4px 12px; margin:2px 0;
+}
+.syschip{
+  align-self:center; text-align:center; font-size:12px; line-height:1.5;
+  background: oklch(82.03% 0.1395 75.04 / .12);
+  border:1px solid oklch(82.03% 0.1395 75.04 / .45);
+  color: var(--foreground);
+  border-radius:14px; padding:8px 14px; max-width:300px; margin:4px 0;
+}
+.syschip b{color:var(--warning)}
+.syschip small{display:block; color:var(--muted); font-size:11px; margin-top:3px}
+.bubble{
+  max-width: 78%; padding: 8px 12px; font-size:13.5px; line-height:1.45;
+  position:relative; word-break:break-word;
+}
+.out{
+  align-self:flex-end; background: var(--accent); color: var(--accent-foreground);
+  border-radius: 16px 16px 4px 16px;
+  font-variant-numeric: tabular-nums;
+}
+.in{
+  align-self:flex-start; background: var(--surface-secondary); color: var(--foreground);
+  border-radius: 16px 16px 16px 4px;
+}
+.meta{display:block; font-size:10.5px; margin-top:4px; text-align:right; opacity:.75; font-variant-numeric:tabular-nums}
+.in .meta{color:var(--muted)}
+.in .cc{
+  display:block; margin-top:6px; padding:6px 9px; border-radius:8px;
+  background: oklch(73.29% 0.1945 149.51 / .13);
+  color: var(--success); font-size:12.5px; font-weight:600; font-variant-numeric:tabular-nums;
+}
+.in .botname{display:block; font-size:11.5px; font-weight:700; color:var(--accent-foreground); margin-bottom:3px}
+.typing{align-self:flex-start; color:var(--muted); font-size:12px; padding:2px 8px}
+
+/* ---- tira Completa/Filtrada + acciones de pulgar ---- */
+.strip{
+  flex:none; display:flex; gap:8px; padding: 8px 14px;
+  background: var(--background); border-top:1px solid var(--separator);
+}
+.stripbtn{
+  flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+  background: var(--surface); border:1px solid var(--border); border-radius:999px;
+  padding: 8px 0; font-size:12px; font-weight:600; color:var(--muted);
+}
+.stripbtn.on{color:var(--foreground); border-color:var(--accent); background: oklch(55% 0.12 243 / .14)}
+.stripbtn .n{background:var(--accent); color:var(--accent-foreground); font-size:10px; border-radius:999px; padding:1px 7px}
+.stripbtn.pause{color:var(--warning)}
+.stripbtn.stop{color:var(--danger)}
+.stripbtn.resume{background:var(--success); color:var(--success-fg); border-color:transparent; font-weight:700}
+
+/* ---- compositor ---- */
+.composer{
+  flex:none; display:flex; align-items:flex-end; gap:10px;
+  padding: 8px 12px 22px; background: var(--surface);
+  border-top:1px solid var(--border);
+}
+.prefchip{
+  flex:none; display:flex; align-items:center; gap:4px;
+  background: var(--surface-tertiary); border:1px solid var(--border);
+  border-radius:999px; padding:9px 12px; font-size:13px; font-weight:700;
+}
+.prefchip .caret{font-size:9px; color:var(--muted)}
+.input{
+  flex:1; background: var(--field-background); border:1px solid var(--border);
+  border-radius: 20px; padding: 10px 14px; font-size:13px; line-height:1.45;
+  color: var(--field-placeholder); max-height:64px; overflow:hidden;
+}
+.input b{color:var(--foreground); font-weight:500}
+.send{
+  flex:none; width:42px; height:42px; border-radius:50%;
+  background: var(--accent); color:var(--accent-foreground);
+  display:flex; align-items:center; justify-content:center; font-size:17px;
+}
+
+/* ---- variante: lista de sesiones como lista de chats ---- */
+.searchbar{
+  flex:none; margin: 6px 14px 10px;
+  background: var(--field-background); border:1px solid var(--border);
+  border-radius: 12px; padding: 9px 14px; font-size:13px; color:var(--field-placeholder);
+}
+.chatlist{flex:1; overflow:hidden}
+.chatitem{
+  display:flex; gap:12px; padding: 11px 16px; align-items:center;
+  border-bottom:1px solid var(--separator);
+}
+.chatitem .avatar{width:48px;height:48px;font-size:15px}
+.chatitem .mid{flex:1; min-width:0}
+.chatitem .mid .t{display:flex; justify-content:space-between; align-items:baseline}
+.chatitem .mid .t b{font-size:14.5px; font-weight:650}
+.chatitem .mid .t .when{font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+.chatitem .mid .p{font-size:12.5px; color:var(--muted); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chatitem .mid .p .ok{color:var(--success)}
+.unread{
+  flex:none; min-width:22px; height:22px; border-radius:999px;
+  background:var(--accent); color:var(--accent-foreground);
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:700; padding:0 6px;
+}
+.unread.mut{background:var(--surface-tertiary); color:var(--muted)}
+.sectionchip{padding:10px 16px 4px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700}
+.fab{
+  position:absolute; right:18px; bottom:30px;
+  width:54px; height:54px; border-radius:50%;
+  background:var(--accent); color:var(--accent-foreground);
+  display:flex; align-items:center; justify-content:center; font-size:24px;
+  box-shadow: 0 8px 24px oklch(0% 0 0 / .5);
+}
+.relwrap{position:relative; flex:1; display:flex; flex-direction:column; min-height:0}
+</style>
+</head>
+<body>
+
+<div class="rationale">
+  <h1>Dirección 3 · Mensajería nativa — “se siente Telegram”</h1>
+  <p>El lote ES una conversación: las líneas salen como burbujas propias, las respuestas del bot llegan como burbujas entrantes con la CC extraída resaltada, y el lote nuevo se pega en el compositor inferior, siempre al alcance del pulgar. No hay que aprender una interfaz: el cliente ya vive en Telegram, así que el FloodWait aparece como mensaje de sistema dentro del hilo, igual que un aviso de chat. Las sesiones anteriores se navegan como una lista de chats con badge de CC sin leer.</p>
+</div>
+
+<div class="stage">
+
+  <!-- ============ TELÉFONO 1: HERO — chat de envío con FloodWait ============ -->
+  <div class="col">
+    <div class="label">Hero · hilo de envío (incluye FloodWait como mensaje de sistema)</div>
+    <div class="phone">
+      <div class="statusbar"><span>09:41</span><span>●●●</span></div>
+
+      <div class="chathead">
+        <span class="back">‹</span>
+        <div class="avatar">.zo</div>
+        <div class="who">
+          <div class="t">Lote mayorista junio</div>
+          <div class="s live">enviando · 34 de 120 líneas</div>
+        </div>
+        <span class="menu">⋮</span>
+      </div>
+
+      <div class="pinned">
+        <div class="row1">
+          <span>📌 Progreso del lote — <b>34/120</b></span>
+          <span class="eta">ETA 11:28 · 8 s/línea</span>
+        </div>
+        <div class="pbar"><i></i></div>
+      </div>
+
+      <div class="thread">
+        <div class="daychip">Hoy</div>
+
+        <div class="bubble out">
+          .zo 4716 02•• •••• 5530|04|27|•••
+          <span class="meta">09:40:43 ✓✓</span>
+        </div>
+
+        <div class="bubble in">
+          <span class="botname">@checker_bot</span>
+          ✅ Aprobada — Status: Live
+          <span class="cc">CC: 4716 02•• •••• 5530 | 04/27 → filtrada.txt</span>
+          <span class="meta">09:40:51</span>
+        </div>
+
+        <div class="bubble out">
+          .zo 4539 88•• •••• 0021|07|27|•••
+          <span class="meta">09:40:51 ✓✓</span>
+        </div>
+
+        <div class="bubble in">
+          <span class="botname">@checker_bot</span>
+          ❌ Rechazada — Status: Dead
+          <span class="meta">09:40:58 · no entra en Filtrada</span>
+        </div>
+
+        <div class="syschip">
+          ⏳ Telegram pidió esperar <b>45 s</b> — reanudamos solos.
+          <small>La línea 035 se reintenta cuando termine la espera. No es un error.</small>
+        </div>
+
+        <div class="bubble out" style="opacity:.55">
+          .zo 5412 90•• •••• 1276|02|28|•••
+          <span class="meta">esperando 0:38 🕐</span>
+        </div>
+
+        <div class="typing">86 líneas en cola…</div>
+      </div>
+
+      <div class="strip">
+        <div class="stripbtn on">Completa <span class="n">29</span></div>
+        <div class="stripbtn">Filtrada <span class="n">12</span></div>
+        <div class="stripbtn pause">⏸ Pausar</div>
+        <div class="stripbtn stop">⏹</div>
+      </div>
+
+      <div class="composer">
+        <div class="prefchip">.zo <span class="caret">▼</span></div>
+        <div class="input">Pegá más líneas para anexar al lote… <b></b></div>
+        <div class="send">➤</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TELÉFONO 2: VARIANTE — pausado ============ -->
+  <div class="col">
+    <div class="label">Variante · lote en pausa (reanudar a un toque)</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:02</span><span>●●●</span></div>
+
+      <div class="chathead">
+        <span class="back">‹</span>
+        <div class="avatar">.zo</div>
+        <div class="who">
+          <div class="t">Lote mayorista junio</div>
+          <div class="s warn">⏸ en pausa · 55 de 120 — la captura sigue activa</div>
+        </div>
+        <span class="menu">⋮</span>
+      </div>
+
+      <div class="pinned">
+        <div class="row1">
+          <span>📌 Progreso del lote — <b>55/120</b></span>
+          <span class="eta">ETA al reanudar: ~8 min</span>
+        </div>
+        <div class="pbar"><i class="warn" style="width:46%"></i></div>
+      </div>
+
+      <div class="thread">
+        <div class="daychip">Hoy</div>
+
+        <div class="bubble out">
+          .zo 4929 16•• •••• 7702|01|29|•••
+          <span class="meta">10:01:36 ✓✓</span>
+        </div>
+
+        <div class="bubble in">
+          <span class="botname">@checker_bot</span>
+          ✅ Aprobada — Status: Live
+          <span class="cc">CC: 4929 16•• •••• 7702 | 01/29 → filtrada.txt</span>
+          <span class="meta">10:01:44</span>
+        </div>
+
+        <div class="syschip" style="background:var(--surface); border-color:var(--border)">
+          ⏸ Pausaste el lote a las 10:02.
+          <small>65 líneas quedan en cola. Las respuestas tardías se siguen guardando en la sesión.</small>
+        </div>
+
+        <div class="bubble in">
+          <span class="botname">@checker_bot</span>
+          ✅ Aprobada (respuesta tardía) — Status: Live
+          <span class="cc">CC: 4485 70•• •••• 9023 | 12/28 → filtrada.txt</span>
+          <span class="meta">10:02:31 · capturada en pausa</span>
+        </div>
+      </div>
+
+      <div class="strip">
+        <div class="stripbtn">Completa <span class="n">49</span></div>
+        <div class="stripbtn on">Filtrada <span class="n">21</span></div>
+      </div>
+      <div class="strip" style="padding-top:0">
+        <div class="stripbtn resume">▶ Reanudar envío</div>
+        <div class="stripbtn stop">⏹ Detener</div>
+      </div>
+
+      <div class="composer">
+        <div class="prefchip">.zo <span class="caret">▼</span></div>
+        <div class="input">Pegá más líneas para anexar al lote…</div>
+        <div class="send" style="background:var(--surface-tertiary); color:var(--muted)">➤</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TELÉFONO 3: SECUNDARIA — sesiones como lista de chats ============ -->
+  <div class="col">
+    <div class="label">Secundaria · sesiones como lista de chats</div>
+    <div class="phone">
+      <div class="statusbar"><span>10:05</span><span>●●●</span></div>
+
+      <div class="chathead" style="border-bottom:none; padding-bottom:2px">
+        <div class="who">
+          <div class="t" style="font-size:20px; font-weight:800">Sesiones</div>
+          <div class="s">Distribuidora Norte · 3 prefijos</div>
+        </div>
+        <span class="menu">⋮</span>
+      </div>
+
+      <div class="searchbar">🔍 Buscar sesión o prefijo…</div>
+
+      <div class="relwrap">
+        <div class="chatlist">
+          <div class="sectionchip">En curso</div>
+          <div class="chatitem">
+            <div class="avatar">.zo</div>
+            <div class="mid">
+              <div class="t"><b>Lote mayorista junio</b><span class="when">10:02</span></div>
+              <div class="p"><span class="ok">✅ CC: 4485 70•• •••• 9023</span> · 55/120 en pausa</div>
+            </div>
+            <div class="unread">21</div>
+          </div>
+
+          <div class="sectionchip">Anteriores</div>
+          <div class="chatitem">
+            <div class="avatar green">.rk</div>
+            <div class="mid">
+              <div class="t"><b>Reposición semanal</b><span class="when">dom</span></div>
+              <div class="p">Completada · 200/200 · 61 CC filtradas</div>
+            </div>
+            <div class="unread mut">61</div>
+          </div>
+          <div class="chatitem">
+            <div class="avatar" style="background:var(--surface-tertiary); color:var(--foreground)">.mt</div>
+            <div class="mid">
+              <div class="t"><b>Cliente minorista mayo</b><span class="when">30/5</span></div>
+              <div class="p">Completada · 80/80 · 17 CC filtradas</div>
+            </div>
+            <div class="unread mut">17</div>
+          </div>
+          <div class="chatitem">
+            <div class="avatar">.zo</div>
+            <div class="mid">
+              <div class="t"><b>Prueba catálogo .zo</b><span class="when">5/6</span></div>
+              <div class="p">Completada · 45/45 · 9 CC filtradas</div>
+            </div>
+            <div class="unread mut">9</div>
+          </div>
+        </div>
+        <div class="fab">＋</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

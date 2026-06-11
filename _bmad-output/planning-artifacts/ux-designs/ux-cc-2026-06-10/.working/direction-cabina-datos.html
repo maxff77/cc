@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dirección 4 — Cabina de datos</title>
+<style>
+/* ============================================================
+   DIRECCIÓN 4 — CABINA DE DATOS (dashboard cockpit)
+   Bloques de estadística grandes, anillo de progreso tipo
+   gráfico, legible de un vistazo a distancia.
+
+   PALETA (fija, tema HeroUI dark — oklch + hex aproximado):
+   --background:        oklch(12% 0.0026 243)          ≈ #0e1012
+   --surface:           oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --surface-secondary: oklch(25.7% 0.0038 243)        ≈ #26292c
+   --surface-tertiary:  oklch(27.21% 0.0038 243)       ≈ #292c2f
+   --border:            oklch(28% 0.0026 243)          ≈ #2b2e31
+   --separator:         oklch(25% 0.0026 243)          ≈ #252729
+   --foreground:        oklch(99.11% 0.0026 243)       ≈ #fbfdff
+   --muted:             oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   --accent:            oklch(55% 0.12 243)            ≈ #3878b0  (anillo)
+   --accent-foreground: oklch(99.11% 0 0)              ≈ #fcfcfc
+   --danger:            oklch(59.4% 0.1977 23.33)      ≈ #e5484d
+   --success:           oklch(73.29% 0.1945 149.51)    ≈ #2fd470
+   --success-fg:        oklch(21.03% 0.0059 149.51)    ≈ #0c2916
+   --warning:           oklch(82.03% 0.1395 75.04)     ≈ #f5b95e  (anillo en pausa)
+   --field-background:  oklch(21.03% 0.0051 243)       ≈ #1d2023
+   --field-placeholder: oklch(70.5% 0.0051 243)        ≈ #a3a9af
+   Radio base 0.25rem; los bloques de cabina usan 12px.
+   Anillo: conic-gradient accent→surface-tertiary, sin JS.
+   ============================================================ */
+:root{
+  --background: oklch(12% 0.0026 243);
+  --surface: oklch(21.03% 0.0051 243);
+  --surface-secondary: oklch(25.7% 0.0038 243);
+  --surface-tertiary: oklch(27.21% 0.0038 243);
+  --border: oklch(28% 0.0026 243);
+  --separator: oklch(25% 0.0026 243);
+  --foreground: oklch(99.11% 0.0026 243);
+  --muted: oklch(70.5% 0.0051 243);
+  --accent: oklch(55% 0.12 243);
+  --accent-foreground: oklch(99.11% 0 0);
+  --danger: oklch(59.4% 0.1977 23.33);
+  --success: oklch(73.29% 0.1945 149.51);
+  --success-fg: oklch(21.03% 0.0059 149.51);
+  --warning: oklch(82.03% 0.1395 75.04);
+  --field-background: oklch(21.03% 0.0051 243);
+  --field-placeholder: oklch(70.5% 0.0051 243);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  padding: 32px 24px 64px;
+}
+.rationale{
+  max-width: 880px; margin: 0 auto 40px;
+  background: var(--surface); border:1px solid var(--border);
+  padding: 18px 22px; border-radius: 12px;
+}
+.rationale h1{font-size:15.5px; font-weight:800; margin-bottom:8px; letter-spacing:-.01em}
+.rationale p{font-size:13.5px; line-height:1.6; color:var(--muted)}
+.stage{display:flex; gap:44px; flex-wrap:wrap; justify-content:center; align-items:flex-start}
+.col{display:flex; flex-direction:column; gap:12px}
+.col > .label{font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); text-align:center; font-weight:700}
+
+/* ---- marco de teléfono ---- */
+.phone{
+  width: 390px; height: 820px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 36px;
+  overflow: hidden; display:flex; flex-direction:column;
+  box-shadow: 0 28px 72px oklch(0% 0 0 / .5);
+}
+.statusbar{height:42px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 26px; font-size:13px; font-weight:600}
+.inner{flex:1; padding: 0 16px 16px; display:flex; flex-direction:column; gap:12px; overflow:hidden}
+
+/* ---- cabecera compacta ---- */
+.tophead{display:flex; align-items:center; gap:10px; padding: 4px 2px 0}
+.tophead .mark{width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:var(--accent-foreground)}
+.tophead .t{flex:1}
+.tophead .t b{display:block; font-size:15px; font-weight:750; letter-spacing:-.01em}
+.tophead .t span{font-size:11.5px; color:var(--muted)}
+.statepill{
+  font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase;
+  padding:5px 11px; border-radius:999px;
+}
+.statepill.sending{background: oklch(55% 0.12 243 / .22); color:var(--accent-foreground)}
+.statepill.paused{background: oklch(82.03% 0.1395 75.04 / .18); color:var(--warning)}
+.statepill.done{background: oklch(73.29% 0.1945 149.51 / .18); color:var(--success)}
+
+/* ---- anillo de progreso (conic-gradient, sin JS) ---- */
+.ringblock{
+  background: var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding: 18px; display:flex; align-items:center; gap:18px;
+}
+.ring{
+  width: 150px; height:150px; border-radius:50%; flex:none;
+  display:flex; align-items:center; justify-content:center; position:relative;
+}
+.ring.send{background: conic-gradient(var(--accent) 0 28%, var(--surface-tertiary) 28% 100%)}
+.ring.pause{background: conic-gradient(var(--warning) 0 46%, var(--surface-tertiary) 46% 100%)}
+.ring.full{background: conic-gradient(var(--success) 0 100%, var(--success) 0 100%)}
+.ring .hole{
+  width: 118px; height:118px; border-radius:50%; background: var(--surface);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+}
+.ring .pct{font-size:31px; font-weight:800; letter-spacing:-.04em; font-variant-numeric:tabular-nums}
+.ring .frac{font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+.ringside{flex:1; display:flex; flex-direction:column; gap:10px}
+.kv .k{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700}
+.kv .v{font-size:21px; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-top:1px}
+.kv .v small{font-size:12px; color:var(--muted); font-weight:600}
+.kv .v.warn{color:var(--warning)}
+.kv .v.ok{color:var(--success)}
+
+/* ---- bloques de estadística ---- */
+.statgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:10px}
+.stat{
+  background: var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding: 12px 12px 10px;
+}
+.stat .k{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700}
+.stat .v{font-size:24px; font-weight:800; letter-spacing:-.03em; margin-top:3px; font-variant-numeric:tabular-nums}
+.stat .v.ok{color:var(--success)}
+.stat .v.warn{color:var(--warning)}
+.stat .sub{font-size:10.5px; color:var(--muted); margin-top:2px}
+
+/* ---- controles grandes ---- */
+.bigctrls{display:flex; gap:10px}
+.bigbtn{
+  flex:1; border:none; border-radius:12px; padding:15px 0;
+  font-size:14px; font-weight:800; font-family:inherit; letter-spacing:-.01em;
+}
+.bigbtn.pause{background: var(--surface-secondary); color: var(--warning); border:1px solid var(--border)}
+.bigbtn.stop{background: var(--surface-secondary); color: var(--danger); border:1px solid var(--border)}
+.bigbtn.resume{background: var(--success); color: var(--success-fg)}
+.bigbtn.new{background: var(--accent); color: var(--accent-foreground)}
+
+/* ---- entrada de lote plegada ---- */
+.batchfold{
+  background: var(--surface); border:1px dashed var(--border); border-radius:12px;
+  padding: 12px 14px; display:flex; align-items:center; gap:10px;
+}
+.batchfold .plus{width:30px;height:30px;border-radius:9px;background:var(--surface-tertiary);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent-foreground);flex:none}
+.batchfold .t{flex:1; font-size:12.5px; color:var(--muted); line-height:1.4}
+.batchfold .t b{color:var(--foreground); display:block; font-size:13px}
+.prefmini{
+  flex:none; background:var(--field-background); border:1px solid var(--border);
+  border-radius:8px; padding:7px 10px; font-size:12.5px; font-weight:800;
+  display:flex; align-items:center; gap:5px;
+}
+.prefmini span{color:var(--muted); font-size:9px}
+
+/* ---- respuestas: doble mini panel ---- */
+.duo{display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0}
+.mini{
+  background: var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding: 12px; display:flex; flex-direction:column; min-height:0;
+}
+.mini .head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px}
+.mini .head b{font-size:12px; font-weight:800; letter-spacing:.02em}
+.mini .head .n{font-size:17px; font-weight:800; color:var(--accent-foreground); font-variant-numeric:tabular-nums}
+.mini .head .n.ok{color:var(--success)}
+.mini ul{list-style:none; font-size:10.5px; line-height:1.9; color:var(--muted); overflow:hidden; font-variant-numeric:tabular-nums}
+.mini ul .ok{color:var(--success)}
+.mini ul .fg{color:var(--foreground)}
+.mini .foot{margin-top:auto; padding-top:8px; font-size:11px; font-weight:700; color:var(--accent-foreground)}
+
+/* ---- aviso FloodWait compacto ---- */
+.floodmini{
+  display:flex; gap:10px; align-items:center;
+  background: oklch(82.03% 0.1395 75.04 / .12);
+  border:1px solid oklch(82.03% 0.1395 75.04 / .5);
+  border-radius:12px; padding:10px 14px; font-size:12px; line-height:1.45;
+}
+.floodmini b{color:var(--warning)}
+
+/* ---- escritorio: cabina ancha ---- */
+.desk{
+  width: 780px; background: var(--background);
+  border:1px solid var(--border); border-radius:16px; overflow:hidden;
+  box-shadow: 0 28px 72px oklch(0% 0 0 / .5);
+}
+.desk .dh{display:flex; align-items:center; gap:12px; padding:16px 22px; border-bottom:1px solid var(--separator)}
+.desk .dh .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:var(--accent-foreground)}
+.desk .dh b{font-size:14.5px}
+.desk .dh .sub{font-size:11.5px; color:var(--muted)}
+.desk .dh .statepill{margin-left:auto}
+.desk .body{display:grid; grid-template-columns: 230px 1fr 1fr; gap:14px; padding:18px 22px 22px}
+.desk .ringblock{flex-direction:column; gap:12px; text-align:center; padding:20px 14px}
+.desk .statcol{display:flex; flex-direction:column; gap:10px}
+.desk .statcol .stat .v{font-size:28px}
+.desk .mini{min-height:236px}
+</style>
+</head>
+<body>
+
+<div class="rationale">
+  <h1>Dirección 4 · Cabina de datos — “de un vistazo”</h1>
+  <p>Pensada para vigilar el lote mientras se hace otra cosa: un anillo de progreso enorme y cuatro cifras gigantes (enviadas, en cola, ETA, CC nuevas) legibles con el teléfono apoyado en el escritorio. La acción de pegar el lote se pliega a una sola fila para ceder todo el espacio a la telemetría, y los estados cambian el color del anillo (azul enviando, ámbar en pausa, verde completado) antes que cualquier texto.</p>
+</div>
+
+<div class="stage">
+
+  <!-- ============ TELÉFONO 1: HERO — enviando ============ -->
+  <div class="col">
+    <div class="label">Hero · cabina enviando (con aviso FloodWait)</div>
+    <div class="phone">
+      <div class="statusbar"><span>09:41</span><span>●●●</span></div>
+      <div class="inner">
+
+        <div class="tophead">
+          <div class="mark">cc</div>
+          <div class="t">
+            <b>Lote mayorista junio</b>
+            <span>.zo · @checker_bot · 8 s/línea</span>
+          </div>
+          <span class="statepill sending">Enviando</span>
+        </div>
+
+        <div class="ringblock">
+          <div class="ring send">
+            <div class="hole">
+              <div class="pct">28<span style="font-size:16px">%</span></div>
+              <div class="frac">34 / 120 líneas</div>
+            </div>
+          </div>
+          <div class="ringside">
+            <div class="kv">
+              <div class="k">ETA</div>
+              <div class="v">11:28 <small>a. m.</small></div>
+            </div>
+            <div class="kv">
+              <div class="k">Ritmo real</div>
+              <div class="v">8.2 <small>s/línea</small></div>
+            </div>
+            <div class="kv">
+              <div class="k">CC nuevas</div>
+              <div class="v ok">12</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="statgrid">
+          <div class="stat">
+            <div class="k">Enviadas</div>
+            <div class="v">34</div>
+            <div class="sub">desde 09:32</div>
+          </div>
+          <div class="stat">
+            <div class="k">En cola</div>
+            <div class="v">86</div>
+            <div class="sub">0 duplicadas</div>
+          </div>
+          <div class="stat">
+            <div class="k">Respuestas</div>
+            <div class="v ok">29</div>
+            <div class="sub">27 ✅ · 2 ❌</div>
+          </div>
+        </div>
+
+        <div class="floodmini">
+          ⏳ <span>Telegram pidió esperar <b>45 s</b> — reanudamos solos. La línea 035 se reintenta al terminar.</span>
+        </div>
+
+        <div class="bigctrls">
+          <button class="bigbtn pause">⏸ Pausar</button>
+          <button class="bigbtn stop">⏹ Detener</button>
+        </div>
+
+        <div class="batchfold">
+          <div class="plus">＋</div>
+          <div class="t"><b>Anexar líneas al lote</b>pegá texto: se agregan sin duplicar</div>
+          <div class="prefmini">.zo <span>▼</span></div>
+        </div>
+
+        <div class="duo">
+          <div class="mini">
+            <div class="head"><b>COMPLETA</b><span class="n">29</span></div>
+            <ul>
+              <li><span class="ok">✅</span> <span class="fg">09:40:51</span> Aprobada</li>
+              <li><span class="ok">✅</span> <span class="fg">09:40:58</span> Aprobada</li>
+              <li>❌ <span class="fg">09:41:02</span> Rechazada</li>
+              <li><span class="ok">✅</span> <span class="fg">09:41:09</span> Aprobada</li>
+            </ul>
+            <div class="foot">Ver todo →</div>
+          </div>
+          <div class="mini">
+            <div class="head"><b>FILTRADA</b><span class="n ok">12</span></div>
+            <ul>
+              <li class="fg">4716 02•• •••• 5530</li>
+              <li class="fg">4539 88•• •••• 0021</li>
+              <li class="fg">4532 71•• •••• 8841</li>
+              <li><span class="ok">＋ 4929 16•• •••• 7702</span></li>
+            </ul>
+            <div class="foot">Exportar .txt →</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TELÉFONO 2: VARIANTE — lote completado / cola vacía ============ -->
+  <div class="col">
+    <div class="label">Variante · lote completado (cola vacía)</div>
+    <div class="phone">
+      <div class="statusbar"><span>11:29</span><span>●●●</span></div>
+      <div class="inner">
+
+        <div class="tophead">
+          <div class="mark">cc</div>
+          <div class="t">
+            <b>Lote mayorista junio</b>
+            <span>.zo · @checker_bot · finalizado 11:28</span>
+          </div>
+          <span class="statepill done">Completado</span>
+        </div>
+
+        <div class="ringblock">
+          <div class="ring full">
+            <div class="hole">
+              <div class="pct" style="color:var(--success)">100<span style="font-size:16px">%</span></div>
+              <div class="frac">120 / 120 líneas</div>
+            </div>
+          </div>
+          <div class="ringside">
+            <div class="kv">
+              <div class="k">Duración</div>
+              <div class="v">1:56 <small>h</small></div>
+            </div>
+            <div class="kv">
+              <div class="k">CC únicas</div>
+              <div class="v ok">38</div>
+            </div>
+            <div class="kv">
+              <div class="k">Esperas de Telegram</div>
+              <div class="v warn">2 <small>(90 s en total)</small></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="statgrid">
+          <div class="stat">
+            <div class="k">Enviadas</div>
+            <div class="v">120</div>
+            <div class="sub">cola vacía</div>
+          </div>
+          <div class="stat">
+            <div class="k">Respuestas</div>
+            <div class="v ok">112</div>
+            <div class="sub">104 ✅ · 8 ❌</div>
+          </div>
+          <div class="stat">
+            <div class="k">Filtrada</div>
+            <div class="v ok">38</div>
+            <div class="sub">sin duplicados</div>
+          </div>
+        </div>
+
+        <div class="bigctrls">
+          <button class="bigbtn new">↓ Exportar filtrada.txt</button>
+        </div>
+        <div class="bigctrls">
+          <button class="bigbtn pause" style="color:var(--foreground)">Ver sesión completa</button>
+          <button class="bigbtn pause" style="color:var(--accent-foreground)">＋ Nuevo lote</button>
+        </div>
+
+        <div class="batchfold">
+          <div class="plus">＋</div>
+          <div class="t"><b>Empezar otro lote</b>pegá las líneas y elegí prefijo del catálogo</div>
+          <div class="prefmini">.rk <span>▼</span></div>
+        </div>
+
+        <div class="duo">
+          <div class="mini">
+            <div class="head"><b>COMPLETA</b><span class="n">112</span></div>
+            <ul>
+              <li><span class="ok">✅</span> <span class="fg">11:27:52</span> Aprobada</li>
+              <li><span class="ok">✅</span> <span class="fg">11:28:01</span> Aprobada</li>
+              <li><span class="ok">✅</span> <span class="fg">11:28:09</span> Aprobada</li>
+              <li style="color:var(--muted)">— fin de la sesión —</li>
+            </ul>
+            <div class="foot">Ver todo →</div>
+          </div>
+          <div class="mini">
+            <div class="head"><b>FILTRADA</b><span class="n ok">38</span></div>
+            <ul>
+              <li class="fg">5180 33•• •••• 4419</li>
+              <li class="fg">4485 70•• •••• 9023</li>
+              <li class="fg">4929 16•• •••• 7702</li>
+              <li class="fg">… 35 más</li>
+            </ul>
+            <div class="foot">Exportar .txt →</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECUNDARIA ESCRITORIO: cabina ancha en pausa ============ -->
+  <div class="col">
+    <div class="label">Secundaria escritorio · cabina en pausa</div>
+    <div class="desk">
+      <div class="dh">
+        <div class="mark">cc</div>
+        <div>
+          <b>Lote mayorista junio</b>
+          <div class="sub">.zo · sesión 2026-06-10_09-32-04 · @checker_bot</div>
+        </div>
+        <span class="statepill paused">⏸ En pausa</span>
+      </div>
+      <div class="body">
+        <div class="ringblock">
+          <div class="ring pause">
+            <div class="hole">
+              <div class="pct" style="color:var(--warning)">46<span style="font-size:16px">%</span></div>
+              <div class="frac">55 / 120 líneas</div>
+            </div>
+          </div>
+          <div class="kv">
+            <div class="k">ETA al reanudar</div>
+            <div class="v">~8 <small>min</small></div>
+          </div>
+          <button class="bigbtn resume" style="width:100%">▶ Reanudar</button>
+          <button class="bigbtn stop" style="width:100%">⏹ Detener</button>
+        </div>
+        <div class="statcol">
+          <div class="stat">
+            <div class="k">Enviadas</div>
+            <div class="v">55</div>
+            <div class="sub">desde 09:32</div>
+          </div>
+          <div class="stat">
+            <div class="k">En cola</div>
+            <div class="v warn">65</div>
+            <div class="sub">intactas durante la pausa</div>
+          </div>
+          <div class="stat">
+            <div class="k">CC nuevas</div>
+            <div class="v ok">21</div>
+            <div class="sub">la captura sigue activa</div>
+          </div>
+        </div>
+        <div class="mini">
+          <div class="head"><b>FILTRADA — EN VIVO</b><span class="n ok">21</span></div>
+          <ul>
+            <li class="fg">4716 02•• •••• 5530 | 04/27</li>
+            <li class="fg">4539 88•• •••• 0021 | 07/27</li>
+            <li class="fg">4532 71•• •••• 8841 | 09/27</li>
+            <li class="fg">4929 16•• •••• 7702 | 01/29</li>
+            <li><span class="ok">＋ 4485 70•• •••• 9023 | 12/28</span> ← tardía, en pausa</li>
+          </ul>
+          <div class="foot">Exportar .txt →</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
