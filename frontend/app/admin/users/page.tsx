@@ -5,17 +5,21 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  AlertDialog,
   Button,
   FieldError,
   Form,
   Input,
   Label,
-  Spinner,
   Table,
   TextField,
 } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
+import { AdminShell } from "@/components/ui/admin-shell";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PanelSkeleton } from "@/components/ui/panel-skeleton";
+import { SectionCard } from "@/components/ui/section-card";
 
 // Local response shapes mirror the backend admin schemas (snake_case,
 // end-to-end). The generated types/api.ts also carries them after
@@ -74,107 +78,90 @@ export default function AdminUsersPage() {
     queryFn: () => api.get<UserListResponse>("/api/admin/users"),
   });
 
-  async function logout() {
-    try {
-      await api.post("/api/auth/logout");
-    } finally {
-      // Full navigation so middleware re-reads the cleared cookie.
-      window.location.assign("/login");
-    }
-  }
-
   return (
-    <main className="mx-auto w-full max-w-4xl px-6 py-10">
-      <header className="mb-8 flex items-center justify-between">
-        <div className="flex items-baseline gap-4">
-          <h1 className="text-2xl font-semibold">Gestión de usuarios</h1>
+    <AdminShell gatesVisible={isOwner} title="Usuarios">
+      <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+        {/* Left zone: creation forms (sticky on desktop). */}
+        <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
+          <CreateUserForm
+            kind="client"
+            title="Crear cliente"
+            onCreated={() =>
+              queryClient.invalidateQueries({ queryKey: USERS_KEY })
+            }
+          />
+
           {isOwner && (
-            <Link
-              className="text-sm text-default-500 underline"
-              href="/admin/gates"
-            >
-              Gates
-            </Link>
+            <CreateUserForm
+              kind="admin"
+              title="Crear admin"
+              onCreated={() =>
+                queryClient.invalidateQueries({ queryKey: USERS_KEY })
+              }
+            />
           )}
+
+          {/* Owner knob: admission-control cap (Story 4.2). */}
+          {isOwner && <AdmissionControlCard />}
         </div>
-        <Button variant="secondary" onPress={logout}>
-          Cerrar sesión
-        </Button>
-      </header>
 
-      <CreateUserForm
-        kind="client"
-        title="Crear cliente"
-        onCreated={() => queryClient.invalidateQueries({ queryKey: USERS_KEY })}
-      />
+        {/* Right zone: the users table. */}
+        <SectionCard legend="USUARIOS" padding="none">
+          {users.isLoading && <PanelSkeleton rows={5} />}
 
-      {isOwner && (
-        <CreateUserForm
-          kind="admin"
-          title="Crear admin"
-          onCreated={() =>
-            queryClient.invalidateQueries({ queryKey: USERS_KEY })
-          }
-        />
-      )}
+          {users.isError && (
+            <Alert className="m-3" status="danger">
+              No pudimos cargar los usuarios. Recarga la página.
+            </Alert>
+          )}
 
-      {isOwner && <AdmissionControlCard />}
-
-      <section className="mt-8">
-        {users.isLoading && (
-          <div className="flex justify-center py-10">
-            <Spinner />
-          </div>
-        )}
-
-        {users.isError && (
-          <Alert status="danger">
-            No pudimos cargar los usuarios. Recarga la página.
-          </Alert>
-        )}
-
-        {users.data && (
-          <Table>
-            <Table.Content aria-label="Usuarios">
-              <Table.Header>
-                <Table.Column isRowHeader>Correo</Table.Column>
-                <Table.Column>Rol</Table.Column>
-                <Table.Column>Vence</Table.Column>
-                <Table.Column>Estado</Table.Column>
-                <Table.Column>Acciones</Table.Column>
-              </Table.Header>
-              <Table.Body
-                items={users.data.items}
-                renderEmptyState={() => "Todavía no hay clientes."}
-              >
-                {(u) => (
-                  <Table.Row id={u.id}>
-                    <Table.Cell>{u.email}</Table.Cell>
-                    <Table.Cell>{u.role}</Table.Cell>
-                    <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
-                    <Table.Cell>
-                      {u.role !== "client" ? (
-                        "—"
-                      ) : u.is_blocked ? (
-                        <span className="font-medium text-danger">
-                          Bloqueado
-                        </span>
-                      ) : (
-                        <span className="text-default-500">Activo</span>
-                      )}
-                    </Table.Cell>
-                    <Table.Cell>
-                      {u.role === "client" ? (
-                        <div className="flex flex-col gap-2">
-                          {/* Entry point of the cross-tenant support view
-                              (Story 3.6, Flow 5) — clients only: the support
-                              target is a client's tenant. */}
-                          <Link
-                            className="text-sm text-default-500 underline"
-                            href={`/admin/tenants/${u.tenant_id}`}
-                          >
-                            Sesiones
-                          </Link>
+          {users.data && (
+            <Table>
+              <Table.Content aria-label="Usuarios">
+                <Table.Header>
+                  <Table.Column isRowHeader>Correo</Table.Column>
+                  <Table.Column>Rol</Table.Column>
+                  <Table.Column>Vence</Table.Column>
+                  <Table.Column>Estado</Table.Column>
+                  <Table.Column>Acciones</Table.Column>
+                </Table.Header>
+                <Table.Body
+                  items={users.data.items}
+                  renderEmptyState={() => (
+                    <EmptyState
+                      eyebrow="Usuarios"
+                      message="Todavía no hay clientes."
+                    />
+                  )}
+                >
+                  {(u) => (
+                    <Table.Row id={u.id}>
+                      <Table.Cell>{u.email}</Table.Cell>
+                      <Table.Cell>{u.role}</Table.Cell>
+                      <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
+                      <Table.Cell>
+                        {u.role !== "client" ? (
+                          "—"
+                        ) : u.is_blocked ? (
+                          <span className="font-medium text-danger">
+                            Bloqueado
+                          </span>
+                        ) : (
+                          <span className="text-muted">Activo</span>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {u.role === "client" ? (
+                          <div className="flex flex-col gap-2">
+                            {/* Entry point of the cross-tenant support view
+                                (Story 3.6, Flow 5) — clients only: the support
+                                target is a client's tenant. */}
+                            <Link
+                              className="text-sm text-muted underline hover:text-foreground"
+                              href={`/admin/tenants/${u.tenant_id}`}
+                            >
+                              Sesiones
+                            </Link>
                           <ClientLifecycleActions
                             user={u}
                             onChanged={() =>
@@ -183,29 +170,30 @@ export default function AdminUsersPage() {
                               })
                             }
                           />
-                        </div>
-                      ) : isOwner && u.role === "admin" ? (
-                        <DeleteAdminAction
-                          email={u.email}
-                          userId={u.id}
-                          onDeleted={() =>
-                            queryClient.invalidateQueries({
-                              queryKey: USERS_KEY,
-                            })
-                          }
-                        />
-                      ) : (
-                        "—"
-                      )}
-                    </Table.Cell>
-                  </Table.Row>
-                )}
-              </Table.Body>
-            </Table.Content>
-          </Table>
-        )}
-      </section>
-    </main>
+                          </div>
+                        ) : isOwner && u.role === "admin" ? (
+                          <DeleteAdminAction
+                            email={u.email}
+                            userId={u.id}
+                            onDeleted={() =>
+                              queryClient.invalidateQueries({
+                                queryKey: USERS_KEY,
+                              })
+                            }
+                          />
+                        ) : (
+                          "—"
+                        )}
+                      </Table.Cell>
+                    </Table.Row>
+                  )}
+                </Table.Body>
+              </Table.Content>
+            </Table>
+          )}
+        </SectionCard>
+      </div>
+    </AdminShell>
   );
 }
 
@@ -269,22 +257,19 @@ function CreateUserForm({
   }
 
   return (
-    <section className="mb-6 rounded-lg border border-default/30 p-4">
-      <h2 className="mb-3 text-lg font-medium">{title}</h2>
-
+    // legendAs="h2": the legend replaces the old "Crear cliente"/"Crear
+    // admin" h2 headings — keep the document outline under the page h1.
+    <SectionCard legend={title} legendAs="h2">
       {banner && (
         <Alert className="mb-3" status="danger">
           {banner}
         </Alert>
       )}
 
-      <Form
-        className="flex flex-col gap-3 sm:flex-row sm:items-end"
-        onSubmit={onSubmit}
-      >
+      <Form className="flex flex-col gap-3" onSubmit={onSubmit}>
         <TextField
           isRequired
-          className="flex flex-1 flex-col gap-1"
+          className="flex w-full flex-col gap-1"
           isInvalid={emailError !== null}
           name="email"
           type="email"
@@ -301,7 +286,7 @@ function CreateUserForm({
 
         <TextField
           isRequired
-          className="flex flex-1 flex-col gap-1"
+          className="flex w-full flex-col gap-1"
           name="password"
           type="password"
           value={password}
@@ -314,7 +299,7 @@ function CreateUserForm({
         {kind === "client" && (
           <TextField
             isRequired
-            className="flex flex-col gap-1 sm:w-32"
+            className="flex w-full flex-col gap-1"
             isInvalid={planError !== null}
             name="plan_days"
             type="number"
@@ -331,7 +316,7 @@ function CreateUserForm({
         )}
 
         <Button
-          className="sm:mb-1"
+          className="w-full"
           isDisabled={mutation.isPending}
           type="submit"
           variant="primary"
@@ -339,7 +324,7 @@ function CreateUserForm({
           {mutation.isPending ? "Creando…" : "Crear"}
         </Button>
       </Form>
-    </section>
+    </SectionCard>
   );
 }
 
@@ -474,13 +459,13 @@ function DeleteAdminAction({
   userId: number;
   onDeleted: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => api.delete<void>(`/api/admin/users/${userId}`),
     onSuccess: () => {
-      setConfirming(false);
+      setOpen(false);
       setError(null);
       onDeleted();
     },
@@ -495,41 +480,71 @@ function DeleteAdminAction({
     },
   });
 
-  if (!confirming) {
-    return (
-      <Button size="sm" variant="secondary" onPress={() => setConfirming(true)}>
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="secondary"
+        onPress={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
         Eliminar
       </Button>
-    );
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-sm">¿Eliminar este admin? ({email})</span>
-      {error && <span className="text-sm text-danger">{error}</span>}
-      <div className="flex gap-2">
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="danger"
-          onPress={() => mutation.mutate()}
-        >
-          {mutation.isPending ? "Eliminando…" : "Sí, eliminar"}
-        </Button>
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="secondary"
-          onPress={() => setConfirming(false)}
-        >
-          Cancelar
-        </Button>
-      </div>
-    </div>
+      <AlertDialog
+        isOpen={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <AlertDialog.Backdrop>
+          <AlertDialog.Container>
+            <AlertDialog.Dialog>
+              <AlertDialog.Header>
+                <AlertDialog.Heading>
+                  ¿Eliminar este admin? ({email})
+                </AlertDialog.Heading>
+              </AlertDialog.Header>
+              {error && (
+                <AlertDialog.Body>
+                  <Alert status="danger">{error}</Alert>
+                </AlertDialog.Body>
+              )}
+              <AlertDialog.Footer>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    setOpen(false);
+                    setError(null);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="danger"
+                  onPress={() => mutation.mutate()}
+                >
+                  {mutation.isPending ? "Eliminando…" : "Sí, eliminar"}
+                </Button>
+              </AlertDialog.Footer>
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
+    </>
   );
 }
 
 // --- Client lifecycle: renew + block/unblock (Story 1.5) -----------------
+// Horizontal button row, constant row height — anything that used to expand
+// inline now lives in an AlertDialog (ui-polish-spec §3.5).
 
 function ClientLifecycleActions({
   user,
@@ -539,7 +554,7 @@ function ClientLifecycleActions({
   onChanged: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex gap-2">
       <RenewAction userId={user.id} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
       <ResetPasswordAction user={user} onChanged={onChanged} />
@@ -605,70 +620,86 @@ function RenewAction({
     mutation.mutate();
   }
 
-  if (!open) {
-    return (
+  return (
+    <>
       <Button size="sm" variant="secondary" onPress={() => setOpen(true)}>
         Renovar
       </Button>
-    );
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <TextField
-          className="flex flex-col gap-1 sm:w-24"
-          name="plan_days"
-          type="number"
-          value={days}
-          onChange={(v) => {
-            setDays(v);
-            if (error) setError(null);
-          }}
-        >
-          <Label>Días</Label>
-          <Input placeholder="30" />
-        </TextField>
+      <AlertDialog
+        isOpen={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <AlertDialog.Backdrop>
+          <AlertDialog.Container>
+            <AlertDialog.Dialog>
+              <AlertDialog.Header>
+                <AlertDialog.Heading>Renovar plan</AlertDialog.Heading>
+              </AlertDialog.Header>
+              <AlertDialog.Body>
+                <div className="flex flex-col gap-3">
+                  <div className="flex gap-2">
+                    <TextField
+                      className="flex w-24 flex-col gap-1"
+                      name="plan_days"
+                      type="number"
+                      value={days}
+                      onChange={(v) => {
+                        setDays(v);
+                        if (error) setError(null);
+                      }}
+                    >
+                      <Label>Días</Label>
+                      <Input placeholder="30" />
+                    </TextField>
 
-        <TextField
-          className="flex flex-col gap-1"
-          name="expires_at"
-          type="date"
-          value={date}
-          onChange={(v) => {
-            setDate(v);
-            if (error) setError(null);
-          }}
-        >
-          <Label>Hasta</Label>
-          <Input />
-        </TextField>
-      </div>
+                    <TextField
+                      className="flex flex-col gap-1"
+                      name="expires_at"
+                      type="date"
+                      value={date}
+                      onChange={(v) => {
+                        setDate(v);
+                        if (error) setError(null);
+                      }}
+                    >
+                      <Label>Hasta</Label>
+                      <Input />
+                    </TextField>
+                  </div>
 
-      {error && <span className="text-sm text-danger">{error}</span>}
-
-      <div className="flex gap-2">
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="primary"
-          onPress={submit}
-        >
-          {mutation.isPending ? "Renovando…" : "Renovar"}
-        </Button>
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="secondary"
-          onPress={() => {
-            setOpen(false);
-            setError(null);
-          }}
-        >
-          Cancelar
-        </Button>
-      </div>
-    </div>
+                  {error && <Alert status="danger">{error}</Alert>}
+                </div>
+              </AlertDialog.Body>
+              <AlertDialog.Footer>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    setOpen(false);
+                    setError(null);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="primary"
+                  onPress={submit}
+                >
+                  {mutation.isPending ? "Renovando…" : "Renovar"}
+                </Button>
+              </AlertDialog.Footer>
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -679,7 +710,7 @@ function BlockAction({
   user: UserOut;
   onChanged: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const action = user.is_blocked ? "unblock" : "block";
 
@@ -687,7 +718,7 @@ function BlockAction({
     mutationFn: () =>
       api.post<UserOut>(`/api/admin/users/${user.id}/${action}`),
     onSuccess: () => {
-      setConfirming(false);
+      setOpen(false);
       setError(null);
       onChanged();
     },
@@ -700,7 +731,9 @@ function BlockAction({
     },
   });
 
-  // Unblock restores access (not destructive) → acts on a single press.
+  // Unblock restores access (not destructive) → acts on a single press. Its
+  // error renders as a compact Alert under the button — the documented
+  // exception for single-press action errors (ui-polish-spec §3.5).
   if (user.is_blocked) {
     return (
       <div className="flex flex-col gap-1">
@@ -712,45 +745,75 @@ function BlockAction({
         >
           {mutation.isPending ? "Desbloqueando…" : "Desbloquear"}
         </Button>
-        {error && <span className="text-sm text-danger">{error}</span>}
+        {error && (
+          <Alert className="mt-1" status="danger">
+            {error}
+          </Alert>
+        )}
       </div>
     );
   }
 
-  // Block closes the client's live session → inline confirm (DeleteAdminAction idiom).
-  if (!confirming) {
-    return (
-      <Button size="sm" variant="danger" onPress={() => setConfirming(true)}>
+  // Block closes the client's live session → confirm dialog.
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="danger"
+        onPress={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
         Bloquear
       </Button>
-    );
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-sm">
-        ¿Bloquear a {user.email}? Su sesión se cerrará al instante.
-      </span>
-      {error && <span className="text-sm text-danger">{error}</span>}
-      <div className="flex gap-2">
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="danger"
-          onPress={() => mutation.mutate()}
-        >
-          {mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
-        </Button>
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="secondary"
-          onPress={() => setConfirming(false)}
-        >
-          Cancelar
-        </Button>
-      </div>
-    </div>
+      <AlertDialog
+        isOpen={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <AlertDialog.Backdrop>
+          <AlertDialog.Container>
+            <AlertDialog.Dialog>
+              <AlertDialog.Header>
+                <AlertDialog.Heading>
+                  ¿Bloquear a {user.email}? Su sesión se cerrará al instante.
+                </AlertDialog.Heading>
+              </AlertDialog.Header>
+              {error && (
+                <AlertDialog.Body>
+                  <Alert status="danger">{error}</Alert>
+                </AlertDialog.Body>
+              )}
+              <AlertDialog.Footer>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    setOpen(false);
+                    setError(null);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="danger"
+                  onPress={() => mutation.mutate()}
+                >
+                  {mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
+                </Button>
+              </AlertDialog.Footer>
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -763,9 +826,10 @@ function ResetPasswordAction({
   user: UserOut;
   onChanged: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
-  // The EXACTLY-ONCE display (AC1): lives only in local state; "Listo" clears
-  // it and it is unrecoverable by design (only a new reset produces a new one).
+  const [open, setOpen] = useState(false);
+  // The EXACTLY-ONCE display (AC1): lives only in local state; "Listo" (or
+  // closing the dialog by ANY means) clears it and it is unrecoverable by
+  // design (only a new reset produces a new one).
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -776,12 +840,12 @@ function ResetPasswordAction({
         `/api/admin/users/${user.id}/reset-password`,
       ),
     onSuccess: (res) => {
-      setConfirming(false);
       setError(null);
       setTempPassword(res.temp_password);
-      // onChanged() (USERS_KEY invalidation) is deferred to "Listo": a
-      // refetch-driven remount here could destroy the one-time password
-      // before the admin copies it.
+      // The SAME dialog mutates into the temp-password view; onChanged()
+      // (USERS_KEY invalidation) is deferred to dismiss: a refetch-driven
+      // remount here could destroy the one-time password before the admin
+      // copies it.
     },
     onError: (err) => {
       setError(
@@ -815,59 +879,111 @@ function ResetPasswordAction({
     onChanged();
   }
 
-  if (tempPassword) {
-    return (
-      <div className="flex flex-col gap-2">
-        <span className="font-mono text-sm">{tempPassword}</span>
-        <span className="text-sm text-default-500">
-          Cópiala ahora: no volverá a mostrarse.
-        </span>
-        {error && <span className="text-sm text-danger">{error}</span>}
-        <div className="flex gap-2">
-          <Button size="sm" variant="secondary" onPress={copy}>
-            {copied ? "Copiada" : "Copiar"}
-          </Button>
-          <Button size="sm" variant="primary" onPress={dismiss}>
-            Listo
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!confirming) {
-    return (
-      <Button size="sm" variant="secondary" onPress={() => setConfirming(true)}>
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="secondary"
+        onPress={() => {
+          setError(null);
+          setOpen(true);
+        }}
+      >
         Resetear
       </Button>
-    );
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-sm">
-        ¿Resetear la contraseña de {user.email}? Su sesión se cerrará al
-        instante.
-      </span>
-      {error && <span className="text-sm text-danger">{error}</span>}
-      <div className="flex gap-2">
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="danger"
-          onPress={() => mutation.mutate()}
-        >
-          {mutation.isPending ? "Reseteando…" : "Sí, resetear"}
-        </Button>
-        <Button
-          isDisabled={mutation.isPending}
-          size="sm"
-          variant="secondary"
-          onPress={() => setConfirming(false)}
-        >
-          Cancelar
-        </Button>
-      </div>
-    </div>
+      <AlertDialog
+        isOpen={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) {
+            // Today only the footer buttons close this dialog (the Backdrop
+            // below pins isDismissable={false} + isKeyboardDismissDisabled —
+            // HeroUI 3.1's defaults, made explicit so a library upgrade or a
+            // stray prop can't silently open an ESC/backdrop path that
+            // destroys the one-time password by accident). This branch is
+            // the safety net: if any close route ever bypasses "Listo", the
+            // exactly-once password is still destroyed, never recoverable.
+            if (tempPassword) dismiss();
+            else setError(null);
+          }
+        }}
+      >
+        <AlertDialog.Backdrop isKeyboardDismissDisabled isDismissable={false}>
+          <AlertDialog.Container>
+            <AlertDialog.Dialog>
+              {tempPassword ? (
+                <>
+                  <AlertDialog.Header>
+                    <AlertDialog.Heading>
+                      Contraseña temporal
+                    </AlertDialog.Heading>
+                  </AlertDialog.Header>
+                  <AlertDialog.Body>
+                    <div className="flex flex-col gap-2">
+                      <span className="font-mono text-sm">{tempPassword}</span>
+                      <span className="text-sm text-muted">
+                        Cópiala ahora: no volverá a mostrarse.
+                      </span>
+                      {error && <Alert status="danger">{error}</Alert>}
+                    </div>
+                  </AlertDialog.Body>
+                  <AlertDialog.Footer>
+                    <Button size="sm" variant="secondary" onPress={copy}>
+                      {copied ? "Copiada" : "Copiar"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onPress={() => {
+                        setOpen(false);
+                        dismiss();
+                      }}
+                    >
+                      Listo
+                    </Button>
+                  </AlertDialog.Footer>
+                </>
+              ) : (
+                <>
+                  <AlertDialog.Header>
+                    <AlertDialog.Heading>
+                      ¿Resetear la contraseña de {user.email}? Su sesión se
+                      cerrará al instante.
+                    </AlertDialog.Heading>
+                  </AlertDialog.Header>
+                  {error && (
+                    <AlertDialog.Body>
+                      <Alert status="danger">{error}</Alert>
+                    </AlertDialog.Body>
+                  )}
+                  <AlertDialog.Footer>
+                    <Button
+                      isDisabled={mutation.isPending}
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => {
+                        setOpen(false);
+                        setError(null);
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      isDisabled={mutation.isPending}
+                      size="sm"
+                      variant="danger"
+                      onPress={() => mutation.mutate()}
+                    >
+                      {mutation.isPending ? "Reseteando…" : "Sí, resetear"}
+                    </Button>
+                  </AlertDialog.Footer>
+                </>
+              )}
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
+    </>
   );
 }

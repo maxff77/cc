@@ -12,7 +12,9 @@ import {
 } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
+import { siteConfig } from "@/config/site";
 import { ContactPanel } from "@/components/contact-panel";
+import { SectionCard } from "@/components/ui/section-card";
 
 interface LoginResponse {
   id: number;
@@ -84,60 +86,89 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
-        <h1 className="mb-6 text-center text-2xl font-semibold">
+      <div className="flex w-full max-w-sm flex-col gap-5">
+        <span className="self-center font-mono text-2xl font-extrabold tracking-[-0.03em]">
+          CC
+        </span>
+
+        <h1 className="text-center text-lg font-bold tracking-[-0.01em]">
           Iniciar sesión
         </h1>
 
         {notice?.kind === "banner" && (
-          <Alert className="mb-4" status="danger">
-            {notice.message}
-          </Alert>
+          <Alert status="danger">{notice.message}</Alert>
         )}
 
         {notice?.kind === "blocked" && (
-          <ContactPanel className="mb-4" message={COPY.account_blocked} />
+          <ContactPanel message={COPY.account_blocked} />
         )}
 
-        <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
-          <TextField
-            isRequired
-            className="flex flex-col gap-1"
-            name="email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-          >
-            <Label>Correo</Label>
-            <Input placeholder="tu@correo.com" />
-          </TextField>
+        {/* legendAs="h2": the legend is the form's section heading. */}
+        <SectionCard legend="ACCESO" legendAs="h2">
+          <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
+            <TextField
+              isRequired
+              className="flex flex-col gap-1"
+              name="email"
+              type="email"
+              value={email}
+              onChange={setEmail}
+            >
+              <Label>Correo</Label>
+              <Input placeholder="tu@correo.com" />
+            </TextField>
 
-          <TextField
-            isRequired
-            className="flex flex-col gap-1"
-            isInvalid={credentialError !== null}
-            name="password"
-            type="password"
-            value={password}
-            onChange={(v) => {
-              setPassword(v);
-              if (credentialError) setCredentialError(null);
-            }}
-          >
-            <Label>Contraseña</Label>
-            <Input placeholder="••••••••" />
-            {credentialError && <FieldError>{credentialError}</FieldError>}
-          </TextField>
+            <TextField
+              isRequired
+              className="flex flex-col gap-1"
+              isInvalid={credentialError !== null}
+              name="password"
+              type="password"
+              value={password}
+              onChange={(v) => {
+                setPassword(v);
+                if (credentialError) setCredentialError(null);
+              }}
+            >
+              <Label>Contraseña</Label>
+              <Input placeholder="••••••••" />
+              {credentialError && <FieldError>{credentialError}</FieldError>}
+            </TextField>
 
-          <Button
-            className="mt-2"
-            isDisabled={submitting}
-            type="submit"
-            variant="primary"
+            <Button
+              className="mt-2"
+              isDisabled={submitting}
+              type="submit"
+              variant="primary"
+            >
+              {submitting ? "Entrando…" : "Entrar"}
+            </Button>
+          </Form>
+        </SectionCard>
+
+        {/* External help channels (siteConfig.contact) — links only, no
+            behavior: the blocked notice keeps its own ContactPanel. */}
+        <p className="text-center text-sm text-muted">
+          ¿Problemas para entrar? Escríbenos por{" "}
+          <a
+            className="underline hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            href={siteConfig.contact.whatsapp}
+            rel="noopener noreferrer"
+            target="_blank"
           >
-            {submitting ? "Entrando…" : "Entrar"}
-          </Button>
-        </Form>
+            WhatsApp
+          </a>{" "}
+          o{" "}
+          <a
+            className="underline hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            href={siteConfig.contact.telegram}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Telegram
+          </a>
+          .
+        </p>
       </div>
     </main>
   );

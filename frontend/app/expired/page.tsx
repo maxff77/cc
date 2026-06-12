@@ -31,8 +31,12 @@ export default function ExpiredPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
-        <h1 className="mb-6 text-center text-2xl font-semibold">
+      <div className="flex w-full max-w-sm flex-col gap-5">
+        <span className="self-center font-mono text-2xl font-extrabold tracking-[-0.03em]">
+          CC
+        </span>
+
+        <h1 className="text-center text-lg font-bold tracking-[-0.01em]">
           Tu plan venció
         </h1>
 
