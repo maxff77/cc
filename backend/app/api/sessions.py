@@ -1,11 +1,12 @@
 """Sessions router (Story 3.3): the Historial — list, detail, rename, delete;
 plus ``POST /{id}/continue`` (Story 3.4): reopen a closed session as the
-active capture session.
+active capture session, and ``GET /{id}/export`` (Story 3.5): the
+Completa/Filtrada views as downloadable ``.txt``.
 
-Capture sessions only; the export half of this module (`.txt`) is Story 3.5.
 CRUD (GET/PATCH/DELETE) follows architecture's literal route list
 (``/api/sessions/{id}``); continue is the non-CRUD verb-suffix action
-(idiom ``/api/batches/{id}/pause|resume|stop``).
+(idiom ``/api/batches/{id}/pause|resume|stop``); export is a GET — a safe,
+idempotent read (the verb-suffix POST idiom is for actions that mutate).
 
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
 — never from the body or path (architecture mandate). Any authenticated role
@@ -16,8 +17,10 @@ existence (unknown id, another tenant's id and out-of-int4 id look the same).
 """
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +34,7 @@ from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
 from app.errors import batch_live, session_conflict, session_in_use, session_not_found
 from app.services import batches as batches_service
+from app.services import exports
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -184,6 +188,47 @@ async def get_session_detail(
         cc=[SessionCcRow(id=row.id, text=row.text) for row in cc],
         responses_total=len(responses),
         cc_total=len(cc),
+    )
+
+
+@router.get("/{session_id}/export", response_class=PlainTextResponse)
+async def export_session(
+    session_id: int,
+    view: Literal["completa", "filtrada"],
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PlainTextResponse:
+    """Download one view as ``.txt`` (Story 3.5, FR18) — generated on the fly
+    from rows, no cache, no files on disk (architecture mandate).
+
+    ``view`` maps the legacy ``?tipo=completa|filtrada`` (``tipo``→``view``);
+    the ``Literal`` validates at the edge ⇒ 422 on anything else (same
+    treatment as every validation 422 in the project — the UI never builds an
+    invalid view). The tenant-scoped lookup's 404 trío (unknown / foreign /
+    out-of-int4 id) IS the AC 3 isolation — no new code, no existence leak.
+
+    NO live-batch guard (AC 2: works both during a live batch and on closed
+    sessions — same lane as rename). Zero rows ⇒ 200 with an empty body
+    (recorded decision: a 404 here would conflate "no data" with "no
+    session"). ``PlainTextResponse`` already sets ``text/plain; charset=utf-8``;
+    the filename in ``Content-Disposition`` is the backend's single authority.
+    """
+    target = await _require_session(session, user.tenant_id, session_id)
+    if view == "completa":
+        rows = await responses_repo.list_full(session, target.id, None)
+        content = exports.completa_txt(rows)
+    else:
+        rows = await responses_repo.list_cc(session, target.id, None)
+        content = exports.filtrada_txt(rows)
+    filename = exports.export_filename(target, view)
+    return PlainTextResponse(
+        content,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # AC 1's "no cache" enforced in the HTTP contract, not just by
+            # current browser heuristics: the body carries CC data.
+            "Cache-Control": "no-store",
+        },
     )
 
 

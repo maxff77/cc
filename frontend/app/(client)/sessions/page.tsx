@@ -6,7 +6,8 @@
 // newest-first list — the grouping is pure presentation (recorded decision).
 // Continuar (Story 3.4) reopens a closed session as the active capture
 // session — dedup is server-side, the WS `session.active` rebinds Envío.
-// Export `↓ .txt` is Story 3.5 — no dead buttons.
+// Export `↓ .txt` (Story 3.5) lives in the dual views (Envío + detail), NOT
+// here: the spine's row actions are Renombrar/Continuar/Eliminar only.
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

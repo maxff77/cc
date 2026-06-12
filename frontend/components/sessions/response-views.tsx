@@ -6,13 +6,19 @@
 // tab strip carries the labels + badges), on desktop two side-by-side panels
 // with label-caps headers. Props-driven on purpose (rows + counts in, no
 // store reads inside): Story 3.3's Historial detail reuses these panels
-// verbatim. Export (`↓ .txt`) is Story 3.5 — no dead button here.
+// verbatim. Export (Story 3.5): each panel takes an optional `exportPath` —
+// when present, a `↓ .txt` footer link downloads the view via fetch+blob; no
+// prop, no footer (zero dead buttons). On mobile the link lives in the
+// panel footer INSIDE each Tabs.Panel, not in the tab strip (recorded
+// deviation from DESIGN: the strip would force controlled Tabs just to know
+// which view to export; the spine — one per view, both sections — is met).
 import type { CcRow, ResponseRow } from "@/lib/ws";
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Tabs } from "@heroui/react";
 import clsx from "clsx";
 
+import { ApiError, downloadFile } from "@/lib/api";
 import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
 
 // Empty states — copy VERBATIM (EXPERIENCE.md): no fake rows, badges at 0.
@@ -126,14 +132,53 @@ function PanelList({
   );
 }
 
+// Footer export link (Story 3.5) — plain button on purpose (consola
+// density; the DESIGN calls it a "footer export link" and a plain <button>
+// skips verifying HeroUI variant typings — 3.3 lesson). Pending and error
+// are local: a failed download never breaks the panel.
+function ExportLink({ path }: { path: string }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <>
+      <button
+        className="font-mono text-[11px] text-accent disabled:opacity-50"
+        disabled={pending}
+        type="button"
+        onClick={async () => {
+          setPending(true);
+          setError(null);
+          try {
+            await downloadFile(path);
+          } catch (err) {
+            setError(
+              err instanceof ApiError
+                ? err.message
+                : "No pudimos conectar. Intenta de nuevo.",
+            );
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        {pending ? "Descargando…" : "↓ .txt"}
+      </button>
+      {error && <span className="text-[11px] text-danger">{error}</span>}
+    </>
+  );
+}
+
 // THE panel — outlined surface (DESIGN: 1px border, no shadows), optional
-// label-caps header (the mobile tabs carry the label/badge instead).
+// label-caps header (the mobile tabs carry the label/badge instead) and
+// optional `↓ .txt` export footer (Story 3.5; no path ⇒ no footer).
 function ResponsePanel({
   header,
   count,
   countTone,
   emptyText,
   rows,
+  exportPath,
   listClassName,
   className,
 }: {
@@ -142,6 +187,7 @@ function ResponsePanel({
   countTone?: "success";
   emptyText: string;
   rows: RowData[];
+  exportPath?: string;
   listClassName?: string;
   className?: string;
 }) {
@@ -161,6 +207,11 @@ function ResponsePanel({
         </header>
       )}
       <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
+      {exportPath && (
+        <footer className="flex items-center justify-between border-t border-border px-3 py-2">
+          <ExportLink path={exportPath} />
+        </footer>
+      )}
     </section>
   );
 }
@@ -169,12 +220,14 @@ export function CompletaPanel({
   responses,
   total,
   header = true,
+  exportPath,
   listClassName,
   className,
 }: {
   responses: ResponseRow[];
   total: number;
   header?: boolean;
+  exportPath?: string;
   listClassName?: string;
   className?: string;
 }) {
@@ -183,6 +236,7 @@ export function CompletaPanel({
       className={className}
       count={total}
       emptyText={EMPTY_COMPLETA}
+      exportPath={exportPath}
       header={header ? "COMPLETA" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses)}
@@ -194,12 +248,14 @@ export function FiltradaPanel({
   cc,
   total,
   header = true,
+  exportPath,
   listClassName,
   className,
 }: {
   cc: CcRow[];
   total: number;
   header?: boolean;
+  exportPath?: string;
   listClassName?: string;
   className?: string;
 }) {
@@ -209,6 +265,7 @@ export function FiltradaPanel({
       count={total}
       countTone="success"
       emptyText={EMPTY_FILTRADA}
+      exportPath={exportPath}
       header={header ? "FILTRADA" : undefined}
       listClassName={listClassName}
       rows={filtradaRows(cc, total)}
@@ -224,12 +281,16 @@ export function ResponseTabs({
   cc,
   responsesTotal,
   ccTotal,
+  exportPathCompleta,
+  exportPathFiltrada,
   className,
 }: {
   responses: ResponseRow[];
   cc: CcRow[];
   responsesTotal: number;
   ccTotal: number;
+  exportPathCompleta?: string;
+  exportPathFiltrada?: string;
   className?: string;
 }) {
   return (
@@ -252,6 +313,7 @@ export function ResponseTabs({
       </Tabs.ListContainer>
       <Tabs.Panel id="completa">
         <CompletaPanel
+          exportPath={exportPathCompleta}
           header={false}
           listClassName="max-h-72"
           responses={responses}
@@ -261,6 +323,7 @@ export function ResponseTabs({
       <Tabs.Panel id="filtrada">
         <FiltradaPanel
           cc={cc}
+          exportPath={exportPathFiltrada}
           header={false}
           listClassName="max-h-72"
           total={ccTotal}

@@ -5,8 +5,9 @@
 // (they are props-driven on purpose; that reusability was a 3.2 design
 // requirement). The data arrives COMPLETE by REST (`limit=None` server-side
 // — the snapshot's 200-row cap is reconnection-only); the WS store only
-// signals "something new" for the live-follow refetch. Export `↓ .txt` is
-// Story 3.5 — no dead button.
+// signals "something new" for the live-follow refetch. Export `↓ .txt`
+// (Story 3.5): always present here — the session exists, and closed or in
+// progress both export (AC 2).
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -212,6 +213,10 @@ export default function SessionDetailPage() {
   }
 
   const data = detail.data;
+  // Export `↓ .txt` (Story 3.5) — same paths as Envío, built on `data.id`.
+  const exportBase = `/api/sessions/${data.id}/export`;
+  const exportCompleta = `${exportBase}?view=completa`;
+  const exportFiltrada = `${exportBase}?view=filtrada`;
   // REST rows → the 3.2 panel shapes: snapshot-style keys (`s-${id}`),
   // `nueva: false` everywhere — the "nueva" highlight belongs to Envío's
   // live landing; the detail is a read surface.
@@ -273,6 +278,7 @@ export default function SessionDetailPage() {
       <div className="lg:grid lg:grid-cols-2 lg:gap-6">
         <CompletaPanel
           className="hidden lg:flex"
+          exportPath={exportCompleta}
           listClassName="lg:max-h-[calc(100vh-12rem)]"
           responses={responses}
           total={data.responses_total}
@@ -280,6 +286,7 @@ export default function SessionDetailPage() {
         <FiltradaPanel
           cc={cc}
           className="hidden lg:flex"
+          exportPath={exportFiltrada}
           listClassName="lg:max-h-[calc(100vh-12rem)]"
           total={data.cc_total}
         />
@@ -290,6 +297,8 @@ export default function SessionDetailPage() {
         cc={cc}
         ccTotal={data.cc_total}
         className="lg:hidden"
+        exportPathCompleta={exportCompleta}
+        exportPathFiltrada={exportFiltrada}
         responses={responses}
         responsesTotal={data.responses_total}
       />

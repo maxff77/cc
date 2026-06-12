@@ -37,6 +37,9 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 3-5 → done 2026-06-12 (export .txt: services/exports.py puro + GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard + Cache-Control no-store, downloadFile fetch+blob con Content-Disposition, ExportLink footer en duales, suite 212 verde)
+# 3-5 → review 2026-06-12 (implementado: services/exports.py puro (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard de lote vivo + Cache-Control no-store, toApiError extraído + downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); suite 212 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
+# 3-5 → ready-for-dev 2026-06-12 (story file created — export .txt: services/exports.py nuevo (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= sin guard de lote, downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); sin diferidos absorbidos)
 # 3-4 → done 2026-06-12 (continuar sesión + dedup preservado: activate/reemplazo + guard batch_live + session.active event + botón Continuar en Historial, 206 tests)
 # 3-3 → done 2026-06-12 (historial completo: list/detail/rename/delete con guards, live-follow refetch, AlertDialog, duales reutilizados, 202 tests)
 # 3-3 → review 2026-06-12 (implementado: api/sessions.py list/detail/rename/delete tenant-scoped + errores session_not_found/session_in_use, repos list_for_tenant/get_for_tenant/delete + limit=None en responses, lista agrupada por gate con renombrar inline y modal Eliminar (AlertDialog), detalle /sessions/[id] reusando paneles 3.2 con live-follow por refetch, clearSession en ws.ts, nav por prefijo + diferido 2-3 client-nav.tsx:34 resuelto; suite 202 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
@@ -94,7 +97,7 @@ development_status:
   3-2-vistas-completa-filtrada-en-vivo-en-envio: done
   3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: done
   3-4-continuar-una-sesion-con-dedup-preservado: done
-  3-5-exportar-resultados-como-txt: backlog
+  3-5-exportar-resultados-como-txt: done
   3-6-vista-de-soporte-cross-tenant-para-owner-admins: backlog
   epic-3-retrospective: optional
 

@@ -36,6 +36,16 @@ export default function EnvioPage() {
   // A paused/stopping lote keeps its ring on screen — only idle hides it.
   const isLive = live.state !== "idle";
 
+  // Export `↓ .txt` (Story 3.5): paths exist only once a session does —
+  // before the first lote there is nothing to export, so the link is not
+  // rendered (never a dead disabled button). NOT gated on isLive: export
+  // works DURING the lote (AC 2) and after — the session and its sessionId
+  // survive the lote ("capture stays armed").
+  const exportBase =
+    live.sessionId !== null ? `/api/sessions/${live.sessionId}/export` : null;
+  const exportCompleta = exportBase ? `${exportBase}?view=completa` : undefined;
+  const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
+
   return (
     <div className="lg:grid lg:grid-cols-[300px_1fr_1fr] lg:gap-6">
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
@@ -63,6 +73,8 @@ export default function EnvioPage() {
           cc={live.cc}
           ccTotal={live.ccNew}
           className="lg:hidden"
+          exportPathCompleta={exportCompleta}
+          exportPathFiltrada={exportFiltrada}
           responses={live.responses}
           responsesTotal={live.responsesTotal}
         />
@@ -84,6 +96,7 @@ export default function EnvioPage() {
           lists scroll internally — the cockpit stays sticky. */}
       <CompletaPanel
         className="hidden lg:flex"
+        exportPath={exportCompleta}
         listClassName="lg:max-h-[calc(100vh-8rem)]"
         responses={live.responses}
         total={live.responsesTotal}
@@ -91,6 +104,7 @@ export default function EnvioPage() {
       <FiltradaPanel
         cc={live.cc}
         className="hidden lg:flex"
+        exportPath={exportFiltrada}
         listClassName="lg:max-h-[calc(100vh-8rem)]"
         total={live.ccNew}
       />

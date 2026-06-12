@@ -2,11 +2,16 @@
 the COMPLETE data (uncapped, vs the capped snapshot), rename (200-char cap,
 unguarded by live batches), delete (live-batch guard, FK CASCADE on
 responses, SET NULL on batches) and tenant isolation (404 never leaks
-existence — four verbs, three bad ids). Plus Story 3.4 Continuar:
+existence — five verbs, three bad ids). Plus Story 3.4 Continuar:
 reactivation by replacement + `session.active` emission, dedup preserved
 across the continue (DB-backed, `uq_responses_session_cc`), the any-live-batch
 guard (409 `batch_live`, paused included) and idempotency on the
-already-active session.
+already-active session. Plus Story 3.5 Export: `GET /{id}/export?view=` as
+downloadable `.txt` — legacy-parity bodies asserted EXACT (filtrada: one
+datum per line + final newline; completa: `[ts] {text}` blocks per revision),
+Content-Disposition filename from the gate slug, on-the-fly generation (no
+cache), unguarded during a live batch AND on closed sessions, empty body for
+a session with no rows, and 422 on an invalid view.
 
 Same idiom as test_attribution.py: real ASGI app against the dev Postgres,
 self-seeding, self-cleaning, ``FakeGateway``; captures go DIRECT to
@@ -16,6 +21,7 @@ batches drain via ``send_worker.step()`` — no sockets, no telethon.
 Run (from backend/, venv active):  pytest tests/test_sessions.py
 """
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -536,6 +542,177 @@ async def test_continue_already_active_session_is_idempotent(
     assert data["session_id"] == session_a
 
 
+# --- Export (Story 3.5) ---------------------------------------------------------
+
+
+def _expected_filename(gate_value: str, session_id: int, view: str) -> str:
+    """The export filename derived with the SAME slug rule as the endpoint —
+    the fixtures' gate values are random, never hardcode the slug."""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", gate_value.lstrip(".")).strip("_")
+    return f"{slug or 'gate'}-{session_id}-{view}.txt"
+
+
+def _assert_txt_headers(res, gate_value: str, session_id: int, view: str) -> None:
+    assert res.headers["content-type"].startswith("text/plain")
+    expected = _expected_filename(gate_value, session_id, view)
+    assert res.headers["content-disposition"] == f'attachment; filename="{expected}"'
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_filtrada_is_one_datum_per_line_with_final_newline(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """AC 1, filtrada: legacy ``filtrada.txt`` parity VERBATIM — one CC datum
+    per line + final newline, insertion order, no timestamps."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    session_id = await _bound_session_id(batch_id)
+    await _capture_ok(3501, 1, "✅ Aprobada CC: 4111 Status a")
+    await _capture_ok(3502, 1, "✅ Aprobada CC: 4222 Status b")
+
+    res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert res.status_code == 200, res.text
+    _assert_txt_headers(res, gate["value"], session_id, "filtrada")
+    assert res.text == "4111\n4222\n"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_completa_carries_every_revision_as_timestamped_blocks(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """AC 1, completa: legacy ``completa.txt`` parity VERBATIM — one
+    ``[YYYY-MM-DD HH:MM:SS] {text}\\n\\n`` block per 'full' revision,
+    ascending; an EDIT of an already-✅ message is a second block."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    session_id = await _bound_session_id(batch_id)
+    await _capture_ok(3601, 1, "✅ Aprobada CC: 4111 Status a")
+    await capture.process_incoming(  # edited revision of the SAME message_id
+        IncomingReply(
+            message_id=3601,
+            reply_to_msg_id=1,
+            text="✅ Aprobada CC: 4111 Status b",
+            edited=True,
+        )
+    )
+
+    res = await http.get(f"/api/sessions/{session_id}/export?view=completa")
+    assert res.status_code == 200, res.text
+    _assert_txt_headers(res, gate["value"], session_id, "completa")
+    full_rows = [r for r in await _response_rows(session_id) if r.kind == "full"]
+    assert [r.text for r in full_rows] == [
+        "✅ Aprobada CC: 4111 Status a",
+        "✅ Aprobada CC: 4111 Status b",
+    ]
+    assert res.text == "".join(
+        f"[{r.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {r.text}\n\n"
+        for r in full_rows
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_is_generated_on_the_fly_from_rows(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """AC 1 "no cache": a capture between two exports shows up in the second,
+    and the response forbids caching in the HTTP contract (no-store)."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    session_id = await _bound_session_id(batch_id)
+    await _capture_ok(3701, 1, "✅ Aprobada CC: 4111 Status a")
+
+    first = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert (first.status_code, first.text) == (200, "4111\n")
+    assert first.headers["Cache-Control"] == "no-store"
+
+    await _capture_ok(3702, 1, "✅ Aprobada CC: 4222 Status b")
+    second = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert (second.status_code, second.text) == (200, "4111\n4222\n")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_works_during_live_batch_and_on_closed_session(
+    ctx: dict[str, object],
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """AC 2: NO live-batch guard — export answers 200 while the lote is
+    sending; and once another gate's batch deactivates the session, the now
+    CLOSED session still exports the SAME content."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    session_id = await _bound_session_id(batch_id)
+
+    # Live (sending, not drained) ⇒ 200, no guard.
+    res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert res.status_code == 200, res.text
+    _assert_txt_headers(res, gate["value"], session_id, "filtrada")
+
+    await _drain()  # message_id 1 — the batch completes
+    await _capture_ok(3801, 1, "✅ Aprobada CC: 4111 Status a")
+    res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert (res.status_code, res.text) == (200, "4111\n")
+
+    # Another gate's batch rotates the active session — ours is now Cerrada …
+    other = await _create_other_gate(ctx, gate)
+    second_batch = await _post_batch(http, "dos", other["id"])
+    assert await _bound_session_id(second_batch) != session_id
+    assert (await _get_session_row(session_id)).is_active is False
+
+    # … and exports exactly the same.
+    res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
+    assert (res.status_code, res.text) == (200, "4111\n")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_of_session_without_rows_is_an_empty_file(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """Zero captures ⇒ 200 with an empty body on BOTH views (honest empty
+    file — recorded decision: never a 404 that would conflate "no data" with
+    "no session")."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()
+    session_id = await _bound_session_id(batch_id)
+
+    for view in ("completa", "filtrada"):
+        res = await http.get(f"/api/sessions/{session_id}/export?view={view}")
+        assert res.status_code == 200, res.text
+        _assert_txt_headers(res, gate["value"], session_id, view)
+        assert res.text == ""
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_export_rejects_invalid_view_with_422(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """``view`` outside the Literal ⇒ FastAPI validation 422 (the body is
+    FastAPI's ``{detail}``, not the error contract — accepted project-wide)."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    session_id = await _bound_session_id(batch_id)
+
+    res = await http.get(f"/api/sessions/{session_id}/export?view=otracosa")
+    assert res.status_code == 422
+    res = await http.get(f"/api/sessions/{session_id}/export")  # missing too
+    assert res.status_code == 422
+
+
 # --- 404 never leaks existence (AC 8) ---------------------------------------------
 
 
@@ -560,9 +737,9 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         listed = await http_b.get("/api/sessions")
         assert listed.json() == {"items": [], "total": 0}
 
-        # Three bad ids — A's id seen from B (the four verbs, continue
-        # included since 3.4), an unknown id and an out-of-int4 id — all 404
-        # with the IDENTICAL body.
+        # Three bad ids — A's id seen from B (the five verbs: continue since
+        # 3.4, export since 3.5), an unknown id and an out-of-int4 id — all
+        # 404 with the IDENTICAL body.
         res = await http_b.get(f"/api/sessions/{session_a}")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.patch(
@@ -573,11 +750,15 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.post(f"/api/sessions/{session_a}/continue")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.get(f"/api/sessions/{session_a}/export?view=completa")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         unknown = 2**31 - 1  # int4-max: valid bind, never a real id here
         res = await http_b.get(f"/api/sessions/{unknown}")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.post(f"/api/sessions/{unknown}/continue")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.get(f"/api/sessions/{unknown}/export?view=filtrada")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         overflow = 2**31  # out of int4 — guarded before it can hit asyncpg
@@ -590,6 +771,8 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         res = await http_b.delete(f"/api/sessions/{overflow}")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.post(f"/api/sessions/{overflow}/continue")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.get(f"/api/sessions/{overflow}/export?view=completa")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         # A, of course, still reaches their own session.
