@@ -5,9 +5,16 @@ Everything below is the one-time first install on the VPS (37.27.12.92).
 
 ## 1. DNS
 
-Create an A record for the chosen subdomain pointing at `37.27.12.92`.
-That subdomain is the value for `CC_DOMAIN` (step 9) — nothing in the repo
-hardcodes it.
+Production subdomain: **`cc.lohari.com.mx`**.
+
+In the DNS panel for `lohari.com.mx`, create an A record:
+
+```
+cc    A    37.27.12.92
+```
+
+That subdomain is the value for `CC_DOMAIN` (step 9) — only the runbook
+names it; config files use the `{$CC_DOMAIN}` placeholder.
 
 ## 2. System user and directories
 
@@ -98,7 +105,7 @@ in `deploy/Caddyfile` as nginx `location` blocks + certbot. Otherwise:
 ```bash
 sudo apt install caddy
 sudo systemctl edit caddy        # add:  [Service]
-                                 #       Environment=CC_DOMAIN=<subdomain>
+                                 #       Environment=CC_DOMAIN=cc.lohari.com.mx
 sudo cp /srv/cc/deploy/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
@@ -116,9 +123,9 @@ systemctl status cc-core cc-web
 
 ## 11. Smoke test (AC5)
 
-1. Open `https://<subdomain>` → redirected to `/login`; check the padlock
-   (valid certificate).
+1. Open `https://cc.lohari.com.mx` → redirected to `/login`; check the
+   padlock (valid certificate).
 2. Log in as the owner → lands on home.
-3. `curl -s -o /dev/null -w '%{http_code}\n' https://<subdomain>/api/health`
+3. `curl -s -o /dev/null -w '%{http_code}\n' https://cc.lohari.com.mx/api/health`
    → `200` (uvicorn answering over HTTPS through Caddy).
 4. Try a wrong password → inline Spanish error on the login form.
