@@ -430,7 +430,7 @@ async def test_partial_unique_index_rejects_second_live_batch(
                 tenant_id=user.tenant_id,
                 gate_value=gate["value"],
                 gate_name=gate["name"],
-                is_owner_priority=False,
+                priority=0,
             )
             await session.commit()
 
@@ -443,7 +443,7 @@ async def test_partial_unique_index_rejects_second_live_batch(
                 tenant_id=user.tenant_id,
                 gate_value=gate["value"],
                 gate_name=gate["name"],
-                is_owner_priority=False,
+                priority=0,
             )
             await session.commit()
 

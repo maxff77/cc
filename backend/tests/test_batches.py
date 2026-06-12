@@ -169,7 +169,7 @@ async def test_new_batch_applies_gate_dedups_and_orders(
         batch = await session.get(Batch, body["id"])
         assert batch is not None
         assert batch.state == "sending"
-        assert batch.is_owner_priority is False
+        assert batch.priority == 0  # client tier
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -184,7 +184,26 @@ async def test_owner_batch_is_flagged_owner_priority(
         async with async_session_factory() as session:
             batch = await session.get(Batch, batch_id)
             assert batch is not None
-            assert batch.is_owner_priority is True
+            assert batch.priority == 2  # owner tier
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(Batch).where(Batch.id == batch_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_admin_batch_gets_admin_priority_tier(
+    ctx: dict[str, object], gate: dict
+) -> None:
+    admin_client: AsyncClient = ctx["admin_client"]  # type: ignore[assignment]
+    res = await _post_batch(admin_client, "abc", gate["id"])
+    assert res.status_code == 201, res.text
+    batch_id = res.json()["id"]
+    try:
+        async with async_session_factory() as session:
+            batch = await session.get(Batch, batch_id)
+            assert batch is not None
+            assert batch.priority == 1  # admin tier (between owner and client)
     finally:
         async with async_session_factory() as session:
             await session.execute(delete(Batch).where(Batch.id == batch_id))

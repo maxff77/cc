@@ -135,20 +135,21 @@ async def create_batch(
     tenant_id: int,
     gate_value: str,
     gate_name: str,
-    is_owner_priority: bool,
+    priority: int,
     state: str = STATE_SENDING,
 ) -> Batch:
     """Insert and flush a fresh live batch (gate strings snapshotted verbatim).
 
-    ``state`` defaults to 'sending'; the admission-controlled POST passes
-    'waiting' when the cap is full (Story 4.2).
+    ``priority`` is the scheduler tier (0=client, 1=admin, 2=owner). ``state``
+    defaults to 'sending'; the admission-controlled POST passes 'waiting' when
+    the cap is full (Story 4.2).
     """
     batch = Batch(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
         state=state,
-        is_owner_priority=is_owner_priority,
+        priority=priority,
     )
     session.add(batch)
     await session.flush()
@@ -240,7 +241,7 @@ class ActiveSender(NamedTuple):
 
     tenant_id: int
     batch_id: int
-    is_owner_priority: bool
+    priority: int  # scheduler tier: 0=client, 1=admin, 2=owner
 
 
 async def active_senders(session: AsyncSession) -> list[ActiveSender]:
@@ -256,14 +257,14 @@ async def active_senders(session: AsyncSession) -> list[ActiveSender]:
         .exists()
     )
     stmt = (
-        select(Batch.tenant_id, Batch.id, Batch.is_owner_priority)
+        select(Batch.tenant_id, Batch.id, Batch.priority)
         .where(Batch.state == STATE_SENDING, has_queued)
         .order_by(Batch.tenant_id)
     )
     rows = (await session.execute(stmt)).all()
     return [
-        ActiveSender(tenant_id=tenant_id, batch_id=batch_id, is_owner_priority=owner)
-        for tenant_id, batch_id, owner in rows
+        ActiveSender(tenant_id=tenant_id, batch_id=batch_id, priority=priority)
+        for tenant_id, batch_id, priority in rows
     ]
 
 

@@ -12,7 +12,12 @@ import { Button } from "@heroui/react";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
 
+// AdminShell only ever renders for admin/owner (middleware gates /admin/*),
+// so Envío + Historial are always shown — they are staff's path BACK to the
+// sender (owner/admins send too: 3-tier priority owner > admin > client).
 const ITEMS = [
+  { href: "/", label: "Envío", ownerOnly: false },
+  { href: "/sessions", label: "Historial", ownerOnly: false },
   { href: "/admin/users", label: "Usuarios", ownerOnly: false },
   { href: "/admin/gates", label: "Gates", ownerOnly: true },
 ] as const;

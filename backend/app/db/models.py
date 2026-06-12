@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -215,10 +216,11 @@ class Batch(Base):
     gate_value: Mapped[str] = mapped_column(String(20))
     gate_name: Mapped[str] = mapped_column(String(80))
     state: Mapped[str] = mapped_column(String(20))
-    # Set when the creator's role == owner; CONSUMED by Story 2.4's scheduler
-    # (owner priority) — only written here.
-    is_owner_priority: Mapped[bool] = mapped_column(
-        Boolean, server_default=false(), nullable=False
+    # Scheduler priority tier (Story 2.4, generalized): 0=client, 1=admin,
+    # 2=owner — higher sends first. Derived from the creator's role at batch
+    # creation; only written there, only read by core.scheduler.pick_next.
+    priority: Mapped[int] = mapped_column(
+        SmallInteger, server_default=text("0"), nullable=False
     )
     # Capture session bound at batch start (Story 3.1, AC 3): attribution
     # resolves reply → send_log → line → batch → THIS session, even after the

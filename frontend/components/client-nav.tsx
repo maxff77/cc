@@ -1,25 +1,43 @@
 "use client";
 
-// Client navigation (UX-DR10): EXACTLY Envío | Historial. Bottom nav on
-// mobile (< lg) with a 6px live dot on Envío (success green while sending,
-// warning amber while paused/stopping — Story 2.3); inline header strip on
-// desktop. The header also hosts the state pill (DESIGN.md: brand, nav,
-// state pill) — the ONLY full-round piece of the system (now the shared
-// StatePill primitive), mirroring `batch.state` verbatim and hidden at idle
-// (AC 2).
+// Client navigation (UX-DR10): Envío | Historial for clients. Staff (owner/
+// admin) also send (3-tier priority owner > admin > client), so for them the
+// nav additionally cross-links to admin (Usuarios, + Gates for owner) —
+// mirroring AdminShell's Envío/Historial links the other way. Clients never
+// see admin links. Bottom nav on mobile (< lg) with a 6px live dot on Envío
+// (success green while sending, warning amber while paused/stopping — Story
+// 2.3); inline header strip on desktop. The header also hosts the state pill
+// (DESIGN.md: brand, nav, state pill) — the ONLY full-round piece of the
+// system (now the shared StatePill primitive), mirroring `batch.state`
+// verbatim and hidden at idle (AC 2).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@heroui/react";
 
 import { api } from "@/lib/api";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
 
-const ITEMS = [
+interface Me {
+  role: string;
+}
+
+type NavLink = { href: string; label: string };
+
+const ITEMS: readonly NavLink[] = [
   { href: "/", label: "Envío" },
   { href: "/sessions", label: "Historial" },
-] as const;
+];
+
+// Cross-links to admin, shown ONLY to staff. Gates is owner-only (Story 2.1).
+const ADMIN_ITEMS: readonly NavLink[] = [
+  { href: "/admin/users", label: "Usuarios" },
+];
+const OWNER_ITEMS: readonly NavLink[] = [
+  { href: "/admin/gates", label: "Gates" },
+];
 
 // Verbatim copy per state (EXPERIENCE.md microcopy — tuteo, exact).
 const PILL_COPY: Record<Exclude<BatchSurfaceState, "idle">, string> = {
@@ -82,6 +100,21 @@ function NavItem({
 export function ClientNav() {
   const pathname = usePathname();
   const live = useLiveBatch();
+  // Role decides whether staff cross-links appear. Shared ["me"] cache key —
+  // admin pages prime it, so this is usually a cache hit. While it loads,
+  // role is undefined and only the two client items render (no flicker of
+  // admin links for a client).
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.get<Me>("/api/auth/me"),
+  });
+  const role = me.data?.role;
+  const navItems: readonly NavLink[] =
+    role === "owner"
+      ? [...ITEMS, ...ADMIN_ITEMS, ...OWNER_ITEMS]
+      : role === "admin"
+        ? [...ITEMS, ...ADMIN_ITEMS]
+        : ITEMS;
 
   async function logout() {
     try {
@@ -104,7 +137,7 @@ export function ClientNav() {
         : null;
 
   const items = (itemClassName?: string) =>
-    ITEMS.map((item) => (
+    navItems.map((item) => (
       <NavItem
         key={item.href}
         // Prefix match keeps Historial lit on /sessions/[id] (Story 3.3); the

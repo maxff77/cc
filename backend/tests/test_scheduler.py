@@ -48,9 +48,12 @@ class FakeClock:
         self.t += seconds
 
 
-def _sender(tenant_id: int, *, owner: bool = False) -> ActiveSender:
+def _sender(
+    tenant_id: int, *, owner: bool = False, admin: bool = False
+) -> ActiveSender:
+    priority = 2 if owner else 1 if admin else 0
     return ActiveSender(
-        tenant_id=tenant_id, batch_id=tenant_id * 10, is_owner_priority=owner
+        tenant_id=tenant_id, batch_id=tenant_id * 10, priority=priority
     )
 
 
@@ -189,6 +192,47 @@ def test_multiple_owner_batches_rotate_within_their_class() -> None:
     assert picks == [1, 3, 2, 3, 1, 3]
 
 
+# --- Unit: 3-tier priority owner > admin > client (bounded) --------------------
+
+
+def test_three_tiers_rank_owner_admin_client() -> None:
+    """All three active: owner 50% of slots, admin 25%, client 25%."""
+    sched = Scheduler()
+    active = [_sender(1, owner=True), _sender(2, admin=True), _sender(3)]
+    picks = [_pick(sched, active).tenant_id for _ in range(8)]
+    # owner, admin, owner, client, … — owner every other slot; the non-owner
+    # slots split admin/client at exactly half each.
+    assert picks == [1, 2, 1, 3, 1, 2, 1, 3]
+
+
+def test_admin_outranks_client_without_owner() -> None:
+    """No owner present: admin takes the owner's old <=50% bound vs clients."""
+    sched = Scheduler()
+    active = [_sender(1, admin=True), _sender(2), _sender(3)]
+    picks = [_pick(sched, active).tenant_id for _ in range(6)]
+    assert picks == [1, 2, 1, 3, 1, 2]
+
+
+def test_admin_alone_takes_every_slot() -> None:
+    sched = Scheduler()
+    active = [_sender(1, admin=True)]
+    assert [_pick(sched, active).tenant_id for _ in range(3)] == [1, 1, 1]
+
+
+def test_owner_and_admin_alternate_at_half_with_no_clients() -> None:
+    sched = Scheduler()
+    active = [_sender(1, owner=True), _sender(2, admin=True)]
+    picks = [_pick(sched, active).tenant_id for _ in range(4)]
+    assert picks == [1, 2, 1, 2]
+
+
+def test_multiple_admin_batches_rotate_within_their_class() -> None:
+    sched = Scheduler()
+    active = [_sender(1, admin=True), _sender(2, admin=True), _sender(3)]
+    picks = [_pick(sched, active).tenant_id for _ in range(6)]
+    assert picks == [1, 3, 2, 3, 1, 3]
+
+
 # --- Integration helpers ------------------------------------------------------
 
 
@@ -301,8 +345,8 @@ async def test_owner_priority_alternates_end_to_end(
         assert await send_worker.step() is True
 
     value = gate["value"]
-    # is_owner_priority was set by the POST alone; the sequence alternates
-    # owner/client — the owner jumps ahead but never exceeds 50% of slots.
+    # The owner tier (priority=2) was set by the POST alone; the sequence
+    # alternates owner/client — the owner jumps ahead but never exceeds 50%.
     assert fake_gateway.sent == [
         f"{value} o1",
         f"{value} c1",

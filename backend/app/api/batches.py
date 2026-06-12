@@ -12,9 +12,10 @@ so it serializes with the worker's promotion sweep.
 
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
 — never from the body (architecture mandate). Any authenticated role may send
-(the owner sends exactly like a client, AC 5 — their batches are flagged
-``is_owner_priority`` for Story 2.4's scheduler). The controls act on the
-caller's own batch only: another tenant's id 404s (2.3 AC 1).
+(owner and admins send exactly like a client, AC 5 — their batches carry a
+``priority`` tier — owner 2 > admin 1 > client 0 — for Story 2.4's scheduler).
+The controls act on the caller's own batch only: another tenant's id 404s
+(2.3 AC 1).
 """
 
 from fastapi import APIRouter, Depends
@@ -48,6 +49,10 @@ from app.services import batches as batches_service
 router = APIRouter(prefix="/api/batches", tags=["batches"])
 
 _PG_INT_MAX = 2**31 - 1  # ids are int4; larger binds overflow asyncpg
+
+# Scheduler priority tier by role (owner > admin > client). Unknown roles
+# fall to client priority — never silently above a real client.
+_PRIORITY_BY_ROLE = {"owner": 2, "admin": 1, "client": 0}
 
 
 # --- Schemas (inline, codebase convention) ---------------------------------
@@ -100,7 +105,8 @@ async def create_or_append_batch(
     # Captured BEFORE any rollback: a rollback expires the session-loaded
     # ``user`` object and a later attribute access would lazy-refresh
     # synchronously (MissingGreenlet).
-    tenant_id, is_owner = user.tenant_id, user.role == "owner"
+    tenant_id = user.tenant_id
+    priority = _PRIORITY_BY_ROLE.get(user.role, 0)
 
     # Resolve the gate from the catalog — active only (retired and unknown
     # look the same, 404). Out-of-int4 ids can't exist (2.1 review lesson).
@@ -140,7 +146,7 @@ async def create_or_append_batch(
                 tenant_id=tenant_id,
                 gate_value=gate_value,
                 gate_name=gate_name,
-                is_owner_priority=is_owner,
+                priority=priority,
                 state=state,
             )
             await batches_repo.add_lines(

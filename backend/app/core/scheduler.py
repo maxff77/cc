@@ -60,8 +60,10 @@ class Scheduler:
         self._last_flood_at: float | None = None
         self._flood_until: float = 0.0
         self._last_client_tenant_id: int | None = None
+        self._last_admin_tenant_id: int | None = None
         self._last_owner_tenant_id: int | None = None
         self._last_was_owner: bool = False
+        self._last_was_admin: bool = False
         # Observability counters (Story 4.3) — process memory like the rest
         # of the governor: the structured logs are the durable series.
         self._flood_events_total: int = 0
@@ -128,30 +130,48 @@ class Scheduler:
             # Re-seal so the next step needs a fresh full window.
             self._last_flood_at = self._now()
 
-    # --- rotation + bounded owner priority (AC 1, 3) -------------------------
+    # --- rotation + bounded priority tiers (AC 1, 3) -------------------------
 
     def pick_next(self, active: list[ActiveSender]) -> ActiveSender | None:
         """Pick whose line goes out next; ``None`` when nobody is servable.
 
-        Recorded decision: STRICT owner/client alternation implements both
-        halves of AC 3 at once — an owner batch "jumps ahead" (it takes the
-        very next slot instead of waiting a client-rotation turn) yet is
-        bounded to exactly <=50% of slots while clients are active. Owner(s)
-        alone take every slot. Within each class, batches rotate cyclically
-        by ``tenant_id`` (the repo lists them in that stable order).
+        Priority is a 3-tier ranking owner (2) > admin (1) > client (0),
+        implemented as NESTED bounded alternation. The owner tier alternates
+        against everyone below it (so it "jumps ahead" yet is bounded to
+        <=50% of slots while anyone below is active); within the remaining,
+        non-owner slots the admin tier alternates the same way against
+        clients (<=25% of total when all three are active). A tier alone — or
+        the highest non-empty tier when those below are idle — takes every
+        slot. Within each tier, batches rotate cyclically by ``tenant_id``
+        (the repo lists them in that stable order).
+
+        This generalizes the original binary owner/client alternation: with
+        no admins it reduces exactly to the old behaviour.
         """
         if not active:
             return None
-        owners = [sender for sender in active if sender.is_owner_priority]
-        clients = [sender for sender in active if not sender.is_owner_priority]
-        if owners and (not self._last_was_owner or not clients):
+        owners = [s for s in active if s.priority >= 2]
+        admins = [s for s in active if s.priority == 1]
+        clients = [s for s in active if s.priority <= 0]
+
+        # Tier 1: owner vs everyone-below, bounded to <=50% of all slots.
+        if owners and (not self._last_was_owner or not (admins or clients)):
             pick = self._next_cyclic(owners, self._last_owner_tenant_id)
             self._last_owner_tenant_id = pick.tenant_id
             self._last_was_owner = True
             return pick
+        self._last_was_owner = False
+
+        # Tier 2: admin vs client, bounded to <=50% of the non-owner slots.
+        if admins and (not self._last_was_admin or not clients):
+            pick = self._next_cyclic(admins, self._last_admin_tenant_id)
+            self._last_admin_tenant_id = pick.tenant_id
+            self._last_was_admin = True
+            return pick
+        self._last_was_admin = False
+
         pick = self._next_cyclic(clients, self._last_client_tenant_id)
         self._last_client_tenant_id = pick.tenant_id
-        self._last_was_owner = False
         return pick
 
     @staticmethod
