@@ -11,9 +11,11 @@ idempotent read (the verb-suffix POST idiom is for actions that mutate).
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
 — never from the body or path (architecture mandate). Any authenticated role
 may browse: the owner navigates their own Historial exactly like a client
-(same criterion as ``POST /api/batches``); the cross-tenant support view is
-Story 3.6, not here. Every lookup is tenant-scoped and the 404 never leaks
-existence (unknown id, another tenant's id and out-of-int4 id look the same).
+(same criterion as ``POST /api/batches``); the cross-tenant support view
+lives in ``api/admin.py`` (Story 3.6), which imports these schemas +
+``session_to_out`` so both surfaces serve the identical shapes. Every lookup
+here is tenant-scoped and the 404 never leaks existence (unknown id, another
+tenant's id and out-of-int4 id look the same).
 """
 
 from datetime import datetime
@@ -106,7 +108,10 @@ class RenameSessionRequest(BaseModel):
         return v
 
 
-def _session_out(capture_session: CaptureSession) -> SessionOut:
+def session_to_out(capture_session: CaptureSession) -> SessionOut:
+    """Shared CaptureSession → SessionOut mapper (also used by the admin
+    support view, Story 3.6 — exact mirror of the ``gate_to_out``
+    precedent)."""
     return SessionOut(
         id=capture_session.id,
         name=capture_session.name,
@@ -154,7 +159,7 @@ async def list_sessions(
     """
     sessions = await capture_sessions_repo.list_for_tenant(session, user.tenant_id)
     return SessionListResponse(
-        items=[_session_out(s) for s in sessions], total=len(sessions)
+        items=[session_to_out(s) for s in sessions], total=len(sessions)
     )
 
 
@@ -174,7 +179,7 @@ async def get_session_detail(
     responses = await responses_repo.list_full(session, target.id, None)
     cc = await responses_repo.list_cc(session, target.id, None)
     return SessionDetailOut(
-        **_session_out(target).model_dump(),
+        **session_to_out(target).model_dump(),
         responses=[
             SessionResponseRow(
                 id=row.id,
@@ -245,7 +250,7 @@ async def rename_session(
     target = await _require_session(session, user.tenant_id, session_id)
     target.name = body.name
     await session.commit()
-    return _session_out(target)
+    return session_to_out(target)
 
 
 @router.post("/{session_id}/continue", response_model=SessionOut)
@@ -300,7 +305,7 @@ async def continue_session(
     payload = await batches_service.active_session_data(session, user.tenant_id)
     await broadcaster.emit(user.tenant_id, "session.active", payload)
     # expire_on_commit=False (db/base.py) keeps the attributes valid here.
-    return _session_out(target)
+    return session_to_out(target)
 
 
 @router.delete("/{session_id}", status_code=204)

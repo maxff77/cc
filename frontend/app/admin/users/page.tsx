@@ -163,14 +163,25 @@ export default function AdminUsersPage() {
                     </Table.Cell>
                     <Table.Cell>
                       {u.role === "client" ? (
-                        <ClientLifecycleActions
-                          user={u}
-                          onChanged={() =>
-                            queryClient.invalidateQueries({
-                              queryKey: USERS_KEY,
-                            })
-                          }
-                        />
+                        <div className="flex flex-col gap-2">
+                          {/* Entry point of the cross-tenant support view
+                              (Story 3.6, Flow 5) — clients only: the support
+                              target is a client's tenant. */}
+                          <Link
+                            className="text-sm text-default-500 underline"
+                            href={`/admin/tenants/${u.tenant_id}`}
+                          >
+                            Sesiones
+                          </Link>
+                          <ClientLifecycleActions
+                            user={u}
+                            onChanged={() =>
+                              queryClient.invalidateQueries({
+                                queryKey: USERS_KEY,
+                              })
+                            }
+                          />
+                        </div>
                       ) : isOwner && u.role === "admin" ? (
                         <DeleteAdminAction
                           email={u.email}

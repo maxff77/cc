@@ -95,6 +95,27 @@ async def get_user_by_id(
     return await session.get(User, user_id, with_for_update=for_update)
 
 
+async def get_user_by_tenant(
+    session: AsyncSession, tenant_id: int
+) -> User | None:
+    """Return the tenant's user, or ``None`` (GLOBAL — not tenant-scoped).
+
+    Tenant-per-user: ``create_account`` makes a fresh tenant named after the
+    email (one tenant per user), so at most one row matches. The ``order_by``
+    is a belt — should a tenant ever hold more than one user, the lookup
+    degrades to a deterministic match rather than an arbitrary one. Caller is
+    the cross-tenant support view (Story 3.6), same admin lane as the module
+    note above.
+    """
+    stmt = (
+        select(User)
+        .where(User.tenant_id == tenant_id)
+        .order_by(User.id)
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def delete_user(session: AsyncSession, user: User) -> None:
     """Delete a user row (its now-empty tenant may be left orphaned — MVP-ok)."""
     await session.delete(user)

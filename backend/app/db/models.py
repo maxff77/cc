@@ -2,7 +2,8 @@
 
 Tables arrive story by story via Alembic migrations (no tables ahead of need):
 tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
-batch_lines (2.2), send_log (2.5), capture_sessions + responses (3.1).
+batch_lines (2.2), send_log (2.5), capture_sessions + responses (3.1),
+audit_log (3.6).
 """
 
 from datetime import datetime
@@ -407,6 +408,41 @@ class Response(Base):
     # 'ok' (✅) | 'rejected' (❌); NULL on 'cc' rows.
     status: Mapped[str | None] = mapped_column(String(10), nullable=True)
     text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AuditLog(Base):
+    """One audited cross-tenant support read (Story 3.6, AC 2).
+
+    Written ONLY by the support view in ``api/admin.py`` — the single place
+    tenant isolation is intentionally crossed (architecture: "Owner/admin
+    cross-tenant access goes through explicit ``for_tenant(id)`` support
+    paths, audit-logged"). Three recorded FK decisions:
+
+    - ``actor_user_id`` is ``SET NULL``: the trail survives the removal of
+      the admin who looked (the record outlives the actor).
+    - ``tenant_id`` (the TARGET tenant of the cross) is ``CASCADE``: the
+      trail is a support trail — it dies with the tenant. This also keeps the
+      tests' ``cleanup_users`` teardown untouched.
+    - ``capture_session_id`` carries NO FK on purpose: it is a historical
+      reference — the audit record must neither die nor null out when the
+      client hard-deletes their session (3.3).
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    # snake_case action name, e.g. 'support_sessions_list'.
+    action: Mapped[str] = mapped_column(String(40))
+    capture_session_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -285,3 +285,17 @@ def session_conflict() -> AppError:
         code="session_conflict",
         message="No pudimos continuar la sesión. Intenta de nuevo.",
     )
+
+
+# --- Codes this story (3.6) defines --------------------------------------
+
+
+def tenant_not_found() -> AppError:
+    # Unknown tenant id, a tenant whose user is NOT a client (owner/admin),
+    # and id > int32 all answer IDENTICAL — existence is never leaked to
+    # whoever probes ids (idiom session_not_found).
+    return AppError(
+        status_code=404,
+        code="tenant_not_found",
+        message="Ese cliente no existe.",
+    )

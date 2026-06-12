@@ -1,6 +1,8 @@
 """Admin router: user management (Story 1.3).
 
-`/api/admin/users` — list/create/delete clients (and, for the owner, admins).
+`/api/admin/users` — list/create/delete clients (and, for the owner, admins);
+`/api/admin/tenants/{id}/sessions[/{session_id}]` — the read-only cross-tenant
+support view (Story 3.6), every read audit-logged.
 
 Authorization is enforced SERVER-SIDE here (the security boundary — the UI only
 mirrors it). The actor's role/identity comes ONLY from ``require_role`` /
@@ -9,19 +11,30 @@ are GLOBAL/cross-tenant by design (an admin manages all clients) — see the
 ``db.repos.users`` module note.
 """
 
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import AwareDatetime, BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
+from app.api.sessions import (
+    SessionCcRow,
+    SessionDetailOut,
+    SessionOut,
+    SessionResponseRow,
+    session_to_out,
+)
 from app.db.base import get_session
 from app.db.models import Gate, GateCategory, User
+from app.db.repos import audit as audit_repo
+from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import gate_categories as gate_categories_repo
 from app.db.repos import gates as gates_repo
+from app.db.repos import responses as responses_repo
 from app.db.repos import users as users_repo
 from app.errors import (
     category_exists,
@@ -33,11 +46,15 @@ from app.errors import (
     invalid_plan_days,
     invalid_renewal,
     renewal_would_shorten,
+    session_not_found,
+    tenant_not_found,
     user_not_found,
 )
 from app.services import auth as auth_service
 from app.services import plans as plans_service
 from app.services import users as users_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -661,3 +678,162 @@ async def delete_gate_category(
     except IntegrityError as exc:
         # Race: a gate was (re)assigned to this category after the check.
         raise category_in_use() from exc
+
+
+# --- Cross-tenant support view (Story 3.6) ----------------------------------
+#
+# THE ONLY place in the system where a handler passes the repos a ``tenant_id``
+# that does NOT come from ``user.tenant_id`` but from the PATH — the
+# intentional cross of architecture ("Owner/admin cross-tenant access goes
+# through explicit ``for_tenant(id)`` support paths, audit-logged"). The repos'
+# ``list_for_tenant``/``get_for_tenant`` ARE those support paths, reused with
+# the path's tenant. Every read writes an ``audit_log`` row and COMMITS it
+# BEFORE serving data (fail-closed: no record, no data). Read-only is
+# structural: these two GET are the only verbs under ``/api/admin/tenants/...``
+# — no rename, no continue, no delete, no export (FastAPI answers 405 to
+# anything else).
+
+
+class SupportSessionsResponse(BaseModel):
+    tenant_id: int
+    email: str
+    items: list[SessionOut]
+    total: int
+
+
+async def _reject_cross_site(request: Request) -> None:
+    """Refuse foreign-origin requests on the audited support GETs.
+
+    These are GETs that WRITE (the audit row is the condition of service) and
+    the session cookie is SameSite=Lax, which still rides cross-site TOP-LEVEL
+    navigations: a third party could make an admin's browser mint an audit row
+    ("this admin viewed this client") — and dump the client's data in their
+    tab — just by navigating them here. Every fetch() from the SPA sends
+    ``Sec-Fetch-Site: same-origin``; browsers send ``cross-site`` on
+    attacker-initiated navigations. Header absent (non-browser clients, tests)
+    → allowed: those carry no ambient cookie to forge with.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site != "same-origin":
+        raise forbidden()
+
+
+async def _require_client_tenant(session: AsyncSession, tenant_id: int) -> User:
+    """Resolve the target CLIENT's user by tenant or raise 404.
+
+    Unknown tenant, a tenant whose user is NOT a client (probing the owner's
+    or an admin's tenant) and an out-of-int4 id all answer the IDENTICAL
+    ``tenant_not_found`` — existence is never leaked. The returned user's
+    ``email`` feeds the support header ("Sesiones de {email}").
+    """
+    if not 0 < tenant_id <= _PG_INT_MAX:
+        raise tenant_not_found()
+    target = await users_repo.get_user_by_tenant(session, tenant_id)
+    if target is None or target.role != "client":
+        raise tenant_not_found()
+    return target
+
+
+@router.get(
+    "/tenants/{tenant_id}/sessions",
+    response_model=SupportSessionsResponse,
+    dependencies=[Depends(_reject_cross_site)],
+)
+async def list_tenant_sessions(
+    tenant_id: int,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> SupportSessionsResponse:
+    """The target client's sessions, newest first (AC 1) — audited (AC 2).
+
+    A GET that writes is deliberate: the ``audit_log`` row is the condition
+    of service ("is audit-logged"), committed before the data leaves.
+    """
+    target = await _require_client_tenant(session, tenant_id)
+    sessions = await capture_sessions_repo.list_for_tenant(
+        session, target.tenant_id
+    )
+    await audit_repo.record(
+        session,
+        actor_user_id=actor.id,
+        tenant_id=target.tenant_id,
+        action="support_sessions_list",
+    )
+    await session.commit()
+    logger.info(
+        "event=support_view action=sessions_list actor=%s role=%s tenant=%s total=%s",
+        actor.id,
+        actor.role,
+        target.tenant_id,
+        len(sessions),
+    )
+    return SupportSessionsResponse(
+        tenant_id=target.tenant_id,
+        email=target.email,
+        items=[session_to_out(s) for s in sessions],
+        total=len(sessions),
+    )
+
+
+@router.get(
+    "/tenants/{tenant_id}/sessions/{session_id}",
+    response_model=SessionDetailOut,
+    dependencies=[Depends(_reject_cross_site)],
+)
+async def get_tenant_session_detail(
+    tenant_id: int,
+    session_id: int,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> SessionDetailOut:
+    """One session with the COMPLETE Completa/Filtrada data (AC 1) — the 3.3
+    detail shape VERBATIM, served read-only cross-tenant and audited (AC 2).
+
+    Line-by-line mirror of ``get_session_detail`` (``limit=None`` = full
+    ascending data) with the path's tenant instead of the actor's. Unknown
+    session id, another tenant's session and out-of-int4 id 404 identical
+    (``session_not_found`` trio, intact). A GET that writes is deliberate —
+    see ``list_tenant_sessions``.
+    """
+    target = await _require_client_tenant(session, tenant_id)
+    if not 0 < session_id <= _PG_INT_MAX:
+        raise session_not_found()
+    target_session = await capture_sessions_repo.get_for_tenant(
+        session, target.tenant_id, session_id
+    )
+    if target_session is None:
+        raise session_not_found()
+    responses = await responses_repo.list_full(session, target_session.id, None)
+    cc = await responses_repo.list_cc(session, target_session.id, None)
+    await audit_repo.record(
+        session,
+        actor_user_id=actor.id,
+        tenant_id=target.tenant_id,
+        action="support_session_detail",
+        capture_session_id=target_session.id,
+    )
+    await session.commit()
+    logger.info(
+        "event=support_view action=session_detail actor=%s role=%s tenant=%s "
+        "session=%s",
+        actor.id,
+        actor.role,
+        target.tenant_id,
+        target_session.id,
+    )
+    return SessionDetailOut(
+        **session_to_out(target_session).model_dump(),
+        responses=[
+            SessionResponseRow(
+                id=row.id,
+                message_id=row.message_id,
+                status=row.status,
+                text=row.text,
+                created_at=row.created_at,
+            )
+            for row in responses
+        ],
+        cc=[SessionCcRow(id=row.id, text=row.text) for row in cc],
+        responses_total=len(responses),
+        cc_total=len(cc),
+    )

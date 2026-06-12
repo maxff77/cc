@@ -37,6 +37,9 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 3-6 → done 2026-06-12 (cross-tenant support view: audit_log modelo+migración+repo con fail-closed, GET /api/admin/tenants/{id}/sessions con trío 404, página /admin/tenants/[id] Table+duales sin export, smoke manual verificado)
+# 3-6 → review 2026-06-12 (implementado: audit_log (modelo+migración+repo) con commit fail-closed ANTES de servir datos, GET /api/admin/tenants/{id}/sessions[/{sid}] admin+owner con trío 404 tenant_not_found/session_not_found + 403 forbidden para clientes + guard Sec-Fetch-Site anti-CSRF, página /admin/tenants/[id] read-only con Table + paneles duales 3.2 sin export, link "Sesiones" en /admin/users; suite verde, ruff/lint/build limpios; pendiente smoke manual del owner)
+# 3-6 → ready-for-dev 2026-06-12 (story file created — vista de soporte cross-tenant: audit_log nuevo (modelo+migración+repo), GET /api/admin/tenants/{id}/sessions[/{sid}] admin+owner con trío 404 tenant_not_found + audit fail-closed, página /admin/tenants/[id] con Table + duales read-only sin export, link "Sesiones" en /admin/users; middleware sin cambios (AC 3 ya cubierto); sin diferidos absorbidos — 2-1 admin.py:466 NO absorbido con justificación)
 # 3-5 → done 2026-06-12 (export .txt: services/exports.py puro + GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard + Cache-Control no-store, downloadFile fetch+blob con Content-Disposition, ExportLink footer en duales, suite 212 verde)
 # 3-5 → review 2026-06-12 (implementado: services/exports.py puro (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard de lote vivo + Cache-Control no-store, toApiError extraído + downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); suite 212 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
 # 3-5 → ready-for-dev 2026-06-12 (story file created — export .txt: services/exports.py nuevo (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= sin guard de lote, downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); sin diferidos absorbidos)
@@ -92,13 +95,13 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Captura de respuestas, sesiones e historial
-  epic-3: in-progress
+  epic-3: done
   3-1-captura-y-atribucion-de-respuestas-del-bot: done
   3-2-vistas-completa-filtrada-en-vivo-en-envio: done
   3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: done
   3-4-continuar-una-sesion-con-dedup-preservado: done
   3-5-exportar-resultados-como-txt: done
-  3-6-vista-de-soporte-cross-tenant-para-owner-admins: backlog
+  3-6-vista-de-soporte-cross-tenant-para-owner-admins: done
   epic-3-retrospective: optional
 
   # Epic 4: Protección operativa de la cuenta (guardarraíl de baneo)
