@@ -2,7 +2,11 @@
 the COMPLETE data (uncapped, vs the capped snapshot), rename (200-char cap,
 unguarded by live batches), delete (live-batch guard, FK CASCADE on
 responses, SET NULL on batches) and tenant isolation (404 never leaks
-existence — three verbs, three bad ids).
+existence — four verbs, three bad ids). Plus Story 3.4 Continuar:
+reactivation by replacement + `session.active` emission, dedup preserved
+across the continue (DB-backed, `uq_responses_session_cc`), the any-live-batch
+guard (409 `batch_live`, paused included) and idempotency on the
+already-active session.
 
 Same idiom as test_attribution.py: real ASGI app against the dev Postgres,
 self-seeding, self-cleaning, ``FakeGateway``; captures go DIRECT to
@@ -17,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.core import capture, send_worker
+from app.core.broadcaster import broadcaster
 from app.core.capture import IncomingReply
 from app.db.base import async_session_factory
 from app.db.models import Batch, CaptureSession, Response, User
@@ -32,8 +37,29 @@ IN_USE_BODY = {
     "code": "session_in_use",
     "message": "Detén el lote antes de eliminar esta sesión.",
 }
+LIVE_BODY = {
+    "code": "batch_live",
+    "message": "Termina o detén el lote actual antes de continuar otra sesión.",
+}
 
 # --- Local helpers -----------------------------------------------------------
+
+
+@pytest.fixture
+def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Record every broadcaster emission as ``(tenant_id|None, event, data)``
+    (idiom test_batch_controls.py — no socket plumbing)."""
+    recorded: list[tuple] = []
+
+    async def emit(tenant_id: int, event: str, data: dict) -> None:
+        recorded.append((tenant_id, event, data))
+
+    async def emit_global(event: str, data: dict) -> None:
+        recorded.append((None, event, data))
+
+    monkeypatch.setattr(broadcaster, "emit", emit)
+    monkeypatch.setattr(broadcaster, "emit_global", emit_global)
+    return recorded
 
 
 async def _post_batch(http: AsyncClient, text: str, gate_id: int) -> int:
@@ -309,6 +335,207 @@ async def test_delete_guarded_by_live_batch_then_cascades_clean(
     assert (await _get_batch(second_batch)).state == "stopped"
 
 
+# --- Continuar (Story 3.4, AC 1) ----------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_continue_reactivates_by_replacement_and_emits_session_active(
+    ctx: dict[str, object],
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    http, user = client_user
+    # Session SA (gate A) with one captured CC …
+    first_batch = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # FakeGateway → message_id 1
+    session_a = await _bound_session_id(first_batch)
+    text = "✅ Aprobada CC: 4111 Status aprobada"
+    await _capture_ok(2001, 1, text)
+
+    # … then gate B takes over the active session and its batch completes.
+    other = await _create_other_gate(ctx, gate)
+    second_batch = await _post_batch(http, "dos", other["id"])
+    session_b = await _bound_session_id(second_batch)
+    assert session_b != session_a
+    await _drain()  # message_id 2
+
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["id"] == session_a
+    assert body["is_active"] is True
+    assert (body["gate_value"], body["gate_name"]) == (gate["value"], gate["name"])
+
+    # Activation by replacement — exactly ONE active session.
+    listed = await http.get("/api/sessions")
+    flags = {s["id"]: s["is_active"] for s in listed.json()["items"]}
+    assert flags == {session_a: True, session_b: False}
+
+    # The event is the snapshot's session slice VERBATIM, emitted post-commit,
+    # with the PREVIOUS rows present in exact shape.
+    rows = await _response_rows(session_a)
+    full_db = next(r for r in rows if r.kind == "full")
+    cc_db = next(r for r in rows if r.kind == "cc")
+    assert events[-1] == (
+        user.tenant_id,
+        "session.active",
+        {
+            "session_id": session_a,
+            "cc_new": 1,
+            "responses_total": 1,
+            "responses": [
+                {
+                    "id": full_db.id,
+                    "message_id": 2001,
+                    "status": "ok",
+                    "text": text,
+                    "created_at": full_db.created_at.isoformat(),
+                }
+            ],
+            # Truncated at the literal "Status" (intentional parsing, 🔒).
+            "cc": [{"id": cc_db.id, "text": "4111"}],
+        },
+    )
+
+
+# --- Dedup preserved + append to the same session (Story 3.4, AC 2) -----------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_continue_preserves_dedup_and_appends_to_same_session(
+    ctx: dict[str, object],
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """THE story test: after Continuar, a new batch of the same gate binds to
+    the continued session and the CC dedup comes from the session's EXISTING
+    rows (``add_new_cc`` + ``uq_responses_session_cc``) — Completa grows,
+    Filtrada never repeats."""
+    http, _ = client_user
+    # SA (gate A) with the value "4111" already captured.
+    first_batch = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    session_a = await _bound_session_id(first_batch)
+    await _capture_ok(2001, 1, "✅ Aprobada CC: 4111 Status a")
+
+    # Gate B rotates the active session, its batch completes.
+    other = await _create_other_gate(ctx, gate)
+    second_batch = await _post_batch(http, "dos", other["id"])
+    assert await _bound_session_id(second_batch) != session_a
+    await _drain()  # message_id 2
+
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert res.status_code == 200, res.text
+
+    # New sends APPEND to the same session: resolve_for_batch reuses the
+    # (re)active session on gate match — the AC's "new sends append to it".
+    third_batch = await _post_batch(http, "tres", gate["id"])
+    assert await _bound_session_id(third_batch) == session_a
+    await _drain()  # message_id 3
+
+    # A reply repeating the SAME value ⇒ Completa grows, Filtrada does NOT
+    # (the dedup came from the rows captured BEFORE the continue).
+    await _capture_ok(2002, 3, "✅ Aprobada CC: 4111 Status b")
+    res = await http.get(f"/api/sessions/{session_a}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["cc_total"] == 1
+    assert [row["text"] for row in body["cc"]] == ["4111"]
+    assert body["responses_total"] == 2
+
+    # A genuinely NEW value lands; insertion order preserved.
+    await _capture_ok(2003, 3, "✅ Aprobada CC: 4222 Status c")
+    res = await http.get(f"/api/sessions/{session_a}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["cc_total"] == 2
+    assert [row["text"] for row in body["cc"]] == ["4111", "4222"]
+    # Every 'full' revision is present — Completa grew with each reply.
+    assert [row["message_id"] for row in body["responses"]] == [2001, 2002, 2003]
+
+
+# --- Live-batch guard (Story 3.4, AC 3) ----------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_continue_rejected_while_any_batch_is_live_or_paused(
+    ctx: dict[str, object],
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    http, _ = client_user
+    first_batch = await _post_batch(http, "uno", gate["id"])
+    await _drain()
+    session_a = await _bound_session_id(first_batch)
+
+    # A live (sending) batch of ANOTHER gate — not drained on purpose.
+    other = await _create_other_gate(ctx, gate)
+    second_batch = await _post_batch(http, "dos\ntres", other["id"])
+    session_b = await _bound_session_id(second_batch)
+
+    # sending ⇒ 409 with the AC 3 copy verbatim …
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert (res.status_code, res.json()) == (409, LIVE_BODY)
+
+    # … and paused too (legacy `_lote_vivo` parity: live OR paused).
+    pause = await http.post(f"/api/batches/{second_batch}/pause")
+    assert pause.status_code == 204, pause.text
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert (res.status_code, res.json()) == (409, LIVE_BODY)
+
+    # Nothing changed and NO session.active went out.
+    listed = await http.get("/api/sessions")
+    flags = {s["id"]: s["is_active"] for s in listed.json()["items"]}
+    assert flags == {session_a: False, session_b: True}
+    assert not any(event == "session.active" for _, event, _ in events)
+
+    # Stop the lote ⇒ the SAME continue now succeeds.
+    stop = await http.post(f"/api/batches/{second_batch}/stop")
+    assert stop.status_code == 204, stop.text
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is True
+
+
+# --- Idempotency (Story 3.4) ----------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_continue_already_active_session_is_idempotent(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """Continuing the ALREADY-active session (surface idle) is a clean no-op:
+    200, the row STAYS active (the repo's UPDATE excludes the target — the
+    documented pitfall) and the reconcile event goes out anyway."""
+    http, user = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # batch completes — surface idle, session stays active
+    session_a = await _bound_session_id(batch_id)
+    assert (await _get_session_row(session_a)).is_active is True
+
+    res = await http.post(f"/api/sessions/{session_a}/continue")
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is True
+
+    # Really still active in the DB, and the list keeps exactly ONE active.
+    assert (await _get_session_row(session_a)).is_active is True
+    listed = await http.get("/api/sessions")
+    assert [s["is_active"] for s in listed.json()["items"]] == [True]
+
+    # The session.active emission happened anyway (cheap multi-tab reconcile).
+    tenant_id, event, data = events[-1]
+    assert (tenant_id, event) == (user.tenant_id, "session.active")
+    assert data["session_id"] == session_a
+
+
 # --- 404 never leaks existence (AC 8) ---------------------------------------------
 
 
@@ -333,8 +560,9 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         listed = await http_b.get("/api/sessions")
         assert listed.json() == {"items": [], "total": 0}
 
-        # Three bad ids — A's id seen from B (the three verbs), an unknown id
-        # and an out-of-int4 id — all 404 with the IDENTICAL body.
+        # Three bad ids — A's id seen from B (the four verbs, continue
+        # included since 3.4), an unknown id and an out-of-int4 id — all 404
+        # with the IDENTICAL body.
         res = await http_b.get(f"/api/sessions/{session_a}")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.patch(
@@ -343,9 +571,13 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.delete(f"/api/sessions/{session_a}")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.post(f"/api/sessions/{session_a}/continue")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         unknown = 2**31 - 1  # int4-max: valid bind, never a real id here
         res = await http_b.get(f"/api/sessions/{unknown}")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.post(f"/api/sessions/{unknown}/continue")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         overflow = 2**31  # out of int4 — guarded before it can hit asyncpg
@@ -356,6 +588,8 @@ async def test_not_found_is_identical_for_unknown_foreign_and_overflow_ids(
         )
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
         res = await http_b.delete(f"/api/sessions/{overflow}")
+        assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+        res = await http_b.post(f"/api/sessions/{overflow}/continue")
         assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
 
         # A, of course, still reaches their own session.

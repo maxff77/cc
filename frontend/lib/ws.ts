@@ -1,6 +1,7 @@
 // Singleton auto-reconnecting WebSocket client + live-batch store (Story 2.2;
 // pause/resume/stop + FloodWait state since Story 2.3; failed lines since
-// 2.5; capture-session rows for the Completa/Filtrada views since 3.2).
+// 2.5; capture-session rows for the Completa/Filtrada views since 3.2;
+// `session.active` rebinding on Continuar since 3.4).
 //
 // WS event payloads are NOT in the generated OpenAPI types — this is the one
 // legitimate hand-typed contract, kept next to the reducer. Envelope:
@@ -151,6 +152,20 @@ interface ResponseCapturedData {
 
 interface FloodWaitData {
   seconds: number;
+}
+
+// VERBATIM mirror of `active_session_data` (backend services/batches.py) —
+// the `session.active` payload (Story 3.4) IS the snapshot's session slice:
+// a tab that misses the event reconciles with its next snapshot without any
+// shape difference.
+interface SessionActiveData {
+  // null when the just-activated session was deleted before the post-commit
+  // payload build (active_session_data's "no active session" shape).
+  session_id: number | null;
+  cc_new: number;
+  responses_total: number;
+  responses: SnapshotResponseRow[];
+  cc: SnapshotCcRow[];
 }
 
 const IDLE: LiveBatchState = {
@@ -395,6 +410,39 @@ function reduce(event: string, data: unknown) {
       });
       break;
     }
+    case "session.active": {
+      const d = data as SessionActiveData;
+
+      // Continuar (Story 3.4): the server says which session is active NOW —
+      // unconditional replacement of the SESSION fields only ("Envío binds to
+      // it" in every tab of the tenant, including the one that fired the
+      // continue). Rows arrive with `nueva: false` — the event is
+      // reconciliation, not novelty; the "nueva" highlight stays reserved to
+      // `response.captured` (whose session guard now matches the continued
+      // session by construction). NEVER touches `state`/batch/flood — same
+      // contract as `response.captured`: the session is the session's, the
+      // batch is the batch's.
+      setStore({
+        ...store,
+        sessionId: d.session_id,
+        responses: d.responses.map((row) => ({
+          key: `s-${row.id}`,
+          messageId: row.message_id,
+          status: row.status,
+          text: row.text,
+          capturedAt: row.created_at,
+          nueva: false,
+        })),
+        cc: d.cc.map((row) => ({
+          key: `s-${row.id}`,
+          text: row.text,
+          nueva: false,
+        })),
+        ccNew: d.cc_new,
+        responsesTotal: d.responses_total,
+      });
+      break;
+    }
     case "flood.wait": {
       const d = data as FloodWaitData;
 
@@ -484,7 +532,8 @@ export function useLiveBatch(): LiveBatchState {
 // reconnection. Same pattern as `seedFromBatch` (REST-confirmed local seed;
 // the WS snapshot stays the source of truth afterwards). Recorded decision:
 // other open tabs reconcile on their next snapshot (stale visual accepted at
-// MVP scale). NO new WS event — `session.active` belongs to Story 3.4.
+// MVP scale). The delete stays a local seed, no WS event — `session.active`
+// (Story 3.4) is the CONTINUE event, not a delete signal.
 export function clearSession(sessionId: number) {
   if (store.sessionId !== sessionId) return;
   setStore({

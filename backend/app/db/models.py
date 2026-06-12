@@ -364,8 +364,9 @@ class Response(Base):
       edit dedup survives restarts and ``catch_up`` replays.
     - ``'cc'``: one session-new extracted CC value — ``text`` is the VALUE,
       ``status`` is NULL. Per-session dedup is DB-enforced by the partial
-      unique index ``uq_responses_session_cc`` (FR17: Story 3.3's "continuar"
-      preloads the dedup set from these rows).
+      unique index ``uq_responses_session_cc`` (FR17: Story 3.4's "continuar"
+      reactivates the session and this dedup-from-existing-rows IS the
+      "dedup set preserved" — no preloading code, the rows are the set).
 
     ``batch_id``/``line_id`` are SET NULL on purpose: the capture survives
     batch cleanup — the session is the real owner.

@@ -1,8 +1,11 @@
-"""Sessions router (Story 3.3): the Historial — list, detail, rename, delete.
+"""Sessions router (Story 3.3): the Historial — list, detail, rename, delete;
+plus ``POST /{id}/continue`` (Story 3.4): reopen a closed session as the
+active capture session.
 
 Capture sessions only; the export half of this module (`.txt`) is Story 3.5.
-Pure CRUD (GET/PATCH/DELETE), REST plural, no verb suffixes — architecture's
-literal route list names ``/api/sessions/{id}``.
+CRUD (GET/PATCH/DELETE) follows architecture's literal route list
+(``/api/sessions/{id}``); continue is the non-CRUD verb-suffix action
+(idiom ``/api/batches/{id}/pause|resume|stop``).
 
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
 — never from the body or path (architecture mandate). Any authenticated role
@@ -16,15 +19,18 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.broadcaster import broadcaster
 from app.db.base import get_session
 from app.db.models import CaptureSession, User
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
-from app.errors import session_in_use, session_not_found
+from app.errors import batch_live, session_conflict, session_in_use, session_not_found
+from app.services import batches as batches_service
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -194,6 +200,61 @@ async def rename_session(
     target = await _require_session(session, user.tenant_id, session_id)
     target.name = body.name
     await session.commit()
+    return _session_out(target)
+
+
+@router.post("/{session_id}/continue", response_model=SessionOut)
+async def continue_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SessionOut:
+    """Continuar (Story 3.4, AC 1–3): reactivate this session as the tenant's
+    active capture session.
+
+    The CC dedup needs NO preloading here — it is DB-backed per
+    ``capture_session_id`` (``add_new_cc`` + ``uq_responses_session_cc``), so
+    reactivating the session is the whole "dedup set preserved": the next
+    batch of the same gate binds to it via ``resolve_for_batch`` and every
+    already-captured CC value stays deduped.
+
+    Guard (AC 3): ANY live batch of the tenant (sending|paused|stopping) ⇒
+    409 ``batch_live`` — legacy parity "nueva/continuar return HTTP 409 while
+    a batch is live or paused (`_lote_vivo`)". Unlike delete's guard it does
+    NOT matter which session the live batch is bound to.
+
+    The lookup takes ``FOR UPDATE`` so it serializes with a concurrent DELETE
+    of the same target (3.3 takes the same lock) and with another continue of
+    the SAME target. Two continues of DIFFERENT targets (or a continue
+    crossing a batch start) can still race into
+    ``uq_capture_sessions_one_active_per_tenant`` at commit — mapped to 409
+    ``session_conflict``, never a raw 500.
+
+    Idempotent: continuing the ALREADY-active session (surface idle) is a
+    clean no-op in ``activate`` ⇒ 200 + emit (cheap multi-tab reconcile; the
+    UI never offers the button on "En curso", but another tab may have
+    activated it in between). Function name: ``continue`` is a reserved word.
+    """
+    target = await _require_session(
+        session, user.tenant_id, session_id, for_update=True
+    )
+    live = await batches_repo.get_live_batch(session, user.tenant_id)
+    if live is not None:
+        raise batch_live()
+    try:
+        await capture_sessions_repo.activate(session, target)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise session_conflict() from None
+    # POST-commit: fresh SELECTs in the same request session see the
+    # committed state; the payload leaves fully materialized (flat dicts,
+    # isoformat timestamps — the 2.3 MissingGreenlet lesson is solved inside
+    # the helper). Emitted VERBATIM as the snapshot's session slice so a tab
+    # that misses the event reconciles with its next snapshot.
+    payload = await batches_service.active_session_data(session, user.tenant_id)
+    await broadcaster.emit(user.tenant_id, "session.active", payload)
+    # expire_on_commit=False (db/base.py) keeps the attributes valid here.
     return _session_out(target)
 
 

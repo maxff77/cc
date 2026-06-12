@@ -100,7 +100,7 @@ async def progress_data(session: AsyncSession, batch: Batch) -> dict:
     }
 
 
-async def _active_session_data(session: AsyncSession, tenant_id: int) -> dict:
+async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
     """Snapshot slice for the tenant's ACTIVE capture session (Story 3.2).
 
     Carries ``session_id`` + the rows that rebuild the Completa/Filtrada
@@ -110,6 +110,10 @@ async def _active_session_data(session: AsyncSession, tenant_id: int) -> dict:
     resets between batches (legacy "counters never reset" — the session, not
     the batch, owns it). Everything is materialized inside the session (the
     2.3 MissingGreenlet lesson).
+
+    Public since Story 3.4: the continue handler emits this VERBATIM as the
+    ``session.active`` payload — a tab that misses the event reconciles with
+    its next snapshot without any shape difference.
     """
     active = await capture_sessions_repo.get_active(session, tenant_id)
     if active is None:
@@ -150,7 +154,7 @@ async def _active_session_data(session: AsyncSession, tenant_id: int) -> dict:
 async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
     """Full state for a tenant's freshly connected tab (snapshot-first, AC 8).
 
-    Since Story 3.2 BOTH branches merge ``_active_session_data``: a
+    Since Story 3.2 BOTH branches merge ``active_session_data``: a
     reconnected tab rebuilds Completa/Filtrada/badges from the snapshot ALONE
     (the 2.2 contract — exact precedent: ``failed_lines``, added in 2.5 for
     the same reason).
@@ -168,7 +172,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "failed_lines": [],
             "total": 0,
             "eta_seconds": 0,
-            **await _active_session_data(session, tenant_id),
+            **await active_session_data(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
@@ -191,5 +195,5 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         ],
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
-        **await _active_session_data(session, tenant_id),
+        **await active_session_data(session, tenant_id),
     }

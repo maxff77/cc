@@ -259,3 +259,29 @@ def session_in_use() -> AppError:
         code="session_in_use",
         message="Detén el lote antes de eliminar esta sesión.",
     )
+
+
+# --- Codes this story (3.4) defines --------------------------------------
+
+
+def batch_live() -> AppError:
+    # Continue while ANY of the tenant's batches is live or paused (AC 3) —
+    # legacy `_lote_vivo` parity. The message IS the AC copy verbatim: the UI
+    # renders it as-is ({code, message} contract, same treatment as
+    # session_in_use gave 3.3's AC 6).
+    return AppError(
+        status_code=409,
+        code="batch_live",
+        message="Termina o detén el lote actual antes de continuar otra sesión.",
+    )
+
+
+def session_conflict() -> AppError:
+    # Two continues (or a continue crossed with a batch start) raced into
+    # uq_capture_sessions_one_active_per_tenant at commit — mapped so the
+    # {code, message} contract never degrades to a raw 500.
+    return AppError(
+        status_code=409,
+        code="session_conflict",
+        message="No pudimos continuar la sesión. Intenta de nuevo.",
+    )

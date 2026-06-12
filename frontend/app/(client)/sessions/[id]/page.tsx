@@ -7,11 +7,11 @@
 // — the snapshot's 200-row cap is reconnection-only); the WS store only
 // signals "something new" for the live-follow refetch. Export `↓ .txt` is
 // Story 3.5 — no dead button.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Spinner } from "@heroui/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Spinner } from "@heroui/react";
 import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
@@ -48,6 +48,16 @@ interface SessionDetailOut {
   cc: SessionCcRow[];
   responses_total: number;
   cc_total: number;
+}
+
+// POST /{id}/continue answers the plain session shape (no rows).
+interface SessionOut {
+  id: number;
+  name: string | null;
+  gate_value: string;
+  gate_name: string;
+  is_active: boolean;
+  created_at: string;
 }
 
 // ids are int4 server-side — anything beyond can't exist (same guard as the
@@ -129,6 +139,45 @@ export default function SessionDetailPage() {
     }
   }, [live.responsesTotal, live.ccNew, live.sessionId, sessionId, queryClient]);
 
+  // Continuar (Story 3.4) from the detail header (EXPERIENCE Flow 2). NO
+  // local seed — the WS `session.active` rebinds Envío; on refetch
+  // `is_active` flips the badge to "En curso" and, since the store's
+  // sessionId now IS this id, the live-follow effect above starts following
+  // the continued session by construction. (Mutation duplicated in
+  // sessions/page.tsx — App Router pages cannot export helpers; accepted
+  // 3.3 precedent.)
+  const [continueError, setContinueError] = useState<string | null>(null);
+  const continuar = useMutation({
+    mutationFn: () =>
+      api.post<SessionOut>(`/api/sessions/${sessionId}/continue`),
+    onSuccess: () => {
+      setContinueError(null);
+      // The session that WAS active changed badge too — its cached detail
+      // would go stale; the prefix invalidation covers both details
+      // (mirrors sessions/page.tsx).
+      queryClient.invalidateQueries({ queryKey: ["session"] });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (err) => {
+      // batch_live carries the AC 3 copy verbatim — rendered as-is;
+      // session_not_found (deleted in another tab) refetches into NotFound.
+      if (err instanceof ApiError && err.code === "session_not_found") {
+        setContinueError(null);
+        queryClient.invalidateQueries({
+          queryKey: ["session", String(sessionId)],
+        });
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+
+        return;
+      }
+      setContinueError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
   if (sessionId === null) return <NotFound />;
 
   if (detail.isLoading) {
@@ -198,8 +247,26 @@ export default function SessionDetailPage() {
             {data.gate_value} · {data.id}
           </p>
         </div>
-        <SessionBadge isActive={data.is_active} />
+        <div className="flex shrink-0 items-center gap-3">
+          {/* Only on "Cerrada" (AC 1) — not destructive: secondary, no
+              confirm. */}
+          {!data.is_active && (
+            <Button
+              isDisabled={continuar.isPending}
+              size="sm"
+              variant="secondary"
+              onPress={() => continuar.mutate()}
+            >
+              {continuar.isPending ? "Continuando…" : "Continuar"}
+            </Button>
+          )}
+          <SessionBadge isActive={data.is_active} />
+        </div>
       </header>
+
+      {continueError && (
+        <span className="text-sm text-danger">{continueError}</span>
+      )}
 
       {/* Desktop: the same two side-by-side panels as Envío; internal
           scroll — the detail competes with no cockpit. */}

@@ -112,6 +112,36 @@ async def create_active(
     return capture_session
 
 
+async def activate(
+    session: AsyncSession, capture_session: CaptureSession
+) -> None:
+    """Reactivate an EXISTING session as the tenant's active one (Story 3.4).
+
+    Mirror of ``create_active``'s UPDATE-first dance (the partial unique
+    index ``uq_capture_sessions_one_active_per_tenant`` never trips on the
+    honest path) — but flipping an existing row instead of inserting.
+
+    The ``id != capture_session.id`` exclusion in the UPDATE is load-bearing:
+    if the UPDATE included the target, "continuing" the ALREADY-active session
+    would set ``is_active=False`` in the DB while the loaded ORM instance
+    stays ``True`` in memory — the ``True → True`` assignment registers no
+    change, the flush emits no UPDATE and the row would end up INACTIVE. With
+    the exclusion the already-active path is a clean no-op (idempotent) and
+    the closed→active path registers ``False → True`` and flushes.
+    """
+    await session.execute(
+        update(CaptureSession)
+        .where(
+            CaptureSession.tenant_id == capture_session.tenant_id,
+            CaptureSession.is_active,
+            CaptureSession.id != capture_session.id,
+        )
+        .values(is_active=False)
+    )
+    capture_session.is_active = True
+    await session.flush()
+
+
 async def resolve_for_batch(
     session: AsyncSession, tenant_id: int, gate_value: str, gate_name: str
 ) -> CaptureSession:

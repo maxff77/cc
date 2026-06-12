@@ -4,7 +4,9 @@
 // inside each group; groups ordered by their most recent session), with
 // inline rename and a confirm-modal delete. The API delivers a FLAT
 // newest-first list — the grouping is pure presentation (recorded decision).
-// Continuar is Story 3.4 and export `↓ .txt` is Story 3.5 — no dead buttons.
+// Continuar (Story 3.4) reopens a closed session as the active capture
+// session — dedup is server-side, the WS `session.active` rebinds Envío.
+// Export `↓ .txt` is Story 3.5 — no dead buttons.
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -195,6 +197,7 @@ function SessionRow({ session }: { session: SessionOut }) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [continueError, setContinueError] = useState<string | null>(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
@@ -222,6 +225,38 @@ function SessionRow({ session }: { session: SessionOut }) {
         return;
       }
       setRenameError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  // Continuar (Story 3.4, AC 1): reactivate as the active capture session.
+  // NO local seed — the `session.active` event arrives on this tab's own
+  // socket and the WS store is who rebinds Envío (recorded decision).
+  // (Mutation duplicated in sessions/[id]/page.tsx — App Router pages cannot
+  // export helpers; same accepted precedent as fallbackName/SessionBadge.)
+  const continuar = useMutation({
+    mutationFn: () =>
+      api.post<SessionOut>(`/api/sessions/${session.id}/continue`),
+    onSuccess: () => {
+      setContinueError(null);
+      invalidate();
+      // The session that WAS active changed badge too — its cached detail
+      // would go stale; the prefix invalidation covers both details.
+      queryClient.invalidateQueries({ queryKey: ["session"] });
+    },
+    onError: (err) => {
+      // Deleted in another tab: refresh so the ghost row goes away.
+      if (err instanceof ApiError && err.code === "session_not_found") {
+        setContinueError(null);
+        invalidate();
+
+        return;
+      }
+      // batch_live carries the AC 3 copy verbatim — rendered as-is.
+      setContinueError(
         err instanceof ApiError
           ? err.message
           : "No pudimos conectar. Intenta de nuevo.",
@@ -326,6 +361,19 @@ function SessionRow({ session }: { session: SessionOut }) {
             </>
           ) : (
             <>
+              {/* Only on "Cerrada" rows (AC 1: "a closed session") — the
+                  active session already captures; no no-op button. NOT
+                  destructive ⇒ secondary, no confirm (UX-DR triad). */}
+              {!session.is_active && (
+                <Button
+                  isDisabled={continuar.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => continuar.mutate()}
+                >
+                  {continuar.isPending ? "Continuando…" : "Continuar"}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"
@@ -354,6 +402,10 @@ function SessionRow({ session }: { session: SessionOut }) {
 
       {renameError && (
         <span className="text-sm text-danger">{renameError}</span>
+      )}
+
+      {continueError && (
+        <span className="text-sm text-danger">{continueError}</span>
       )}
 
       {/* Confirm modal (AC 5) — a REAL modal per the AC (unlike the inline
