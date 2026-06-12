@@ -344,39 +344,44 @@ class Engine:
             estado_nuevo = estado_previo  # edición intermedia (⏳), conserva estado
         self.estado_mensajes[message_id] = {"texto": texto, "estado": estado_nuevo}
 
-        if estado_nuevo not in ("ok", "rechazada"):
-            return  # intermedio sin resultado definitivo: nada que guardar/emitir
-
-        # Completa guarda TODO resultado (✅ y ❌), sin filtrar.
-        if self.sesion:
-            self.sesion.guardar_completa(texto)
-
-        nuevos = []
         if estado_nuevo == "ok":
-            nuevos = self.sesion.guardar_filtrada(texto) if self.sesion else []
+            nuevos = self.sesion.guardar_respuesta(texto) if self.sesion else []
             if estado_previo != "ok":
                 self.respuestas_recibidas += 1
                 if estado_previo == "rechazada":
                     self.respuestas_rechazadas -= 1
-                evento = "ok"
-            else:
-                evento = "ok-edit"
-        else:  # rechazada
-            if estado_previo != "rechazada":
-                self.respuestas_rechazadas += 1
-                if estado_previo == "ok":
-                    self.respuestas_recibidas -= 1
-            evento = "rechazada"
-
-        await self.bus.emit(
-            {
-                "tipo": "respuesta",
-                "estado": evento,
-                "texto": texto,
-                "nuevos_cc": nuevos,
-                "fuente": fuente,
-            }
-        )
+                await self.bus.emit(
+                    {
+                        "tipo": "respuesta",
+                        "estado": "ok",
+                        "texto": texto,
+                        "nuevos_cc": nuevos,
+                        "fuente": fuente,
+                    }
+                )
+            elif nuevos:
+                await self.bus.emit(
+                    {
+                        "tipo": "respuesta",
+                        "estado": "ok-edit",
+                        "texto": texto,
+                        "nuevos_cc": nuevos,
+                        "fuente": fuente,
+                    }
+                )
+        elif estado_nuevo == "rechazada" and estado_previo != "rechazada":
+            self.respuestas_rechazadas += 1
+            if estado_previo == "ok":
+                self.respuestas_recibidas -= 1
+            await self.bus.emit(
+                {
+                    "tipo": "respuesta",
+                    "estado": "rechazada",
+                    "texto": texto,
+                    "nuevos_cc": [],
+                    "fuente": fuente,
+                }
+            )
         await self._emit_contadores()
 
 
@@ -569,8 +574,8 @@ async def sesion_renombrar(req: SesionRenombrarReq):
 
 @app.get("/api/respuesta/{prefijo}/{sesion}", response_class=PlainTextResponse)
 async def respuesta(prefijo, sesion, tipo: str = "filtrada"):
-    if tipo not in ("completa", "filtrada", "filtrada_completa"):
-        raise HTTPException(400, "tipo debe ser completa, filtrada o filtrada_completa")
+    if tipo not in ("completa", "filtrada"):
+        raise HTTPException(400, "tipo debe ser completa o filtrada")
     archivo = _safe_dir(prefijo, sesion) / f"{tipo}.txt"
     if not archivo.exists():
         return ""
