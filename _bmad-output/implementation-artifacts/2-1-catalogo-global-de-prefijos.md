@@ -79,16 +79,16 @@ So that clients only ever pick from approved gates.
 ### Review Findings
 
 - [ ] [Review][Decision] Delete-confirm copy conflicts within the spec — Task 6 mandates "¿Eliminar este gate? ({value})" (what's implemented) but the UX microcopy block marks "¿Eliminar este gate? No se puede deshacer." as exact copy (EXPERIENCE.md). "No se puede deshacer" is also debatable with soft-delete. Owner must pick the final copy.
-- [ ] [Review][Patch] Concurrent duplicate POST hits `uq_gates_value_active` → unhandled `IntegrityError` → 500 instead of 409 `gate_exists` (check-then-insert TOCTOU; `services/users.py` catches `IntegrityError`, this path doesn't) [backend/app/api/admin.py:399]
-- [ ] [Review][Patch] Same TOCTOU on PATCH: duplicate check reads without lock; concurrent PATCH/POST toward same value → `IntegrityError` → 500 [backend/app/api/admin.py:427]
-- [ ] [Review][Patch] 422 responses (`HTTPValidationError`, no `{code,message}`) yield empty `ApiError.message` → falsy → no Alert/FieldError rendered; user gets zero feedback. Add fallback message + basic client-side validation (maxLength, no inner spaces) [frontend/app/admin/gates/page.tsx:151, frontend/lib/api.ts:39]
-- [ ] [Review][Patch] `_validate_gate_value` accepts invisible chars (U+200B/U+FEFF — not `isspace()`) → visually identical duplicate gates; NUL byte passes validation → asyncpg error → 500 [backend/app/api/admin.py:335]
-- [ ] [Review][Patch] `gate_id` beyond int32 (e.g. 99999999999999999999) overflows asyncpg bind → `DBAPIError` → 500 instead of 404 [backend/app/api/admin.py:420,436]
-- [ ] [Review][Patch] `startsWith("/admin/gates")` over-matches siblings (`/admin/gatesfoo` redirects instead of 404); match `/admin/gates` exact or `/admin/gates/` [frontend/middleware.ts:127]
-- [ ] [Review][Patch] PATCH/DELETE returning 404 `gate_not_found` (deleted in another tab) shows message but doesn't invalidate `GATES_KEY` → ghost row + open editor persist [frontend/app/admin/gates/page.tsx:230,313]
-- [ ] [Review][Patch] Enter re-submits create form while mutation pending (`isDisabled` only blocks the button) → double POST, spurious `gate_exists` error; guard `onSubmit` with `mutation.isPending` [frontend/app/admin/gates/page.tsx:163]
-- [ ] [Review][Patch] `api/gates.py` imports private `_gate_to_out` from `api/admin.py` — public router coupled to a `_`-prefixed symbol across modules; make it public or move schema+mapper to a neutral spot [backend/app/api/gates.py]
-- [ ] [Review][Patch] Delete network fallback says "No pudimos eliminar. Intenta de nuevo." — spec copy is "No pudimos conectar. Intenta de nuevo." (create/edit use the correct one) [frontend/app/admin/gates/page.tsx:317]
+- [x] [Review][Patch] Concurrent duplicate POST hits `uq_gates_value_active` → unhandled `IntegrityError` → 500 instead of 409 `gate_exists` (check-then-insert TOCTOU; `services/users.py` catches `IntegrityError`, this path doesn't) [backend/app/api/admin.py:399]
+- [x] [Review][Patch] Same TOCTOU on PATCH: duplicate check reads without lock; concurrent PATCH/POST toward same value → `IntegrityError` → 500 [backend/app/api/admin.py:427]
+- [x] [Review][Patch] 422 responses (`HTTPValidationError`, no `{code,message}`) yield empty `ApiError.message` → falsy → no Alert/FieldError rendered; user gets zero feedback. Add fallback message + basic client-side validation (maxLength, no inner spaces) [frontend/app/admin/gates/page.tsx:151, frontend/lib/api.ts:39]
+- [x] [Review][Patch] `_validate_gate_value` accepts invisible chars (U+200B/U+FEFF — not `isspace()`) → visually identical duplicate gates; NUL byte passes validation → asyncpg error → 500 [backend/app/api/admin.py:335]
+- [x] [Review][Patch] `gate_id` beyond int32 (e.g. 99999999999999999999) overflows asyncpg bind → `DBAPIError` → 500 instead of 404 [backend/app/api/admin.py:420,436]
+- [x] [Review][Patch] `startsWith("/admin/gates")` over-matches siblings (`/admin/gatesfoo` redirects instead of 404); match `/admin/gates` exact or `/admin/gates/` [frontend/middleware.ts:127]
+- [x] [Review][Patch] PATCH/DELETE returning 404 `gate_not_found` (deleted in another tab) shows message but doesn't invalidate `GATES_KEY` → ghost row + open editor persist [frontend/app/admin/gates/page.tsx:230,313]
+- [x] [Review][Patch] Enter re-submits create form while mutation pending (`isDisabled` only blocks the button) → double POST, spurious `gate_exists` error; guard `onSubmit` with `mutation.isPending` [frontend/app/admin/gates/page.tsx:163]
+- [x] [Review][Patch] `api/gates.py` imports private `_gate_to_out` from `api/admin.py` — public router coupled to a `_`-prefixed symbol across modules; make it public or move schema+mapper to a neutral spot [backend/app/api/gates.py]
+- [x] [Review][Patch] Delete network fallback says "No pudimos eliminar. Intenta de nuevo." — spec copy is "No pudimos conectar. Intenta de nuevo." (create/edit use the correct one) [frontend/app/admin/gates/page.tsx:317]
 - [x] [Review][Defer] Hand-written `GateOut`/`GateListResponse` interfaces in page.tsx vs architecture "never hand-write API types" — same idiom as users page (1.3); fix epic-wide, not per-story [frontend/app/admin/gates/page.tsx] — deferred, pre-existing
 
 ## Dev Notes

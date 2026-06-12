@@ -31,6 +31,20 @@ interface GateListResponse {
 }
 
 const GATES_KEY = ["admin-gates"] as const;
+const GATE_VALUE_MAX = 20;
+
+// Client-side mirror of the backend `_validate_gate_value` policy, so the
+// owner gets an inline message instead of a raw 422 round-trip.
+function validateGateValue(raw: string): string | null {
+  const value = raw.trim();
+
+  if (!value) return "Ingresá un gate.";
+  if (/\s/.test(value)) return "El gate no puede contener espacios.";
+  if (value.length > GATE_VALUE_MAX)
+    return `Máximo ${GATE_VALUE_MAX} caracteres.`;
+
+  return null;
+}
 
 function formatCreated(iso: string): string {
   return new Date(iso).toLocaleDateString("es", {
@@ -158,8 +172,18 @@ function CreateGateForm({ onCreated }: { onCreated: () => void }) {
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Enter can re-submit the Form while a POST is in flight (isDisabled only
+    // blocks the button) — would double-create and show a spurious duplicate.
+    if (mutation.isPending) return;
     setFieldError(null);
     setBanner(null);
+    const invalid = validateGateValue(value);
+
+    if (invalid) {
+      setFieldError(invalid);
+
+      return;
+    }
     mutation.mutate();
   }
 
@@ -228,6 +252,13 @@ function EditGateAction({
       onChanged();
     },
     onError: (err) => {
+      // Retired/deleted in another tab: the row no longer exists server-side —
+      // refresh the list so the ghost row (and this editor) goes away.
+      if (err instanceof ApiError && err.code === "gate_not_found") {
+        onChanged();
+
+        return;
+      }
       setError(
         err instanceof ApiError
           ? err.message
@@ -235,6 +266,19 @@ function EditGateAction({
       );
     },
   });
+
+  function save() {
+    if (mutation.isPending) return;
+    const invalid = validateGateValue(value);
+
+    if (invalid) {
+      setError(invalid);
+
+      return;
+    }
+    setError(null);
+    mutation.mutate();
+  }
 
   if (!open) {
     return (
@@ -271,7 +315,7 @@ function EditGateAction({
           isDisabled={mutation.isPending}
           size="sm"
           variant="primary"
-          onPress={() => mutation.mutate()}
+          onPress={save}
         >
           {mutation.isPending ? "Guardando…" : "Guardar"}
         </Button>
@@ -311,10 +355,16 @@ function DeleteGateAction({
       onDeleted();
     },
     onError: (err) => {
+      // Already retired in another tab → the desired outcome; just refresh.
+      if (err instanceof ApiError && err.code === "gate_not_found") {
+        onDeleted();
+
+        return;
+      }
       setError(
         err instanceof ApiError
           ? err.message
-          : "No pudimos eliminar. Intenta de nuevo.",
+          : "No pudimos conectar. Intenta de nuevo.",
       );
     },
   });

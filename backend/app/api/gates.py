@@ -8,7 +8,7 @@ curation (CRUD) is owner-only and lives in the admin router.
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import GateListResponse, _gate_to_out
+from app.api.admin import GateListResponse, gate_to_out
 from app.api.deps import get_current_user
 from app.db.base import get_session
 from app.db.models import User
@@ -24,4 +24,4 @@ async def list_gates(
 ) -> GateListResponse:
     """List active catalog entries (read-only — clients pick, never type)."""
     gates = await gates_repo.list_active(session)
-    return GateListResponse(items=[_gate_to_out(g) for g in gates], total=len(gates))
+    return GateListResponse(items=[gate_to_out(g) for g in gates], total=len(gates))

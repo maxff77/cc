@@ -123,10 +123,12 @@ export async function middleware(request: NextRequest) {
 
   // /admin/gates is owner-only (Story 2.1): an admin is redirected to their
   // own surface, /admin/users. Clients were already bounced to / above.
-  if (
-    request.nextUrl.pathname.startsWith("/admin/gates") &&
-    me.role !== "owner"
-  ) {
+  // Segment-anchored so siblings like /admin/gatesfoo fall through to 404.
+  const isGatesPath =
+    request.nextUrl.pathname === "/admin/gates" ||
+    request.nextUrl.pathname.startsWith("/admin/gates/");
+
+  if (isGatesPath && me.role !== "owner") {
     return NextResponse.redirect(new URL("/admin/users", request.url));
   }
 

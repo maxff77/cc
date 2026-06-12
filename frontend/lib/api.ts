@@ -35,8 +35,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let body: ApiErrorBody;
 
+    // Normalize non-contract bodies (e.g. FastAPI 422 {detail: [...]}) so
+    // `message` is never empty — the UI renders it directly.
     try {
-      body = (await res.json()) as ApiErrorBody;
+      const parsed = (await res.json()) as Partial<ApiErrorBody>;
+
+      body = {
+        code: typeof parsed.code === "string" ? parsed.code : "unknown_error",
+        message:
+          typeof parsed.message === "string" && parsed.message !== ""
+            ? parsed.message
+            : "Ocurrió un error inesperado.",
+      };
     } catch {
       body = { code: "unknown_error", message: "Ocurrió un error inesperado." };
     }

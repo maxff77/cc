@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import AwareDatetime, BaseModel, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
@@ -330,6 +331,7 @@ async def reset_password(
 # snapshots the gate string is never rewritten.
 
 GATE_VALUE_MAX = 20
+_PG_INT_MAX = 2**31 - 1  # gates.id is int4; larger ids overflow the bind
 
 
 def _validate_gate_value(value: str) -> str:
@@ -339,8 +341,8 @@ def _validate_gate_value(value: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError("gate vacío")
-    if any(ch.isspace() for ch in value):
-        raise ValueError("el gate no puede contener espacios")
+    if any(ch.isspace() or not ch.isprintable() for ch in value):
+        raise ValueError("el gate no puede contener espacios ni caracteres invisibles")
     if len(value) > GATE_VALUE_MAX:
         raise ValueError("gate demasiado largo")
     return value
@@ -375,7 +377,8 @@ class GateListResponse(BaseModel):
     total: int
 
 
-def _gate_to_out(gate: Gate) -> GateOut:
+def gate_to_out(gate: Gate) -> GateOut:
+    """Shared Gate → GateOut mapper (also used by the public gates router)."""
     return GateOut(id=gate.id, value=gate.value, created_at=gate.created_at)
 
 
@@ -386,7 +389,7 @@ async def list_gates(
 ) -> GateListResponse:
     """List active catalog entries (owner curation view)."""
     gates = await gates_repo.list_active(session)
-    return GateListResponse(items=[_gate_to_out(g) for g in gates], total=len(gates))
+    return GateListResponse(items=[gate_to_out(g) for g in gates], total=len(gates))
 
 
 @router.post("/gates", response_model=GateOut, status_code=201)
@@ -398,9 +401,15 @@ async def create_gate(
     """Add a gate to the catalog; duplicate ACTIVE value → 409 gate_exists."""
     if await gates_repo.get_active_by_value(session, body.value) is not None:
         raise gate_exists()
-    gate = await gates_repo.create(session, value=body.value)
-    await session.commit()
-    return _gate_to_out(gate)
+    try:
+        gate = await gates_repo.create(session, value=body.value)
+        await session.commit()
+    except IntegrityError as exc:
+        # The pre-check above is racy: a concurrent insert of the same value
+        # only trips uq_gates_value_active at flush/commit. Map to the same
+        # gate_exists contract instead of a 500.
+        raise gate_exists() from exc
+    return gate_to_out(gate)
 
 
 async def _require_active_gate(session: AsyncSession, gate_id: int) -> Gate:
@@ -409,6 +418,10 @@ async def _require_active_gate(session: AsyncSession, gate_id: int) -> Gate:
     ``FOR UPDATE`` mirrors ``_require_client_target``: edit/delete are
     read-modify-write, so concurrent mutations serialize.
     """
+    if not 0 < gate_id <= _PG_INT_MAX:
+        # Out-of-range ids would overflow the int4 bind in asyncpg → 500;
+        # they can't exist, so they are indistinguishable from "not found".
+        raise gate_not_found()
     gate = await gates_repo.get_by_id(session, gate_id, for_update=True)
     if gate is None or gate.deleted_at is not None:
         raise gate_not_found()
@@ -428,8 +441,13 @@ async def update_gate(
     if duplicate is not None and duplicate.id != gate.id:
         raise gate_exists()
     gate.value = body.value
-    await session.commit()
-    return _gate_to_out(gate)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # Duplicate check is racy (the duplicate row isn't locked); a
+        # concurrent create/edit of the same value trips the index at commit.
+        raise gate_exists() from exc
+    return gate_to_out(gate)
 
 
 @router.delete("/gates/{gate_id}", status_code=204)

@@ -189,6 +189,23 @@ async def test_edit_or_delete_unknown_gate_is_gate_not_found(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_out_of_range_gate_id_is_gate_not_found(
+    ctx: dict[str, object],
+) -> None:
+    """Ids beyond int4 would overflow the asyncpg bind — must be a clean 404."""
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    huge = "99999999999999999999"
+    res = await owner_client.patch(f"/api/admin/gates/{huge}", json={"value": ".x"})
+    assert res.status_code == 404
+    assert res.json()["code"] == "gate_not_found"
+    res = await owner_client.delete(f"/api/admin/gates/{huge}")
+    assert res.status_code == 404
+    res = await owner_client.delete("/api/admin/gates/0")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_admin_and_client_are_forbidden_on_admin_gates(
     ctx: dict[str, object], client_client: AsyncClient
 ) -> None:
@@ -238,8 +255,16 @@ async def test_unauthenticated_gates_read_is_401(ctx: dict[str, object]) -> None
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
     "bad_value",
-    ["", "   ", ".z o", ".tab\there", "." + "x" * 20],
-    ids=["empty", "whitespace-only", "inner-space", "inner-tab", "too-long"],
+    ["", "   ", ".z o", ".tab\there", "." + "x" * 20, ".z\u200bo", ".z\x00o"],
+    ids=[
+        "empty",
+        "whitespace-only",
+        "inner-space",
+        "inner-tab",
+        "too-long",
+        "zero-width-space",
+        "nul-byte",
+    ],
 )
 async def test_validation_rejects_bad_values(
     ctx: dict[str, object], bad_value: str
