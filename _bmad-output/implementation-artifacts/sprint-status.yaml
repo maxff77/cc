@@ -37,6 +37,7 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 3-1 → done 2026-06-12 (captura + atribución de replies via reply_to_msg_id, sessions, CC dedup, unmatched bucket, 182 tests green)
 # 2-5 → done 2026-06-11 (endurecimiento de pipeline completo: write-ahead, cap=3 fallidas, panel rojo, FloodWait global, fail-stop, reconciliación, cancelación, logs)
 # 2-5 → review 2026-06-12 (implementado: send_log write-ahead + cap=3/'failed' + panel rojo de fallidas + ventana FloodWait global + fail-stop de registro + reconciliación al boot + 'cancelled' por expiración + logs estructurados; suite 165 verde, diferidos 2-2 #5 y 2-4 #1/#3 resueltos)
 # 2-5 → ready-for-dev 2026-06-12 (story file created — send_log write-ahead + retry cap=3/failed + fail-stop sin DB + reconciliación al boot + cancelled por expiración + logs estructurados; absorbe diferidos 2-2 #5 y 2-4 #1/#3)
@@ -81,8 +82,8 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Captura de respuestas, sesiones e historial
-  epic-3: backlog
-  3-1-captura-y-atribucion-de-respuestas-del-bot: backlog
+  epic-3: in-progress
+  3-1-captura-y-atribucion-de-respuestas-del-bot: done
   3-2-vistas-completa-filtrada-en-vivo-en-envio: backlog
   3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: backlog
   3-4-continuar-una-sesion-con-dedup-preservado: backlog

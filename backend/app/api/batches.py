@@ -23,6 +23,7 @@ from app.core.telegram import gateway
 from app.db.base import get_session
 from app.db.models import Batch, User
 from app.db.repos import batches as batches_repo
+from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import gates as gates_repo
 from app.errors import (
     batch_not_found,
@@ -114,11 +115,24 @@ async def create_or_append_batch(
             await batches_repo.add_lines(
                 session, batch=batch, texts=lines, start_position=0
             )
+            # Capture-session binding (Story 3.1, AC 3) in the SAME
+            # transaction: reuse the tenant's active session when its gate
+            # matches, otherwise activate a fresh one — the batch commit IS
+            # the "bound automatically at batch start".
+            capture_session = await capture_sessions_repo.resolve_for_batch(
+                session, tenant_id, gate_value, gate_name
+            )
+            batch.capture_session_id = capture_session.id
             await session.commit()
         except IntegrityError:
             # Two tabs raced past the live check (TOCTOU): the partial unique
             # index uq_batches_one_live_per_tenant rejected the second batch.
             # Re-read and fall through to the append path — never a 500.
+            # (uq_capture_sessions_one_active_per_tenant can only collide in
+            # this SAME race: this handler is the ONLY place that creates
+            # ACTIVE sessions — the attribution backfill inserts INACTIVE
+            # fallbacks (review 3-1) — so this rollback covers batch AND
+            # session alike.)
             await session.rollback()
             live = await batches_repo.get_live_batch(
                 session, tenant_id, for_update=True

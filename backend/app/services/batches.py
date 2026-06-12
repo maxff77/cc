@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.scheduler import scheduler
 from app.db.models import Batch
 from app.db.repos import batches as batches_repo
+from app.db.repos import capture_sessions as capture_sessions_repo
+from app.db.repos import responses as responses_repo
 
 
 def apply_gate(text: str, gate_value: str) -> list[str]:
@@ -88,11 +90,22 @@ async def progress_data(session: AsyncSession, batch: Batch) -> dict:
     }
 
 
+async def _cc_new(session: AsyncSession, tenant_id: int) -> int:
+    """``cc_new`` metric: deduped CC rows of the tenant's ACTIVE capture
+    session (Story 3.1). Recorded decision: it does NOT reset between batches
+    (legacy "counters never reset" — the session, not the batch, owns it);
+    0 when no session exists yet."""
+    active = await capture_sessions_repo.get_active(session, tenant_id)
+    if active is None:
+        return 0
+    return await responses_repo.cc_count(session, active.id)
+
+
 async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
     """Full state for a tenant's freshly connected tab (snapshot-first, AC 8).
 
-    ``cc_new`` is hardcoded 0 until Epic 3 — the metric slot must exist for
-    the UI.
+    ``cc_new`` is real since Story 3.1: the active capture session's CC count
+    — a reconnected tab rebuilds the metric from the snapshot alone.
     """
     batch = await batches_repo.get_live_batch(session, tenant_id)
     if batch is None:
@@ -107,7 +120,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "failed_lines": [],
             "total": 0,
             "eta_seconds": 0,
-            "cc_new": 0,
+            "cc_new": await _cc_new(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
@@ -130,5 +143,5 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         ],
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
-        "cc_new": 0,
+        "cc_new": await _cc_new(session, tenant_id),
     }

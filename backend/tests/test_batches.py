@@ -426,7 +426,7 @@ async def test_snapshot_live_shape_and_eta_math(
     # Honest adaptive ETA (UX-DR14 / Story 2.4): queued × n × G with a single
     # active sender → 3 × 1 × interval(1)=10.0.
     assert snap["eta_seconds"] == 30.0
-    assert snap["cc_new"] == 0  # hardcoded until Epic 3
+    assert snap["cc_new"] == 0  # real since 3.1 — this test captures nothing
 
 
 @pytest.mark.asyncio(loop_scope="session")

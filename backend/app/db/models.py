@@ -2,7 +2,7 @@
 
 Tables arrive story by story via Alembic migrations (no tables ahead of need):
 tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
-batch_lines (2.2), send_log (2.5).
+batch_lines (2.2), send_log (2.5), capture_sessions + responses (3.1).
 """
 
 from datetime import datetime
@@ -213,6 +213,17 @@ class Batch(Base):
     is_owner_priority: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
+    # Capture session bound at batch start (Story 3.1, AC 3): attribution
+    # resolves reply → send_log → line → batch → THIS session, even after the
+    # batch lands completed/stopped/cancelled (the 2.5 promise: "Story 3.1
+    # attributes their replies even on a cancelled batch"). SET NULL — the
+    # session is the real owner of the captures and outlives batch cleanup.
+    # NULL on pre-3.1 batches; attribution backfills it lazily.
+    capture_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("capture_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -294,6 +305,107 @@ class SendLog(Base):
         ForeignKey("batch_lines.id", ondelete="CASCADE")
     )
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CaptureSession(Base):
+    """One save session per tenant+gate (Story 3.1) — the legacy active
+    ``Sesion`` generalized per tenant; activation deactivates the previous one
+    (legacy: sessions are replaced by reassignment, never closed).
+
+    ``gate_value``/``gate_name`` are SNAPSHOTS copied verbatim from the catalog
+    — same idiom and justification as ``Batch``: retiring or renaming a gate
+    never rewrites history; no FK to ``gates``. ``name`` is the friendly label
+    (Story 3.3 rename, 200-char cap mirroring legacy ``escribir_nombre``);
+    NULL ⇒ the UI falls back to a ``created_at`` format (``nombre_bonito``).
+    """
+
+    __tablename__ = "capture_sessions"
+    __table_args__ = (
+        # DB enforcement of "one ACTIVE capture session per tenant" — same
+        # idiom as uq_batches_one_live_per_tenant.
+        Index(
+            "uq_capture_sessions_one_active_per_tenant",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    gate_value: Mapped[str] = mapped_column(String(20))
+    gate_name: Mapped[str] = mapped_column(String(80))
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Response(Base):
+    """One captured row (Story 3.1): full revisions AND filtered CC data.
+
+    A single table holds BOTH row types (architecture: "responses (full +
+    filtered/deduped rows)"), discriminated by ``kind``:
+    - ``'full'``: one revision of a bot reply — ``text`` is the whole reply,
+      ``status`` is ``'ok'`` (✅) or ``'rejected'`` (❌). The LATEST 'full' row
+      per ``message_id`` (via ``ix_responses_message_id``) IS the durable
+      per-message state of AC 5 — it replaces the legacy in-memory dict, so
+      edit dedup survives restarts and ``catch_up`` replays.
+    - ``'cc'``: one session-new extracted CC value — ``text`` is the VALUE,
+      ``status`` is NULL. Per-session dedup is DB-enforced by the partial
+      unique index ``uq_responses_session_cc`` (FR17: Story 3.3's "continuar"
+      preloads the dedup set from these rows).
+
+    ``batch_id``/``line_id`` are SET NULL on purpose: the capture survives
+    batch cleanup — the session is the real owner.
+    """
+
+    __tablename__ = "responses"
+    __table_args__ = (
+        # The per-message_id state lookup of AC 5 (same width as
+        # send_log.message_id).
+        Index("ix_responses_message_id", "message_id"),
+        # Session-scoped CC dedup, guaranteed by Postgres — not just by code.
+        Index(
+            "uq_responses_session_cc",
+            "capture_session_id",
+            "text",
+            unique=True,
+            postgresql_where=text("kind = 'cc'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    capture_session_id: Mapped[int] = mapped_column(
+        ForeignKey("capture_sessions.id", ondelete="CASCADE"), index=True
+    )
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="SET NULL"), nullable=True
+    )
+    line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("batch_lines.id", ondelete="SET NULL"), nullable=True
+    )
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    # 'full' (complete revision) | 'cc' (filtered datum) — plain String, no
+    # DB enum (2.2 decision).
+    kind: Mapped[str] = mapped_column(String(10))
+    # 'ok' (✅) | 'rejected' (❌); NULL on 'cc' rows.
+    status: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

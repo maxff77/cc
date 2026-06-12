@@ -19,6 +19,13 @@ Flow: phone → login code → optional 2FA password (Telethon's ``start()``
 drives it). Re-running with an already-authorized session exits 0 without
 prompting. If Telegram auth ever dies in production (``AuthKeyError``),
 re-run this script on the VPS (full runbook: Story 4.4).
+
+MANDATORY when re-authenticating as a DIFFERENT account (review 3-1):
+attribution keys on the account-global Telegram message-id sequence
+(``send_log.message_id``, ``responses.message_id``), which RESTARTS on a new
+account — stale rows would attribute new bot replies to OTHER tenants (a
+cross-tenant data leak). Wipe the message-id state BEFORE cc-core sends
+again; the script prints the exact step after a fresh authorization.
 """
 
 import asyncio
@@ -114,6 +121,17 @@ async def authenticate(settings: TelegramAuthSettings, session_path: Path) -> No
         await client.start(phone=lambda: input("phone (international format): "))
         me = await client.get_me()
         print(f"authorized as {me.first_name} (id={me.id})")
+        print(
+            "\nWARNING: if this account DIFFERS from the one that sent "
+            "before, wipe the stored Telegram message-id state BEFORE "
+            "cc-core sends again — message ids restart per account and "
+            "stale rows would attribute new replies to OTHER tenants:\n"
+            "  UPDATE send_log SET message_id = NULL;\n"
+            "  -- and archive/delete old responses rows: their message_id\n"
+            "  -- values collide with the new account's sequence and would\n"
+            "  -- steal attribution of new replies (responses.message_id\n"
+            "  -- is NOT NULL — rows must go, not be nulled).\n"
+        )
     finally:
         await client.disconnect()
 

@@ -25,10 +25,11 @@ is called — and ``message_id`` is filled in the record phase after delivery.
 Order of operations IS the fail-stop: DB down before the claim ⇒ step raises
 before any send (run_worker logs and retries); DB down after the send ⇒ the
 record block retries FOREVER and nothing else is sent until it commits ("no
-attribution possible = no sends"). NOTE for Story 3.1: the in-memory buffer
-of incoming replies while the DB is down belongs to the capture pipeline —
-there is no reply handler to feed it yet; ``catch_up=True`` (telegram.py)
-already recovers messages that arrived while disconnected.
+attribution possible = no sends"). The in-memory buffer of incoming replies
+while the DB is down lives in the capture pipeline (Story 3.1,
+``core/capture.py``: blocked queue + single retry-forever consumer);
+``catch_up=True`` (telegram.py) recovers messages that arrived while
+disconnected.
 
 Pause/stop (Story 2.3): the batch state is re-read after every interrupted
 sleep — pause RELEASES the claimed line back to the queue (a single worker
@@ -56,6 +57,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import capture
 from app.core.broadcaster import broadcaster
 from app.core.scheduler import scheduler
 from app.core.telegram import FloodWaitError, gateway
@@ -555,6 +557,11 @@ async def _boot_recovery() -> None:
        re-claim). Gateway down / listing fails → re-queue with a warning
        (recorded fallback: availability over the rare double-send when
        Telegram itself is down — without the gateway nothing sends anyway).
+
+    On exit — success, failure or cancellation — the capture consumer's boot
+    gate is released (review 3-1): catch_up replays buffered in the capture
+    queue may reference exactly the message ids this function confirms, so
+    the lifespan holds the consumer until here.
     """
     try:
         async with async_session_factory() as session:
@@ -614,6 +621,12 @@ async def _boot_recovery() -> None:
                     continue
                 if match_id is not None:
                     await batches_repo.mark_sent(session, line)
+                    # Idempotent get-or-create FIRST (deferred 2-5 :616): a
+                    # line left 'sending' by a pre-2.5 crash has NO intent row
+                    # and set_message_id is a bare UPDATE that would silently
+                    # no-op — leaving the confirmed line unattributable for
+                    # 3.1 and its message_id invisible to used_message_ids.
+                    await send_log_repo.record_intent(session, line)
                     await send_log_repo.set_message_id(session, line_id, match_id)
                     used.add(match_id)
                     # Same batch finalization as the step's record phase.
@@ -637,6 +650,8 @@ async def _boot_recovery() -> None:
             )
     except Exception:
         logger.exception("boot recovery failed — continuing")
+    finally:
+        capture.boot_recovered()
 
 
 async def run_worker() -> None:

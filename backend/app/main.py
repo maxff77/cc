@@ -1,12 +1,15 @@
 """FastAPI application factory.
 
 Lifespan owns the long-lived pieces: the Telethon gateway (connected at
-startup — Story 2.2; failures are non-fatal, the app boots without Telegram)
-and the single background send-worker task. Shutdown cancels the worker,
-disconnects Telegram and disposes the DB engine.
+startup — Story 2.2; failures are non-fatal, the app boots without Telegram),
+the single background send-worker task, and the capture consumer task (Story
+3.1 — the bridge callback is installed BEFORE connect so no early reply is
+lost). Shutdown cancels both tasks, disconnects Telegram and disposes the DB
+engine.
 
 Tests use httpx ``ASGITransport``, which does NOT run the lifespan — the app
-object stays importable and testable with no Telegram/worker running.
+object stays importable and testable with no Telegram/worker running (capture
+tests call ``capture.process_incoming`` directly, the ``step()`` idiom).
 """
 
 import asyncio
@@ -23,6 +26,7 @@ from app.api.batches import router as batches_router
 from app.api.gates import router as gates_router
 from app.api.health import router as health_router
 from app.api.ws import router as ws_router
+from app.core import capture
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
 from app.db.base import engine
@@ -31,13 +35,23 @@ from app.errors import AppError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Connect Telegram + start the send worker; tear both down on shutdown."""
+    """Connect Telegram + start the send worker and the capture consumer;
+    tear everything down on shutdown."""
+    gateway.register_capture(capture.enqueue)  # BEFORE connect — no lost reply
+    # Hold the capture consumer until the worker's boot recovery confirms the
+    # message ids a crash left unconfirmed — catch_up replays buffer in the
+    # capture queue meanwhile (review 3-1).
+    capture.hold_until_boot()
     await gateway.connect()  # never raises — unauthorized just means 503s
     worker_task = asyncio.create_task(run_worker())
+    capture_task = asyncio.create_task(capture.run_capture())
     yield
     worker_task.cancel()
+    capture_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await capture_task
     await gateway.disconnect()
     await engine.dispose()
 

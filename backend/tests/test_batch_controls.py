@@ -503,7 +503,7 @@ async def test_snapshot_passes_paused_and_stopping_through(
     assert snap["batch_id"] == batch_id
     assert snap["gate_value"] == gate["value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 2, 2)
-    assert snap["cc_new"] == 0
+    assert snap["cc_new"] == 0  # real since 3.1 — this test captures nothing
 
     await _claim_first_line(batch_id)
     assert (await http.post(f"/api/batches/{batch_id}/resume")).status_code == 204

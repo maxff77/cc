@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from app.core import send_worker
+from app.core import capture, send_worker
 from app.core.scheduler import scheduler
 from app.core.telegram import gateway
 from app.db.base import async_session_factory
@@ -161,6 +161,19 @@ def reset_scheduler() -> Iterator[None]:
     scheduler.reset()
     yield
     scheduler.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_capture() -> Iterator[None]:
+    """Wipe the capture pipeline's module state around every test.
+
+    ``_queue``/``_unmatched_total`` are process memory by design (Story 3.1)
+    — without this, an unconsumed reply or a bumped unmatched counter would
+    leak across modules (the same trap as the 2.4 governor).
+    """
+    capture.reset()
+    yield
+    capture.reset()
 
 
 @pytest.fixture(autouse=True)

@@ -3,8 +3,16 @@
 DELIBERATELY UNSCOPED — like the worker section of repos/batches.py, this is
 NOT the gates/users global exception nor a handler-facing module: every row is
 written by ``core.send_worker`` (which runs outside any request and serves all
-tenants) and read by Story 3.1's capture/attribution. ``tenant_id``/``batch_id``
-are copied from the line so attribution never needs a join back.
+tenants) and read by Story 3.1's capture/attribution (``get_by_message_id``).
+``tenant_id``/``batch_id`` are copied from the line so attribution never needs
+a join back.
+
+ASSUMES one Telegram account for the lifetime of the data: ``message_id`` is
+the ACCOUNT-GLOBAL sequence — re-authenticating ``anon.session`` as another
+account restarts it, and a stale row whose id collides with a new reply's
+``reply_to_msg_id`` would mis-attribute it across tenants. The re-auth
+runbook must wipe this state first (``scripts/telegram_auth.py`` prints the
+mandatory step).
 
 Pure ORM, flush not commit — callers own the transaction.
 """
@@ -53,6 +61,21 @@ async def set_message_id(
         .where(SendLog.line_id == line_id)
         .values(message_id=message_id)
     )
+
+
+async def get_by_message_id(
+    session: AsyncSession, message_id: int
+) -> SendLog | None:
+    """The hot attribution lookup of Story 3.1: ``reply_to_msg_id`` → row.
+
+    Runs over ``ix_send_log_message_id``. The returned row carries
+    ``tenant_id``/``batch_id``/``line_id`` denormalized — attribution resolves
+    the exact tenant, batch and line with no join.
+    """
+    stmt = (
+        select(SendLog).where(SendLog.message_id == message_id).limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
 
 
 async def used_message_ids(
