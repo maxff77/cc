@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Alert,
   Button,
+  Description,
   Form,
   TextField,
   Label,
@@ -12,6 +13,7 @@ import {
 } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
+import { SectionCard } from "@/components/ui/section-card";
 
 interface ChangePasswordResponse {
   home_path: string;
@@ -85,61 +87,70 @@ export default function ChangePasswordPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
-        <h1 className="mb-6 text-center text-2xl font-semibold">
-          Elige una contraseña nueva para continuar
+      <div className="flex w-full max-w-sm flex-col gap-5">
+        <span className="self-center font-mono text-2xl font-extrabold tracking-[-0.03em]">
+          CC
+        </span>
+
+        <h1 className="text-center text-lg font-bold tracking-[-0.01em]">
+          Contraseña nueva
         </h1>
 
-        {banner && (
-          <Alert className="mb-4" status="danger">
-            {banner}
-          </Alert>
-        )}
+        <p className="text-center text-sm text-muted">
+          Elige una contraseña nueva para continuar.
+        </p>
 
-        <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
-          <TextField
-            isRequired
-            className="flex flex-col gap-1"
-            isInvalid={currentError !== null}
-            name="current_password"
-            type="password"
-            value={currentPassword}
-            onChange={(v) => {
-              setCurrentPassword(v);
-              if (currentError) setCurrentError(null);
-            }}
-          >
-            <Label>Contraseña temporal</Label>
-            <Input placeholder="••••••••" />
-            {currentError && <FieldError>{currentError}</FieldError>}
-          </TextField>
+        {banner && <Alert status="danger">{banner}</Alert>}
 
-          <TextField
-            isRequired
-            className="flex flex-col gap-1"
-            isInvalid={fieldError !== null}
-            name="new_password"
-            type="password"
-            value={newPassword}
-            onChange={(v) => {
-              setNewPassword(v);
-              if (fieldError) setFieldError(null);
-            }}
-          >
-            <Label>Contraseña nueva</Label>
-            <Input placeholder="••••••••" />
-            {fieldError && <FieldError>{fieldError}</FieldError>}
-          </TextField>
+        <SectionCard legend="CONTRASEÑA">
+          <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
+            <TextField
+              isRequired
+              className="flex flex-col gap-1"
+              isInvalid={currentError !== null}
+              name="current_password"
+              type="password"
+              value={currentPassword}
+              onChange={(v) => {
+                setCurrentPassword(v);
+                if (currentError) setCurrentError(null);
+              }}
+            >
+              <Label>Contraseña temporal</Label>
+              <Input placeholder="••••••••" />
+              {currentError && <FieldError>{currentError}</FieldError>}
+            </TextField>
 
-          <Button
-            className="mt-2"
-            isDisabled={submitting}
-            type="submit"
-            variant="primary"
-          >
-            {submitting ? "Guardando…" : "Guardar"}
-          </Button>
-        </Form>
+            <TextField
+              isRequired
+              className="flex flex-col gap-1"
+              isInvalid={fieldError !== null}
+              name="new_password"
+              type="password"
+              value={newPassword}
+              onChange={(v) => {
+                setNewPassword(v);
+                if (fieldError) setFieldError(null);
+              }}
+            >
+              <Label>Contraseña nueva</Label>
+              <Input placeholder="••••••••" />
+              {/* Always-visible rule (ui-polish-spec §3.2): never reveal the
+                8-char minimum only after failing. */}
+              <Description>Mínimo 8 caracteres.</Description>
+              {fieldError && <FieldError>{fieldError}</FieldError>}
+            </TextField>
+
+            <Button
+              className="mt-2"
+              isDisabled={submitting}
+              type="submit"
+              variant="primary"
+            >
+              {submitting ? "Guardando…" : "Guardar"}
+            </Button>
+          </Form>
+        </SectionCard>
       </div>
     </main>
   );

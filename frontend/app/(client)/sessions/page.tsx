@@ -10,19 +10,25 @@
 // here: the spine's row actions are Renombrar/Continuar/Eliminar only.
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   AlertDialog,
   Button,
+  FieldError,
   Input,
-  Spinner,
   TextField,
 } from "@heroui/react";
-import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
 import { clearSession } from "@/lib/ws";
+import { EmptyState } from "@/components/ui/empty-state";
+import { MonoChip } from "@/components/ui/mono-chip";
+import { PageHeader } from "@/components/ui/page-header";
+import { PanelSkeleton } from "@/components/ui/panel-skeleton";
+import { SectionCard } from "@/components/ui/section-card";
+import { StatePill } from "@/components/ui/state-pill";
 
 // Local response shapes mirror the backend session schemas (snake_case,
 // end-to-end) — same explicit-interface idiom as admin/gates (the 2-1
@@ -80,25 +86,6 @@ function fallbackName(iso: string): string {
   );
 }
 
-// Right badge (UX-DR11): "En curso" accent-tint / "Cerrada" muted. Derives
-// from `is_active` (recorded 3.1 decision) — at most ONE "En curso" per
-// tenant (partial unique index); the active session stays "En curso" between
-// batches (capture stays armed — legacy parity).
-function SessionBadge({ isActive }: { isActive: boolean }) {
-  return (
-    <span
-      className={clsx(
-        "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]",
-        isActive
-          ? "bg-accent/22 text-accent"
-          : "bg-surface-tertiary text-muted",
-      )}
-    >
-      {isActive ? "En curso" : "Cerrada"}
-    </span>
-  );
-}
-
 interface GateGroup {
   gateValue: string;
   gateName: string;
@@ -130,60 +117,58 @@ function groupByGate(items: SessionOut[]): GateGroup[] {
 }
 
 export default function SessionsPage() {
+  const router = useRouter();
   const sessions = useQuery({
     queryKey: SESSIONS_KEY,
     queryFn: () => api.get<SessionListResponse>("/api/sessions"),
   });
 
-  if (sessions.isLoading) {
-    return (
-      <div className="flex justify-center py-10">
-        <Spinner />
-      </div>
-    );
-  }
+  let content: React.ReactNode;
 
-  if (sessions.isError || !sessions.data) {
-    return (
+  if (sessions.isLoading) {
+    content = <PanelSkeleton rows={6} />;
+  } else if (sessions.isError || !sessions.data) {
+    content = (
       <Alert status="danger">
         No pudimos cargar el historial. Recarga la página.
       </Alert>
     );
-  }
-
-  // Empty state (AC 7) — copy verbatim, never a dead-end (UX-DR16).
-  if (sessions.data.items.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-        <p className="text-muted">
-          Todavía no tienes sesiones. Tu primer lote crea una.
-        </p>
-        <Link className="text-accent underline" href="/">
-          Ir a Envío
-        </Link>
-      </div>
+  } else if (sessions.data.items.length === 0) {
+    // Empty state (AC 7) — copy verbatim, never a dead-end (UX-DR16).
+    content = (
+      <EmptyState
+        action={
+          <Button variant="primary" onPress={() => router.push("/")}>
+            Ir a Envío
+          </Button>
+        }
+        eyebrow="Historial"
+        message="Todavía no tienes sesiones. Tu primer lote crea una."
+      />
     );
+  } else {
+    // Group per gate → SectionCard: the engraved legend IS the group header,
+    // jerarquically above its rows (ui-polish-spec §3.7).
+    content = groupByGate(sessions.data.items).map((group) => (
+      <SectionCard
+        key={group.gateValue}
+        legend={group.gateName}
+        legendRight={<MonoChip>{group.gateValue}</MonoChip>}
+        padding="none"
+      >
+        <ul className="flex flex-col divide-y divide-separator">
+          {group.sessions.map((session) => (
+            <SessionRow key={session.id} session={session} />
+          ))}
+        </ul>
+      </SectionCard>
+    ));
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {groupByGate(sessions.data.items).map((group) => (
-        <section key={group.gateValue} className="flex flex-col gap-2">
-          <header className="flex items-baseline gap-2">
-            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-              {group.gateName}
-            </span>
-            <span className="font-mono text-[11px] text-muted">
-              {group.gateValue}
-            </span>
-          </header>
-          <ul className="flex flex-col divide-y divide-separator rounded-md border border-border bg-surface">
-            {group.sessions.map((session) => (
-              <SessionRow key={session.id} session={session} />
-            ))}
-          </ul>
-        </section>
-      ))}
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+      <PageHeader title="Historial" />
+      {content}
     </div>
   );
 }
@@ -310,103 +295,110 @@ function SessionRow({ session }: { session: SessionOut }) {
   }
 
   return (
-    <li className="flex flex-col gap-2 px-3 py-2">
-      <div className="flex items-center gap-3">
-        {editing ? (
-          <TextField
-            className="min-w-0 flex-1"
-            name="session-name"
-            value={name}
-            onChange={(v) => {
-              setName(v);
-              if (renameError) setRenameError(null);
-            }}
-          >
-            <Input aria-label="Nombre de la sesión" maxLength={NAME_MAX} />
-          </TextField>
-        ) : (
-          <Link className="min-w-0 flex-1" href={`/sessions/${session.id}`}>
-            <span className="block truncate text-sm font-medium">
-              {session.name ?? fallbackName(session.created_at)}
-            </span>
+    // flex-wrap: under sm the actions wrap to their own line instead of
+    // crushing the title (ui-polish-spec §3.7).
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+      {editing ? (
+        <TextField
+          className="min-w-0 flex-1"
+          isInvalid={renameError !== null}
+          name="session-name"
+          value={name}
+          onChange={(v) => {
+            setName(v);
+            if (renameError) setRenameError(null);
+          }}
+        >
+          <Input aria-label="Nombre de la sesión" maxLength={NAME_MAX} />
+          {renameError && <FieldError>{renameError}</FieldError>}
+        </TextField>
+      ) : (
+        <Link className="min-w-0 flex-1" href={`/sessions/${session.id}`}>
+          <span className="block truncate text-sm font-medium">
+            {session.name ?? fallbackName(session.created_at)}
+          </span>
+          {/* The gate is the group legend and the internal id is debug data —
+              the sub-line is the creation date, and only when a custom name
+              isn't already showing it. */}
+          {session.name !== null && (
             <span className="block truncate font-mono text-[11px] text-muted">
-              {session.gate_value} · {session.id}
+              {fallbackName(session.created_at)}
             </span>
-          </Link>
-        )}
-
-        <SessionBadge isActive={session.is_active} />
-
-        <div className="flex shrink-0 gap-2">
-          {editing ? (
-            <>
-              <Button
-                isDisabled={rename.isPending}
-                size="sm"
-                variant="primary"
-                onPress={saveRename}
-              >
-                {rename.isPending ? "Guardando…" : "Guardar"}
-              </Button>
-              <Button
-                isDisabled={rename.isPending}
-                size="sm"
-                variant="secondary"
-                onPress={() => {
-                  setEditing(false);
-                  setRenameError(null);
-                }}
-              >
-                Cancelar
-              </Button>
-            </>
-          ) : (
-            <>
-              {/* Only on "Cerrada" rows (AC 1: "a closed session") — the
-                  active session already captures; no no-op button. NOT
-                  destructive ⇒ secondary, no confirm (UX-DR triad). */}
-              {!session.is_active && (
-                <Button
-                  isDisabled={continuar.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => continuar.mutate()}
-                >
-                  {continuar.isPending ? "Continuando…" : "Continuar"}
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="secondary"
-                onPress={() => {
-                  setName(session.name ?? "");
-                  setRenameError(null);
-                  setEditing(true);
-                }}
-              >
-                Renombrar
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                onPress={() => {
-                  setDeleteError(null);
-                  setConfirmOpen(true);
-                }}
-              >
-                Eliminar
-              </Button>
-            </>
           )}
-        </div>
-      </div>
-
-      {renameError && (
-        <span className="text-sm text-danger">{renameError}</span>
+        </Link>
       )}
 
+      <StatePill tone={session.is_active ? "accent" : "muted"}>
+        {session.is_active ? "En curso" : "Cerrada"}
+      </StatePill>
+
+      <div className="flex shrink-0 gap-2">
+        {editing ? (
+          <>
+            <Button
+              isDisabled={rename.isPending}
+              size="sm"
+              variant="primary"
+              onPress={saveRename}
+            >
+              {rename.isPending ? "Guardando…" : "Guardar"}
+            </Button>
+            <Button
+              isDisabled={rename.isPending}
+              size="sm"
+              variant="secondary"
+              onPress={() => {
+                setEditing(false);
+                setRenameError(null);
+              }}
+            >
+              Cancelar
+            </Button>
+          </>
+        ) : (
+          <>
+            {/* Only on "Cerrada" rows (AC 1: "a closed session") — the
+                  active session already captures; no no-op button. NOT
+                  destructive ⇒ secondary, no confirm (UX-DR triad). */}
+            {!session.is_active && (
+              <Button
+                isDisabled={continuar.isPending}
+                size="sm"
+                variant="secondary"
+                onPress={() => continuar.mutate()}
+              >
+                {continuar.isPending ? "Continuando…" : "Continuar"}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onPress={() => {
+                setName(session.name ?? "");
+                setRenameError(null);
+                setEditing(true);
+              }}
+            >
+              Renombrar
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onPress={() => {
+                setDeleteError(null);
+                setConfirmOpen(true);
+              }}
+            >
+              Eliminar
+            </Button>
+          </>
+        )}
+      </div>
+
       {continueError && (
-        <span className="text-sm text-danger">{continueError}</span>
+        <Alert className="w-full" status="danger">
+          {continueError}
+        </Alert>
       )}
 
       {/* Confirm modal (AC 5) — a REAL modal per the AC (unlike the inline
@@ -428,7 +420,7 @@ function SessionRow({ session }: { session: SessionOut }) {
               </AlertDialog.Header>
               {deleteError && (
                 <AlertDialog.Body>
-                  <span className="text-sm text-danger">{deleteError}</span>
+                  <Alert status="danger">{deleteError}</Alert>
                 </AlertDialog.Body>
               )}
               <AlertDialog.Footer>

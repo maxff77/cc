@@ -20,6 +20,9 @@ import clsx from "clsx";
 
 import { ApiError, downloadFile } from "@/lib/api";
 import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
+import { CountBadge } from "@/components/ui/count-badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SectionCard } from "@/components/ui/section-card";
 
 // Empty states — copy VERBATIM (EXPERIENCE.md): no fake rows, badges at 0.
 const EMPTY_COMPLETA = "Aún no hay respuestas.";
@@ -65,21 +68,6 @@ function filtradaRows(cc: CcRow[], total: number): RowData[] {
   }));
 }
 
-// Live mono count badge — Filtrada's travels in success green
-// (DESIGN.md `dual-view-tabs.count-badge-filtrada`). Visible at 0 too (AC 5).
-function CountBadge({ value, tone }: { value: number; tone?: "success" }) {
-  return (
-    <span
-      className={clsx(
-        "rounded-md bg-surface-secondary px-1.5 font-mono text-[11px] leading-5 tabular-nums",
-        tone === "success" && "text-success",
-      )}
-    >
-      {value}
-    </span>
-  );
-}
-
 // Scrollable row list with auto-scroll pinning (AC 4): follow new rows ONLY
 // when the pane was already at the bottom; scrolled away, the view stays
 // pinned where the operator left it (legacy rule, literal).
@@ -116,7 +104,7 @@ function PanelList({
       }}
     >
       {rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-muted">{emptyText}</p>
+        <EmptyState message={emptyText} />
       ) : (
         rows.map((row) => (
           <DataRow
@@ -143,7 +131,7 @@ function ExportLink({ path }: { path: string }) {
   return (
     <>
       <button
-        className="font-mono text-[11px] text-accent disabled:opacity-50"
+        className="font-mono text-[11px] text-accent hover:underline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
         disabled={pending}
         type="button"
         onClick={async () => {
@@ -169,9 +157,11 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
-// THE panel — outlined surface (DESIGN: 1px border, no shadows), optional
-// label-caps header (the mobile tabs carry the label/badge instead) and
-// optional `↓ .txt` export footer (Story 3.5; no path ⇒ no footer).
+// THE panel — SectionCard tier-2 data panel (ui-polish-spec §3.9): the
+// engraved legend IS the header (COMPLETA/FILTRADA over the border, count as
+// a LED in the right slot); the mobile tabs carry the label/badge instead
+// (no `header` ⇒ no legend). Optional `↓ .txt` export footer (Story 3.5; no
+// path ⇒ no footer).
 function ResponsePanel({
   header,
   count,
@@ -192,27 +182,25 @@ function ResponsePanel({
   className?: string;
 }) {
   return (
-    <section
-      className={clsx(
-        "flex flex-col rounded-md border border-border bg-surface",
-        className,
-      )}
+    <SectionCard
+      className={clsx("flex flex-col", className)}
+      legend={header}
+      legendRight={
+        header ? <CountBadge tone={countTone} value={count} /> : undefined
+      }
+      padding="none"
     >
-      {header && (
-        <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-            {header}
-          </span>
-          <CountBadge tone={countTone} value={count} />
-        </header>
-      )}
-      <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
+      <PanelList
+        className={clsx(header && "pt-2", listClassName)}
+        emptyText={emptyText}
+        rows={rows}
+      />
       {exportPath && (
         <footer className="flex items-center justify-between border-t border-border px-3 py-2">
           <ExportLink path={exportPath} />
         </footer>
       )}
-    </section>
+    </SectionCard>
   );
 }
 

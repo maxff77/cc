@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Alert, Button } from "@heroui/react";
 
 export default function Error({
   error,
@@ -16,16 +17,20 @@ export default function Error({
   }, [error]);
 
   return (
-    <div>
-      <h2>Something went wrong!</h2>
-      <button
-        onClick={
-          // Attempt to recover by trying to re-render the segment
-          () => reset()
-        }
-      >
-        Try again
-      </button>
-    </div>
+    <main className="flex min-h-screen items-center justify-center px-6 py-12">
+      <div className="flex w-full max-w-sm flex-col gap-5">
+        <Alert status="danger">
+          <Alert.Content>
+            <Alert.Title>Algo salió mal.</Alert.Title>
+            <Alert.Description>
+              Recarga la página o intenta de nuevo.
+            </Alert.Description>
+          </Alert.Content>
+        </Alert>
+        <Button variant="primary" onPress={() => reset()}>
+          Reintentar
+        </Button>
+      </div>
+    </main>
   );
 }

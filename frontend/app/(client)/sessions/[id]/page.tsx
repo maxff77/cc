@@ -12,8 +12,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Spinner } from "@heroui/react";
-import clsx from "clsx";
+import { Alert, Button } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { useLiveBatch, type CcRow, type ResponseRow } from "@/lib/ws";
@@ -22,6 +21,11 @@ import {
   FiltradaPanel,
   ResponseTabs,
 } from "@/components/sessions/response-views";
+import { EmptyState } from "@/components/ui/empty-state";
+import { MonoChip } from "@/components/ui/mono-chip";
+import { PageHeader } from "@/components/ui/page-header";
+import { PanelSkeleton } from "@/components/ui/panel-skeleton";
+import { StatePill } from "@/components/ui/state-pill";
 
 // Local mirrors of the backend session schemas (snake_case end-to-end) —
 // the row shapes are the snapshot's, so the 3.2 mappers apply verbatim.
@@ -77,30 +81,19 @@ function fallbackName(iso: string): string {
   );
 }
 
-function SessionBadge({ isActive }: { isActive: boolean }) {
-  return (
-    <span
-      className={clsx(
-        "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]",
-        isActive
-          ? "bg-accent/22 text-accent"
-          : "bg-surface-tertiary text-muted",
-      )}
-    >
-      {isActive ? "En curso" : "Cerrada"}
-    </span>
-  );
-}
-
 // Not-found / bad-id state — never a dead-end (UX-DR16).
 function NotFound() {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-      <p className="text-muted">Esa sesión no existe.</p>
-      <Link className="text-accent underline" href="/sessions">
-        Volver a Historial
-      </Link>
-    </div>
+    <EmptyState
+      action={
+        <Link className="text-accent underline" href="/sessions">
+          Volver a Historial
+        </Link>
+      }
+      className="py-24"
+      eyebrow="Historial"
+      message="Esa sesión no existe."
+    />
   );
 }
 
@@ -183,8 +176,9 @@ export default function SessionDetailPage() {
 
   if (detail.isLoading) {
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <PanelSkeleton rows={8} />
+        <PanelSkeleton className="hidden lg:flex" rows={8} />
       </div>
     );
   }
@@ -235,43 +229,42 @@ export default function SessionDetailPage() {
   }));
 
   return (
-    <div className="flex flex-col gap-4">
-      <Link
-        className="self-start text-sm text-muted underline"
-        href="/sessions"
-      >
-        ← Historial
-      </Link>
-
-      <header className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold">
-            {data.name ?? fallbackName(data.created_at)}
-          </h1>
-          <p className="truncate font-mono text-[11px] text-muted">
-            {data.gate_value} · {data.id}
-          </p>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1">
+        <PageHeader
+          actions={
+            <>
+              {/* Only on "Cerrada" (AC 1) — not destructive: secondary, no
+                  confirm. */}
+              {!data.is_active && (
+                <Button
+                  isDisabled={continuar.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => continuar.mutate()}
+                >
+                  {continuar.isPending ? "Continuando…" : "Continuar"}
+                </Button>
+              )}
+              <StatePill tone={data.is_active ? "accent" : "muted"}>
+                {data.is_active ? "En curso" : "Cerrada"}
+              </StatePill>
+            </>
+          }
+          back={{ href: "/sessions", label: "Historial" }}
+          title={data.name ?? fallbackName(data.created_at)}
+        />
+        {/* Gate chip + creation date; the internal id is debug data and no
+            longer shown (ui-polish-spec §3.8). */}
+        <div className="flex items-center gap-2">
+          <MonoChip>{data.gate_value}</MonoChip>
+          <span className="font-mono text-[11px] text-muted">
+            {fallbackName(data.created_at)}
+          </span>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {/* Only on "Cerrada" (AC 1) — not destructive: secondary, no
-              confirm. */}
-          {!data.is_active && (
-            <Button
-              isDisabled={continuar.isPending}
-              size="sm"
-              variant="secondary"
-              onPress={() => continuar.mutate()}
-            >
-              {continuar.isPending ? "Continuando…" : "Continuar"}
-            </Button>
-          )}
-          <SessionBadge isActive={data.is_active} />
-        </div>
-      </header>
+      </div>
 
-      {continueError && (
-        <span className="text-sm text-danger">{continueError}</span>
-      )}
+      {continueError && <Alert status="danger">{continueError}</Alert>}
 
       {/* Desktop: the same two side-by-side panels as Envío; internal
           scroll — the detail competes with no cockpit. */}

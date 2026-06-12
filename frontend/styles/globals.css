@@ -98,5 +98,5 @@
 
 @theme {
 	--font-sans: var(--font-public-sans), sans-serif;
-	--font-mono: var(--font-mono), monospace;
+	--font-mono: var(--font-fira-code), monospace;
 }
