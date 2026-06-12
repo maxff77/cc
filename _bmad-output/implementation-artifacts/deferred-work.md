@@ -14,3 +14,4 @@
 ## Deferred from: code review of 2-1-catalogo-global-de-prefijos (2026-06-11)
 
 - Hand-written `GateOut`/`GateListResponse` interfaces in `frontend/app/admin/gates/page.tsx` instead of consuming generated `types/api.ts` — mirrors the users-page idiom from story 1.3, contradicts architecture.md "never hand-write API types"; migrate all admin pages to generated types in one epic-wide pass.
+- Delete-confirm copy on /admin/gates: spec self-conflicts (Task 6 "¿Eliminar este gate? ({value})" — implemented — vs EXPERIENCE.md "¿Eliminar este gate? No se puede deshacer."); owner will set the final wording himself later (`frontend/app/admin/gates/page.tsx`).

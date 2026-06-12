@@ -4,7 +4,7 @@ baseline_commit: 1349da11d2bdfdc11a2265f59b441812543fdaa3
 
 # Story 2.1: Catálogo global de gates (prefijos)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -78,7 +78,7 @@ So that clients only ever pick from approved gates.
 
 ### Review Findings
 
-- [ ] [Review][Decision] Delete-confirm copy conflicts within the spec — Task 6 mandates "¿Eliminar este gate? ({value})" (what's implemented) but the UX microcopy block marks "¿Eliminar este gate? No se puede deshacer." as exact copy (EXPERIENCE.md). "No se puede deshacer" is also debatable with soft-delete. Owner must pick the final copy.
+- [x] [Review][Decision] Delete-confirm copy conflicts within the spec — Task 6 mandates "¿Eliminar este gate? ({value})" (what's implemented) but the UX microcopy block marks "¿Eliminar este gate? No se puede deshacer." as exact copy (EXPERIENCE.md). — deferred 2026-06-11: owner keeps the current copy and will set the final wording himself later.
 - [x] [Review][Patch] Concurrent duplicate POST hits `uq_gates_value_active` → unhandled `IntegrityError` → 500 instead of 409 `gate_exists` (check-then-insert TOCTOU; `services/users.py` catches `IntegrityError`, this path doesn't) [backend/app/api/admin.py:399]
 - [x] [Review][Patch] Same TOCTOU on PATCH: duplicate check reads without lock; concurrent PATCH/POST toward same value → `IntegrityError` → 500 [backend/app/api/admin.py:427]
 - [x] [Review][Patch] 422 responses (`HTTPValidationError`, no `{code,message}`) yield empty `ApiError.message` → falsy → no Alert/FieldError rendered; user gets zero feedback. Add fallback message + basic client-side validation (maxLength, no inner spaces) [frontend/app/admin/gates/page.tsx:151, frontend/lib/api.ts:39]

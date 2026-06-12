@@ -64,7 +64,7 @@ development_status:
 
   # Epic 2: Envío en lote controlado
   epic-2: in-progress
-  2-1-catalogo-global-de-prefijos: review
+  2-1-catalogo-global-de-prefijos: done
   2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: backlog
   2-3-pausar-reanudar-y-detener-con-eta-honesto: backlog
   2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: backlog
