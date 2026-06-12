@@ -206,3 +206,33 @@ def telegram_unauthorized() -> AppError:
         code="telegram_unauthorized",
         message="Telegram no está autorizado todavía. Contacta al administrador.",
     )
+
+
+# --- Codes this story (2.3) defines --------------------------------------
+
+
+def batch_not_found() -> AppError:
+    # Unknown id, another tenant's id, id > int32 — existence is never leaked.
+    return AppError(
+        status_code=404,
+        code="batch_not_found",
+        message="Ese lote no existe.",
+    )
+
+
+def batch_not_live() -> AppError:
+    # Control action on a terminal batch ('completed' / 'stopped').
+    return AppError(
+        status_code=409,
+        code="batch_not_live",
+        message="Ese lote ya terminó.",
+    )
+
+
+def batch_stopping() -> AppError:
+    # pause/resume (or append) while the worker finishes a stop in flight.
+    return AppError(
+        status_code=409,
+        code="batch_stopping",
+        message="El lote se está deteniendo. Espera un momento.",
+    )

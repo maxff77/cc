@@ -1,15 +1,17 @@
 "use client";
 
-// Envío surface (Story 2.2). Live state is driven ONLY by the WS store
-// (UX-DR12 — no optimistic state beyond the server-confirmed POST seed).
-// Desktop ≥lg: 3-col grid 300px 1fr 1fr (UX-DR19) — the two right columns
-// stay EMPTY until Story 3.2's data panels; don't fake them.
-// Pause/Detener controls, state pill and the FloodWait notice are Story 2.3.
+// Envío surface (Story 2.2; controls + FloodWait notice since 2.3). Live
+// state is driven ONLY by the WS store (UX-DR12 — no optimistic state beyond
+// the server-confirmed POST seed). Desktop ≥lg: 3-col grid 300px 1fr 1fr
+// (UX-DR19) — the two right columns stay EMPTY until Story 3.2's data panels;
+// don't fake them.
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Spinner } from "@heroui/react";
 
 import { api } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
+import { BatchControls } from "@/components/batch/batch-controls";
+import { FloodNotice } from "@/components/batch/flood-notice";
 import { ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
 
@@ -25,7 +27,8 @@ export default function EnvioPage() {
     queryFn: () => api.get<GateListResponse>("/api/gates"),
   });
 
-  const isLive = live.state === "sending";
+  // A paused/stopping lote keeps its ring on screen — only idle hides it.
+  const isLive = live.state !== "idle";
 
   return (
     <div className="lg:grid lg:grid-cols-[300px_1fr_1fr] lg:gap-6">
@@ -39,7 +42,9 @@ export default function EnvioPage() {
           </p>
         )}
 
-        {/* Controls slot — EMPTY until Story 2.3 (no placeholder buttons). */}
+        {/* Mobile order per DESIGN.md: ring → controls → (data panels 3.2). */}
+        <BatchControls live={live} />
+        <FloodNotice />
 
         {gates.isLoading && (
           <div className="flex justify-center py-6">

@@ -63,12 +63,19 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             await websocket.close(code=WS_UNAUTHORIZED)
             return
         tenant_id = user.tenant_id  # bound for the socket's lifetime
-        snapshot = await batches_service.snapshot(session, tenant_id)
 
-    await websocket.send_json({"event": "snapshot", "data": snapshot})
-
+    # Register BEFORE building/sending the snapshot (2.2 review fix): an
+    # event emitted in the old snapshot→register gap was dropped — fatal when
+    # it was the terminal `batch.state idle` (the tab stayed "Enviando"
+    # forever). Safe order: WS frames are FIFO per socket and the snapshot,
+    # built AFTER registering, is always at least as fresh as any event that
+    # slips in first; the frontend reducer REPLACES the store on every
+    # snapshot, so the interleaving is harmless.
     broadcaster.register(tenant_id, websocket)
     try:
+        async with async_session_factory() as session:
+            snapshot = await batches_service.snapshot(session, tenant_id)
+        await websocket.send_json({"event": "snapshot", "data": snapshot})
         while True:
             # Keep-alive only. Server→client contract: any client payload is
             # discarded, never acted upon (commands go through REST).

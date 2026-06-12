@@ -10,15 +10,23 @@ Pure ORM, flush not commit — callers own the transaction.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine
 
-# Lifecycle states this story uses. 2.3 adds paused/stopping/stopped, 2.5
-# adds cancelled — plain strings, no DB enum (see the model docstring).
+# Lifecycle states (2.2 + 2.3). 2.5 adds cancelled — plain strings, no DB
+# enum (see the model docstring).
 STATE_SENDING = "sending"
 STATE_COMPLETED = "completed"
+STATE_PAUSED = "paused"
+STATE_STOPPING = "stopping"
+STATE_STOPPED = "stopped"
+
+# "Live" = the tenant's one in-flight batch (Story 2.3 state machine). This
+# tuple IS the predicate of the partial unique index
+# ``uq_batches_one_live_per_tenant`` and the append notion of POST /api/batches.
+LIVE_STATES = (STATE_SENDING, STATE_PAUSED, STATE_STOPPING)
 
 LINE_QUEUED = "queued"
 LINE_SENDING = "sending"
@@ -31,10 +39,12 @@ _PENDING_STATES = (LINE_QUEUED, LINE_SENDING)
 async def get_live_batch(
     session: AsyncSession, tenant_id: int, *, for_update: bool = False
 ) -> Batch | None:
-    """Return the tenant's single live batch (state='sending'), or ``None``.
+    """Return the tenant's single live batch (state in LIVE_STATES), or ``None``.
 
-    One live batch per tenant is the invariant this story establishes:
-    ``POST /api/batches`` appends to it instead of creating a second one.
+    One live batch per tenant is the invariant (now DB-enforced by the partial
+    unique index ``uq_batches_one_live_per_tenant``): ``POST /api/batches``
+    appends to it instead of creating a second one. ``order_by(Batch.id)``
+    keeps the pick deterministic if the invariant were ever broken (2.2 review).
 
     ``for_update=True`` locks the row until commit. The APPEND path must pass
     it so it serializes with the worker's ``complete_if_drained`` (which locks
@@ -43,12 +53,60 @@ async def get_live_batch(
     ``next_queued_line`` joins on state='sending', so those lines would never
     send. Read-only callers (snapshot) keep the default.
     """
-    stmt = select(Batch).where(
-        Batch.tenant_id == tenant_id, Batch.state == STATE_SENDING
+    stmt = (
+        select(Batch)
+        .where(Batch.tenant_id == tenant_id, Batch.state.in_(LIVE_STATES))
+        .order_by(Batch.id)
     )
     if for_update:
         stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalars().first()
+
+
+async def get_batch(
+    session: AsyncSession, tenant_id: int, batch_id: int, *, for_update: bool = False
+) -> Batch | None:
+    """TENANT-SCOPED batch lookup for the pause/resume/stop controls.
+
+    Another tenant's id returns ``None`` (the handler 404s — existence is
+    never leaked; AC 1 "only that client's batch is affected").
+    """
+    stmt = select(Batch).where(Batch.id == batch_id, Batch.tenant_id == tenant_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def get_batch_state(session: AsyncSession, batch_id: int) -> str | None:
+    """Short unlocked state read (the worker's per-iteration re-check)."""
+    stmt = select(Batch.state).where(Batch.id == batch_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def delete_queued_lines(session: AsyncSession, batch_id: int) -> int:
+    """Stop "clears the remaining queue": drop every still-'queued' line.
+
+    Runs BEFORE ``has_sending_line`` inside the stop transaction (order
+    matters): a DELETE racing the worker's claim blocks on the disputed row
+    and skips it if it landed in 'sending' — the in-flight check that follows
+    then sees it.
+    """
+    stmt = delete(BatchLine).where(
+        BatchLine.batch_id == batch_id, BatchLine.state == LINE_QUEUED
+    )
+    result = await session.execute(stmt)
+    rowcount: int = getattr(result, "rowcount", 0) or 0
+    return rowcount
+
+
+async def has_sending_line(session: AsyncSession, batch_id: int) -> bool:
+    """Is a line of this batch currently claimed by the worker ('sending')?"""
+    stmt = (
+        select(BatchLine.id)
+        .where(BatchLine.batch_id == batch_id, BatchLine.state == LINE_SENDING)
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
 
 
 async def create_batch(
@@ -161,6 +219,17 @@ async def mark_sent(session: AsyncSession, line: BatchLine) -> None:
     await session.flush()
 
 
+async def mark_queued(session: AsyncSession, line: BatchLine) -> None:
+    """Release a claimed line back to 'queued' (the pause release, 2.3)."""
+    line.state = LINE_QUEUED
+    await session.flush()
+
+
+async def delete_line(session: AsyncSession, line_id: int) -> None:
+    """Discard an in-flight line abandoned by a stop (it never went out)."""
+    await session.execute(delete(BatchLine).where(BatchLine.id == line_id))
+
+
 async def complete_if_drained(session: AsyncSession, batch: Batch) -> bool:
     """If no pending lines remain, mark the batch completed. Returns drained.
 
@@ -193,6 +262,34 @@ async def complete_if_drained(session: AsyncSession, batch: Batch) -> bool:
     batch.state = STATE_COMPLETED
     await session.flush()
     return True
+
+
+async def finalize_stuck_stopping(session: AsyncSession) -> int:
+    """Boot recovery (2.3 review): finalize stops a restart left orphaned.
+
+    Every 'stopping' → 'stopped' transition lives in the worker's in-process
+    paths (step / _release_line / _abort_line), which require it to be holding
+    the claimed line. After a restart nobody holds it: ``requeue_stuck_sending``
+    turns the line 'queued', but ``next_queued_line`` joins
+    ``Batch.state == 'sending'`` so a 'stopping' batch's lines are never
+    served — and 'stopping' is in ``LIVE_STATES``, so the tenant would be
+    409-blocked forever. Discard the still-pending lines (the stop handler
+    already cleared the queue; 'sent' lines are kept as history, exactly like
+    the in-process abort) and land the batch 'stopped'. Returns the number of
+    batches finalized. No events — clients reconcile via the connect snapshot.
+    """
+    stopping_ids = select(Batch.id).where(Batch.state == STATE_STOPPING)
+    await session.execute(
+        delete(BatchLine).where(
+            BatchLine.batch_id.in_(stopping_ids),
+            BatchLine.state.in_(_PENDING_STATES),
+        )
+    )
+    result = await session.execute(
+        update(Batch).where(Batch.state == STATE_STOPPING).values(state=STATE_STOPPED)
+    )
+    rowcount: int = getattr(result, "rowcount", 0) or 0
+    return rowcount
 
 
 async def requeue_stuck_sending(session: AsyncSession) -> int:

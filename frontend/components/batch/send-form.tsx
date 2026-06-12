@@ -63,7 +63,9 @@ export function SendForm({
   const [selectError, setSelectError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
-  const isLive = live.state === "sending";
+  // Any live state (sending/paused/stopping) locks the selector and shows
+  // the gate chip — appending to a PAUSED lote is allowed (Story 2.3).
+  const isLive = live.state !== "idle";
 
   // Client category source: NO extra endpoint — group the catalog items by
   // category_name (only categories with active gates matter to clients).
@@ -249,7 +251,13 @@ export function SendForm({
           {textError && <FieldError>{textError}</FieldError>}
         </TextField>
 
-        <Button isDisabled={mutation.isPending} type="submit" variant="primary">
+        {/* Appending while 'stopping' is rejected server-side (409
+            batch_stopping) — disable here too, defense in both layers. */}
+        <Button
+          isDisabled={mutation.isPending || live.state === "stopping"}
+          type="submit"
+          variant="primary"
+        >
           {mutation.isPending ? "Enviando…" : "Enviar"}
         </Button>
       </Form>

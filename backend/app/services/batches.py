@@ -37,6 +37,22 @@ def eta_seconds(queued: int) -> float:
     return queued * settings.send_interval_seconds
 
 
+def state_data(batch: Batch, state: str) -> dict:
+    """``batch.state`` event payload — full context, single source of truth.
+
+    ``state`` is the SURFACE state (``idle | sending | paused | stopping``):
+    DB terminals ``completed``/``stopped`` both travel as ``"idle"`` (2.2
+    pattern). Carrying the gate fields fixes the 2.2 review finding where a
+    second tab never learned the gate of a batch started elsewhere.
+    """
+    return {
+        "batch_id": batch.id,
+        "state": state,
+        "gate_name": batch.gate_name,
+        "gate_value": batch.gate_value,
+    }
+
+
 async def progress_data(session: AsyncSession, batch: Batch) -> dict:
     """``batch.progress`` event payload for a batch."""
     sent, queued = await batches_repo.counts(session, batch.id)
@@ -70,7 +86,10 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         }
     sent, queued = await batches_repo.counts(session, batch.id)
     return {
-        "state": "sending",
+        # Passthrough: get_live_batch only returns LIVE_STATES, so this is
+        # always one of sending|paused|stopping — a tab opened mid-pause must
+        # render "En pausa" from the snapshot alone (Story 2.3 AC 1/2).
+        "state": batch.state,
         "batch_id": batch.id,
         "gate_name": batch.gate_name,
         "gate_value": batch.gate_value,

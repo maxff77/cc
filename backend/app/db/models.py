@@ -182,12 +182,23 @@ class Batch(Base):
     renaming a gate never rewrites history. No FK to ``gates``. The category is
     deliberately NOT snapshotted (browsing aid, not send history).
 
-    ``state`` is a plain String, NOT a DB enum: this story uses
-    ``'sending' | 'completed'``; 2.3 adds ``paused``/``stopping``/``stopped``,
-    2.5 adds ``cancelled`` — no ALTER TYPE needed later.
+    ``state`` is a plain String, NOT a DB enum: ``'sending' | 'completed'``
+    (2.2) + ``'paused' | 'stopping' | 'stopped'`` (2.3); 2.5 adds
+    ``cancelled`` — no ALTER TYPE needed later.
     """
 
     __tablename__ = "batches"
+    __table_args__ = (
+        # DB enforcement of "one live batch per tenant" (Story 2.3, absorbing
+        # the 2.2 review finding). Predicate = LIVE_STATES in repos/batches.py;
+        # widen BOTH together if a live state is ever added.
+        Index(
+            "uq_batches_one_live_per_tenant",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("state IN ('sending', 'paused', 'stopping')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(

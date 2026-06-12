@@ -1,4 +1,5 @@
-// Singleton auto-reconnecting WebSocket client + live-batch store (Story 2.2).
+// Singleton auto-reconnecting WebSocket client + live-batch store (Story 2.2;
+// pause/resume/stop + FloodWait state since Story 2.3).
 //
 // WS event payloads are NOT in the generated OpenAPI types — this is the one
 // legitimate hand-typed contract, kept next to the reducer. Envelope:
@@ -10,8 +11,11 @@
 
 import { useSyncExternalStore } from "react";
 
+// Surface states (architecture state machine): DB terminals travel as "idle".
+export type BatchSurfaceState = "idle" | "sending" | "paused" | "stopping";
+
 export interface LiveBatchState {
-  state: "idle" | "sending";
+  state: BatchSurfaceState;
   batchId: number | null;
   gateName: string | null;
   gateValue: string | null;
@@ -20,12 +24,15 @@ export interface LiveBatchState {
   total: number;
   etaSeconds: number;
   ccNew: number;
+  // Epoch ms when the FloodWait window ends; null = no active notice. Set by
+  // `flood.wait`, cleared by any signal that sending flows again (AC 6).
+  floodUntil: number | null;
 }
 
 // --- Hand-typed WS payload shapes (mirror backend services/batches.py) ------
 
 interface SnapshotData {
-  state: "idle" | "sending";
+  state: BatchSurfaceState;
   batch_id: number | null;
   gate_name: string | null;
   gate_value: string | null;
@@ -44,8 +51,17 @@ interface ProgressData {
   eta_seconds: number;
 }
 
+// Full-context batch.state payload (Story 2.3, Task 5 — fixes the 2.2 finding
+// where a second tab never learned the gate of a batch started elsewhere).
 interface BatchStateData {
-  state: "idle" | "sending";
+  state: BatchSurfaceState;
+  batch_id: number | null;
+  gate_name: string | null;
+  gate_value: string | null;
+}
+
+interface FloodWaitData {
+  seconds: number;
 }
 
 const IDLE: LiveBatchState = {
@@ -58,6 +74,7 @@ const IDLE: LiveBatchState = {
   total: 0,
   etaSeconds: 0,
   ccNew: 0,
+  floodUntil: null,
 };
 
 let store: LiveBatchState = IDLE;
@@ -73,7 +90,7 @@ function setStore(next: LiveBatchState) {
 }
 
 // One reducer-style handler per event name (architecture state pattern).
-// Unknown events are ignored without crashing (2.3+ adds more events).
+// Unknown events are ignored without crashing (2.4+ adds more events).
 function reduce(event: string, data: unknown) {
   switch (event) {
     case "snapshot": {
@@ -89,20 +106,26 @@ function reduce(event: string, data: unknown) {
         total: d.total,
         etaSeconds: d.eta_seconds,
         ccNew: d.cc_new,
+        // The snapshot carries no flood info → drop any notice. Honest: after
+        // a reconnect the countdown is no longer verifiable.
+        floodUntil: null,
       });
       break;
     }
     case "batch.progress": {
       const d = data as ProgressData;
 
+      // NEVER touches `state` (AC 1): an append during 'paused' emits
+      // progress and the UI must not invent "sending". Progress flowing
+      // also means the send resumed → the FloodWait notice self-dismisses.
       setStore({
         ...store,
-        state: "sending",
         batchId: d.batch_id,
         sent: d.sent,
         queued: d.queued,
         total: d.total,
         etaSeconds: d.eta_seconds,
+        floodUntil: null,
       });
       break;
     }
@@ -110,15 +133,33 @@ function reduce(event: string, data: unknown) {
       const d = data as BatchStateData;
 
       if (d.state === "idle") {
-        // Batch drained → back to the idle surface.
+        // Batch drained or stopped → back to the idle surface.
         setStore(IDLE);
       } else {
-        setStore({ ...store, state: d.state });
+        setStore({
+          ...store,
+          state: d.state,
+          batchId: d.batch_id,
+          gateName: d.gate_name,
+          gateValue: d.gate_value,
+          // Resumed sending ⇒ the FloodWait notice self-dismisses (AC 6).
+          floodUntil: d.state === "sending" ? null : store.floodUntil,
+        });
       }
       break;
     }
+    case "flood.wait": {
+      const d = data as FloodWaitData;
+
+      setStore({ ...store, floodUntil: Date.now() + d.seconds * 1000 });
+      break;
+    }
     case "batch.line_sent":
-      // Received and tolerated — consumers arrive in Stories 2.5/3.2.
+      // A line went out ⇒ sending flows again — clear any FloodWait notice.
+      // (Other consumers arrive in Stories 2.5/3.2.)
+      if (store.floodUntil !== null) {
+        setStore({ ...store, floodUntil: null });
+      }
       break;
     default:
       break; // forward-compat: ignore anything unknown
@@ -212,5 +253,7 @@ export function seedFromBatch(batch: {
     total: batch.total,
     etaSeconds: store.batchId === batch.id ? store.etaSeconds : 0,
     ccNew: store.batchId === batch.id ? store.ccNew : 0,
+    // A global FloodWait window doesn't end because a batch was posted.
+    floodUntil: store.floodUntil,
   });
 }

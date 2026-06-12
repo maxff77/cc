@@ -9,15 +9,19 @@ signature change is fixed in one place.
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
+import pytest
 import pytest_asyncio
+from app.core import send_worker
+from app.core.telegram import gateway
 from app.db.base import async_session_factory
-from app.db.models import Tenant, User
+from app.db.models import Gate, GateCategory, Tenant, User
 from app.db.repos import users as users_repo
 from app.main import app
 from app.services.auth import hash_password
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 
 PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
 
@@ -129,3 +133,68 @@ async def cleanup_users(emails: set[str]) -> None:
             if tenant is not None:
                 await session.delete(tenant)
         await session.commit()
+
+
+# --- Batch fixtures (promoted from test_batches.py for Story 2.3) -----------
+
+
+@pytest.fixture(autouse=True)
+def authorized_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The batches routes gate on the real singleton's flags — flip them on.
+
+    ASGITransport never runs the lifespan, so no Telethon client exists; the
+    endpoints only persist rows. Individual tests re-flip ``authorized``
+    to exercise the 503.
+    """
+    monkeypatch.setattr(gateway, "authorized", True)
+    monkeypatch.setattr(gateway, "target_ok", True)
+
+
+@pytest.fixture
+def fake_gateway(monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
+    """Swap the send worker's gateway for the in-memory fake."""
+    fake = FakeGateway()
+    monkeypatch.setattr(send_worker, "gateway", fake)
+    return fake
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def gate(ctx: dict[str, object]) -> AsyncIterator[dict]:
+    """An active gate in its own category, created via the owner API."""
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+    cat = await owner_client.post(
+        "/api/admin/gate-categories", json={"name": f"Lote {uuid.uuid4().hex[:8]}"}
+    )
+    assert cat.status_code == 201, cat.text
+    value = f".b{uuid.uuid4().hex[:6]}"
+    res = await owner_client.post(
+        "/api/admin/gates",
+        json={"value": value, "name": "Visa Lote", "category_id": cat.json()["id"]},
+    )
+    assert res.status_code == 201, res.text
+    yield res.json()
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(Gate).where(Gate.category_id == cat.json()["id"])
+        )
+        await session.execute(
+            delete(GateCategory).where(GateCategory.id == cat.json()["id"])
+        )
+        await session.commit()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def client_user() -> AsyncIterator[tuple[AsyncClient, User]]:
+    """A logged-in client (valid plan) + its user row; self-cleaning.
+
+    Tenant deletion in cleanup cascades over batches/batch_lines (FK CASCADE),
+    so batches created during the test die with it.
+    """
+    user = await seed_user(
+        "client", expires_at=datetime.now(UTC) + timedelta(days=30)
+    )
+    http = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    await login(http, user.email)
+    yield http, user
+    await http.aclose()
+    await cleanup_users({user.email})
