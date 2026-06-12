@@ -37,6 +37,9 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 3-3 → done 2026-06-12 (historial completo: list/detail/rename/delete con guards, live-follow refetch, AlertDialog, duales reutilizados, 202 tests)
+# 3-3 → review 2026-06-12 (implementado: api/sessions.py list/detail/rename/delete tenant-scoped + errores session_not_found/session_in_use, repos list_for_tenant/get_for_tenant/delete + limit=None en responses, lista agrupada por gate con renombrar inline y modal Eliminar (AlertDialog), detalle /sessions/[id] reusando paneles 3.2 con live-follow por refetch, clearSession en ws.ts, nav por prefijo + diferido 2-3 client-nav.tsx:34 resuelto; suite 202 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
+# 3-3 → ready-for-dev 2026-06-12 (story file created — Historial: api/sessions.py list/detail/rename/delete tenant-scoped, lista agrupada por gate + badge En curso/Cerrada, detalle /sessions/[id] reusando paneles 3.2 con live-follow por refetch, modal Eliminar + guard session_in_use, clearSession en ws.ts; absorbe diferido 2-3 client-nav.tsx:34)
 # 3-2 → done 2026-06-12 (snapshot com filas/totales de sesión activa + session_id en state_data, response.captured con guard + ccNew autoritativo, components/sessions/ DataRow/paneles duales, tabs móvil/paneles desktop, auto-scroll pinning; diferidos 2-5/2-2 resueltos, suite 196 verde, gates limpios)
 # 3-2 → review 2026-06-12 (implementado: snapshot con filas/totales de la sesión activa + session_id en state_data, reducer response.captured con guard de sesión + ccNew autoritativo, components/sessions/ (DataRow + paneles/tabs duales con pinning de scroll), montaje móvil+desktop en page.tsx; diferidos 2-5 ws.ts:162 y 2-2 ws.ts:197 resueltos; suite 196 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
 # 3-2 → ready-for-dev 2026-06-12 (story file created — vistas Completa/Filtrada en Envío: snapshot con filas de sesión + session_id en batch.state, reducer response.captured, components/sessions/ dual tabs/paneles, auto-scroll pinning; absorbe diferidos 2-5 ws.ts:162 y 2-2 ws.ts:197)
@@ -88,7 +91,7 @@ development_status:
   epic-3: in-progress
   3-1-captura-y-atribucion-de-respuestas-del-bot: done
   3-2-vistas-completa-filtrada-en-vivo-en-envio: done
-  3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: backlog
+  3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: done
   3-4-continuar-una-sesion-con-dedup-preservado: backlog
   3-5-exportar-resultados-como-txt: backlog
   3-6-vista-de-soporte-cross-tenant-para-owner-admins: backlog

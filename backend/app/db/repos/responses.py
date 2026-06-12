@@ -167,39 +167,40 @@ async def full_count(session: AsyncSession, capture_session_id: int) -> int:
 
 
 async def _list_last(
-    session: AsyncSession, capture_session_id: int, kind: str, limit: int
+    session: AsyncSession, capture_session_id: int, kind: str, limit: int | None
 ) -> list[Response]:
     """The LAST ``limit`` rows of ``kind``, returned ASCENDING by ``id``.
 
     SELECT newest-first + reverse in Python: the snapshot must carry the most
     RECENT rows when capped, but the panel paints oldest→newest and anchors
-    its scroll at the bottom (Story 3.2).
+    its scroll at the bottom (Story 3.2). ``limit=None`` ⇒ no LIMIT and no
+    reverse-dance — the COMPLETE data, ascending directly (Story 3.3: the
+    full data belongs to Historial and export, the cap is snapshot-only).
     """
-    stmt = (
-        select(Response)
-        .where(
-            Response.capture_session_id == capture_session_id,
-            Response.kind == kind,
-        )
-        .order_by(Response.id.desc())
-        .limit(limit)
+    stmt = select(Response).where(
+        Response.capture_session_id == capture_session_id,
+        Response.kind == kind,
     )
+    if limit is None:
+        stmt = stmt.order_by(Response.id.asc())
+        return list((await session.execute(stmt)).scalars().all())
+    stmt = stmt.order_by(Response.id.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())
     rows.reverse()
     return rows
 
 
 async def list_full(
-    session: AsyncSession, capture_session_id: int, limit: int
+    session: AsyncSession, capture_session_id: int, limit: int | None
 ) -> list[Response]:
-    """The session's last ``limit`` 'full' revisions, oldest→newest — the
-    rows the snapshot ships to rebuild the Completa view."""
+    """The session's last ``limit`` 'full' revisions (``None`` = all),
+    oldest→newest — the rows that rebuild the Completa view."""
     return await _list_last(session, capture_session_id, KIND_FULL, limit)
 
 
 async def list_cc(
-    session: AsyncSession, capture_session_id: int, limit: int
+    session: AsyncSession, capture_session_id: int, limit: int | None
 ) -> list[Response]:
-    """The session's last ``limit`` deduped CC values in insertion order —
-    the rows the snapshot ships to rebuild the Filtrada view."""
+    """The session's last ``limit`` deduped CC values (``None`` = all) in
+    insertion order — the rows that rebuild the Filtrada view."""
     return await _list_last(session, capture_session_id, KIND_CC, limit)

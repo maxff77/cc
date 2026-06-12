@@ -31,7 +31,10 @@ const PILL_COPY: Record<Exclude<BatchSurfaceState, "idle">, string> = {
 // wears danger; the state lasts sub-seconds in practice).
 const PILL_CLASS: Record<Exclude<BatchSurfaceState, "idle">, string> = {
   sending: "bg-accent/22 text-accent",
-  paused: "bg-warning/18 text-warning-foreground",
+  // text-warning (not -foreground): the app is fixed dark-mode and
+  // --warning-foreground is the near-black contrast color for SOLID warning
+  // fills — on a tint it was unreadable (deferred 2-3 #2, absorbed here).
+  paused: "bg-warning/18 text-warning",
   stopping: "bg-danger/18 text-danger",
 };
 
@@ -113,7 +116,12 @@ export function ClientNav() {
   const items = ITEMS.map((item) => (
     <NavItem
       key={item.href}
-      active={pathname === item.href}
+      // Prefix match keeps Historial lit on /sessions/[id] (Story 3.3); the
+      // "/" item stays exact-only so it never lights up everywhere.
+      active={
+        pathname === item.href ||
+        (item.href !== "/" && pathname.startsWith(item.href + "/"))
+      }
       dot={item.href === "/" ? dot : null}
       href={item.href}
       label={item.label}

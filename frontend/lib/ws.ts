@@ -477,6 +477,26 @@ export function useLiveBatch(): LiveBatchState {
   );
 }
 
+// Local clear confirmed by REST (Story 3.3): after DELETE /api/sessions/{id}
+// succeeds, the deleting tab resets ONLY the session fields — otherwise the
+// operator deletes the session in Historial, returns to Envío and the panels
+// keep showing rows that no longer exist server-side until the next
+// reconnection. Same pattern as `seedFromBatch` (REST-confirmed local seed;
+// the WS snapshot stays the source of truth afterwards). Recorded decision:
+// other open tabs reconcile on their next snapshot (stale visual accepted at
+// MVP scale). NO new WS event — `session.active` belongs to Story 3.4.
+export function clearSession(sessionId: number) {
+  if (store.sessionId !== sessionId) return;
+  setStore({
+    ...store,
+    sessionId: null,
+    responses: [],
+    cc: [],
+    ccNew: 0,
+    responsesTotal: 0,
+  });
+}
+
 // Seed the store from a successful POST /api/batches response so the ring
 // appears without waiting for the next WS event. `snapshot`/`batch.state`
 // remain the source of truth thereafter (UX-DR12 — no optimistic jumps

@@ -1,11 +1,11 @@
-"""Data access for capture sessions (Story 3.1).
+"""Data access for capture sessions (Story 3.1; Historial reads/deletes 3.3).
 
 TENANT-SCOPED — this is NOT the gates/users global exception: every function
 takes ``tenant_id`` explicitly. Callers are the batches handler (binding at
-batch start) and the capture/attribution pipeline — the latter runs OUTSIDE
-any request (like the worker section of repos/batches.py, the documented
-exception) but still resolves one explicit ``tenant_id`` per call, derived
-from ``send_log``, never from a request.
+batch start), the Historial router (3.3) and the capture/attribution pipeline
+— the latter runs OUTSIDE any request (like the worker section of
+repos/batches.py, the documented exception) but still resolves one explicit
+``tenant_id`` per call, derived from ``send_log``, never from a request.
 
 Pure ORM, flush not commit — callers own the transaction.
 """
@@ -29,6 +29,62 @@ async def get_active(
         CaptureSession.is_active,
     )
     return (await session.execute(stmt)).scalars().first()
+
+
+async def list_for_tenant(
+    session: AsyncSession, tenant_id: int
+) -> list[CaptureSession]:
+    """ALL of the tenant's sessions, newest first (Story 3.3 Historial list).
+
+    No pagination — MVP scale (NFR2); the grouping by gate is presentation
+    (client-side).
+    """
+    stmt = (
+        select(CaptureSession)
+        .where(CaptureSession.tenant_id == tenant_id)
+        .order_by(CaptureSession.id.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_for_tenant(
+    session: AsyncSession,
+    tenant_id: int,
+    session_id: int,
+    *,
+    for_update: bool = False,
+) -> CaptureSession | None:
+    """TENANT-SCOPED lookup by id (Story 3.3 detail/rename/delete).
+
+    Another tenant's id returns ``None`` (the handler 404s — existence is
+    never leaked; exact mirror of ``batches_repo.get_batch``).
+
+    ``for_update=True`` locks the row until commit (same knob as
+    ``batches_repo.get_batch``). The DELETE path must pass it so it
+    serializes with a concurrent ``POST /api/batches`` binding this same
+    session: the batch INSERT's FK check takes ``FOR KEY SHARE`` on this row,
+    which conflicts with ``FOR UPDATE`` — see ``delete_session``.
+    """
+    stmt = select(CaptureSession).where(
+        CaptureSession.id == session_id,
+        CaptureSession.tenant_id == tenant_id,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def delete(
+    session: AsyncSession, capture_session: CaptureSession
+) -> None:
+    """Hard-delete one capture session (Story 3.3 AC 5).
+
+    Zero manual child cleanup: ``responses`` rows die via the DB FK CASCADE
+    (models.py) and batches survive with ``capture_session_id`` NULL (FK SET
+    NULL) — the lote history is the lote's, not the session's.
+    """
+    await session.delete(capture_session)
+    await session.flush()
 
 
 async def create_active(

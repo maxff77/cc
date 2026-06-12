@@ -236,3 +236,26 @@ def batch_stopping() -> AppError:
         code="batch_stopping",
         message="El lote se está deteniendo. Espera un momento.",
     )
+
+
+# --- Codes this story (3.3) defines --------------------------------------
+
+
+def session_not_found() -> AppError:
+    # Unknown id, another tenant's id, id > int32 — existence is never leaked
+    # (idiom batch_not_found).
+    return AppError(
+        status_code=404,
+        code="session_not_found",
+        message="Esa sesión no existe.",
+    )
+
+
+def session_in_use() -> AppError:
+    # DELETE on the session bound to a LIVE batch (AC 6) — the message IS the
+    # AC copy verbatim: the UI renders it as-is ({code, message} contract).
+    return AppError(
+        status_code=409,
+        code="session_in_use",
+        message="Detén el lote antes de eliminar esta sesión.",
+    )
