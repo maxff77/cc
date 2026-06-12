@@ -179,7 +179,11 @@ async def logout(
         await session.commit()
     response = Response(status_code=204)
     response.delete_cookie(
-        key=settings.session_cookie_name, path="/", samesite="lax"
+        key=settings.session_cookie_name,
+        path="/",
+        samesite="lax",
+        httponly=True,
+        secure=settings.cookie_secure,
     )
     return response
 
