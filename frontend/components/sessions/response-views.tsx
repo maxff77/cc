@@ -15,7 +15,7 @@
 import type { CcRow, ResponseRow } from "@/lib/ws";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { Tabs } from "@heroui/react";
+import { Card, Tabs } from "@heroui/react";
 import clsx from "clsx";
 
 import { ApiError, downloadFile } from "@/lib/api";
@@ -169,7 +169,7 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
-// THE panel — outlined surface (DESIGN: 1px border, no shadows), optional
+// THE panel — HeroUI Card (elevated surface: bg-surface + shadow), optional
 // label-caps header (the mobile tabs carry the label/badge instead) and
 // optional `↓ .txt` export footer (Story 3.5; no path ⇒ no footer).
 function ResponsePanel({
@@ -191,28 +191,45 @@ function ResponsePanel({
   listClassName?: string;
   className?: string;
 }) {
+  // HeroUI Card (compound) instead of the hand-rolled <section>: variant
+  // "default" gives the bg-surface body. We neutralize the card's own
+  // p-4/gap-3/overflow-visible/32px-radius to console density (utilities
+  // layer wins over the .card component layer) and re-add the header/footer
+  // separators per slot. The outer `border border-border` is explicit on
+  // purpose: .card relies on shadow-surface for its edge, but the dark theme
+  // (app default) nulls --surface-shadow to transparent, so without the
+  // border the panel would lose all containment against bg-background.
+  // `min-w-0` on the root is the actual fix for the grid overflow — without
+  // it the long mono rows blow the 1fr track wide and `truncate` never bites.
   return (
-    <section
+    <Card
       className={clsx(
-        "flex flex-col rounded-md border border-border bg-surface",
+        "flex min-w-0 flex-col gap-0 overflow-hidden rounded-lg border border-border p-0",
         className,
       )}
+      variant="default"
     >
       {header && (
-        <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
+        <Card.Header className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
+          <Card.Title className="text-[10px] font-medium uppercase leading-4 tracking-[0.12em] text-muted">
             {header}
-          </span>
+          </Card.Title>
           <CountBadge tone={countTone} value={count} />
-        </header>
+        </Card.Header>
       )}
-      <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
+      <Card.Content className="min-h-0 p-0">
+        <PanelList
+          className={listClassName}
+          emptyText={emptyText}
+          rows={rows}
+        />
+      </Card.Content>
       {exportPath && (
-        <footer className="flex items-center justify-between border-t border-border px-3 py-2">
+        <Card.Footer className="justify-between border-t border-border px-3 py-2">
           <ExportLink path={exportPath} />
-        </footer>
+        </Card.Footer>
       )}
-    </section>
+    </Card>
   );
 }
 

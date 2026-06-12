@@ -176,7 +176,7 @@ export default function SessionDetailPage() {
 
   if (detail.isLoading) {
     return (
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="mx-auto grid w-full max-w-[1600px] gap-6 lg:grid-cols-2">
         <PanelSkeleton rows={8} />
         <PanelSkeleton className="hidden lg:flex" rows={8} />
       </div>
@@ -229,7 +229,7 @@ export default function SessionDetailPage() {
   }));
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
       <div className="flex flex-col gap-1">
         <PageHeader
           actions={
@@ -268,7 +268,7 @@ export default function SessionDetailPage() {
 
       {/* Desktop: the same two side-by-side panels as Envío; internal
           scroll — the detail competes with no cockpit. */}
-      <div className="lg:grid lg:grid-cols-2 lg:gap-6">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <CompletaPanel
           className="hidden lg:flex"
           exportPath={exportCompleta}

@@ -51,7 +51,7 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="lg:grid lg:grid-cols-[300px_1fr_1fr] lg:gap-6">
+    <div className="mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
