@@ -222,6 +222,19 @@ claude-fable-5 (Claude Fable 5)
 - Task 7 gates: backend `ruff check .` ✅, `mypy app` ✅ (18 files), `pytest` ✅ 45/45; frontend `npm run lint` ✅, `npx tsc --noEmit` ✅, `npm run build` ✅; `bash -n deploy/deploy.sh` ✅; `caddy validate` unavailable locally (no caddy binary) — visual review done; systemd units visually reviewed against Task 2 directives.
 - **Manual verification: pending VPS execution.** AC1/AC2/AC4/AC5 behavior (TLS, service supervision, session file creation, end-to-end login over HTTPS) only exists on the VPS — the runbook smoke test (README step 11) must be executed by Richard on the VPS. Not claimed done from the dev machine.
 
+### Production deploy — EXECUTED 2026-06-11 (cc.lohari.com.mx)
+
+Deployed live to the lohari VPS (37.27.12.92, Ubuntu 24.04). VPS-specific adaptations vs. the generic runbook:
+
+- **Frontend port 3100, not 3000** — the VPS already runs another Next.js on :3000 (www.lohari). cc-web.service + Caddy catch-all moved to :3100 (committed: `ea29780`).
+- **Caddy already running** with other lohari sites (self-signed certs behind Cloudflare proxy). Did NOT reinstall/overwrite — created `/etc/caddy/cc.caddy` and added `import cc.caddy` to the existing `/etc/caddy/Caddyfile` (backup taken). cc is DNS-only in Cloudflare, so its block has NO `tls` directive → Caddy obtained a real **Let's Encrypt cert automatically** (http-01, issued OK).
+- **Postgres is Dockerized** (`lohari-postgres:18`, fronted by `lohari-pgbouncer` on :5432 in **transaction** pool mode). pgbouncer transaction mode breaks asyncpg prepared statements, so the backend connects **directly to the postgres container IP `172.18.0.5:5432`** (reachable from the host over the `lohari-net` bridge), NOT through pgbouncer. Role `cc` + db `cc` created via `docker exec`. ⚠️ KNOWN RISK: if the postgres container is recreated its IP may change — update `DATABASE_URL` in `/srv/cc/backend/.env` if the backend loses the DB after a docker recreate.
+- **package-lock.json was gitignored** by the Next starter → `npm ci` failed on first deploy. Un-ignored and committed (`0b7571f`) so `deploy.sh`'s `npm ci` is reproducible.
+- **Owner seeded**: `owner@lohari.com.mx` (bootstrap_owner, idempotent).
+- **Smoke test PASSED over public HTTPS** (AC5): `GET /` → 307 → `/login` with a valid LE cert (TLS verify 0); `/api/health` → 200; owner login → 200 with `Set-Cookie: cc_session=…; HttpOnly; Secure; SameSite=lax` (COOKIE_SECURE=true confirmed); wrong password → 401; `/login` serves the Spanish HTML ("Iniciar sesión").
+- **AC4 (Telegram re-auth) PENDING — manual, owner-only**: requires `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` from https://my.telegram.org/apps + an interactive phone→code→2FA session. Does NOT block AC5 (Telethon client is Story 2.2). To complete: set the two TELEGRAM_* vars in `/srv/cc/backend/.env`, then `cd /srv/cc/backend && sudo -u cc .venv/bin/python -m scripts.telegram_auth` ON the VPS; verify `/var/lib/cc/anon.session` is `cc:cc` mode 600. `anon.session` is currently absent (expected).
+- Branch `story/1.7-production-deploy` deployed (cloned + checked out on the VPS); HEAD `0b7571f` at deploy time.
+
 ### File List
 
 - `deploy/Caddyfile` (new)
