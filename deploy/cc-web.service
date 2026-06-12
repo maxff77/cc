@@ -1,0 +1,26 @@
+# CC frontend (Next.js production server) — Story 1.7
+#
+# Install: sudo cp deploy/cc-web.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now cc-web
+#
+# Requires a prior `npm run build` (deploy.sh's job) — `next start` refuses
+# to run without .next/. Node 22+ on the VPS is a prerequisite (runbook).
+
+[Unit]
+Description=CC frontend (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cc
+Group=cc
+WorkingDirectory=/srv/cc/frontend
+Environment=NODE_ENV=production
+# Bind 127.0.0.1 ONLY — Caddy is the sole public listener.
+# Port 3100: the lohari VPS already runs another Next.js on 3000.
+ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3100
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

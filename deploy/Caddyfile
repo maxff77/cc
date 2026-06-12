@@ -1,0 +1,44 @@
+# CC production Caddyfile (Story 1.7)
+#
+# Install — the VPS Caddy already serves other lohari sites. NEVER overwrite
+# /etc/caddy/Caddyfile; add this site as a separate imported file
+# (idempotent, this is what the live deploy did — runbook step 9):
+#     sudo cp deploy/Caddyfile /etc/caddy/cc.caddy
+#     sudo sed -i 's/{$CC_DOMAIN}/<subdomain>/' /etc/caddy/cc.caddy
+#     grep -q 'import cc.caddy' /etc/caddy/Caddyfile \
+#         || echo 'import cc.caddy' | sudo tee -a /etc/caddy/Caddyfile
+#     sudo caddy validate --config /etc/caddy/Caddyfile
+#     sudo systemctl reload caddy
+#
+# CC_DOMAIN: the public subdomain is NOT hardcoded — substitute the
+# {$CC_DOMAIN} placeholder at install time (sed above; /etc/caddy/cc.caddy is
+# server-local, never committed). An Environment= drop-in also works, but is
+# only applied at process START — `systemctl reload` never sees it, and
+# `caddy validate` from a shell can't see it either. Direct substitution
+# keeps validate meaningful.
+#
+# HTTPS: Caddy v2 provisions and renews Let's Encrypt certificates
+# automatically for any concrete site address — no TLS config needed.
+#
+# Fallback (nginx): if nginx already holds :80/:443 on the VPS
+# (check: ss -tlnp | grep -E ':80|:443'), do NOT install Caddy — replicate
+# these routes as nginx `location` blocks + certbot instead.
+
+{$CC_DOMAIN} {
+	# FastAPI (uvicorn) — REST API. First matching handle wins.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# WebSocket — upgrade is automatic in Caddy v2 reverse_proxy. The backend
+	# endpoint ships in Story 2.2; until then this route returns 404 (expected).
+	handle /ws {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Everything else → Next.js production server.
+	# Port 3100: the lohari VPS already runs another Next.js on 3000.
+	handle {
+		reverse_proxy 127.0.0.1:3100
+	}
+}
