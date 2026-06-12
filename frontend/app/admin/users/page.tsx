@@ -31,6 +31,7 @@ interface UserOut {
   tenant_id: number;
   expires_at: string | null;
   is_blocked: boolean;
+  contact: string | null;
 }
 
 interface UserListResponse {
@@ -62,6 +63,23 @@ function formatExpiry(iso: string | null): string {
     month: "short",
     day: "numeric",
   });
+}
+
+// The backend stores the handle canonical (sin '@'); we re-add '@' for display
+// and link straight to the Telegram chat so the operator can write for renewal.
+function ContactLink({ contact }: { contact: string | null }) {
+  if (!contact) return <span className="text-muted">—</span>;
+
+  return (
+    <a
+      className="text-sm text-primary underline hover:text-primary-600"
+      href={`https://t.me/${contact}`}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      @{contact}
+    </a>
+  );
 }
 
 export default function AdminUsersPage() {
@@ -121,6 +139,7 @@ export default function AdminUsersPage() {
                 <Table.Header>
                   <Table.Column isRowHeader>Correo</Table.Column>
                   <Table.Column>Rol</Table.Column>
+                  <Table.Column>Contacto</Table.Column>
                   <Table.Column>Vence</Table.Column>
                   <Table.Column>Estado</Table.Column>
                   <Table.Column>Acciones</Table.Column>
@@ -138,6 +157,9 @@ export default function AdminUsersPage() {
                     <Table.Row id={u.id}>
                       <Table.Cell>{u.email}</Table.Cell>
                       <Table.Cell>{u.role}</Table.Cell>
+                      <Table.Cell>
+                        <ContactLink contact={u.contact} />
+                      </Table.Cell>
                       <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
                       <Table.Cell>
                         {u.role !== "client" ? (
@@ -162,14 +184,14 @@ export default function AdminUsersPage() {
                             >
                               Sesiones
                             </Link>
-                          <ClientLifecycleActions
-                            user={u}
-                            onChanged={() =>
-                              queryClient.invalidateQueries({
-                                queryKey: USERS_KEY,
-                              })
-                            }
-                          />
+                            <ClientLifecycleActions
+                              user={u}
+                              onChanged={() =>
+                                queryClient.invalidateQueries({
+                                  queryKey: USERS_KEY,
+                                })
+                              }
+                            />
                           </div>
                         ) : isOwner && u.role === "admin" ? (
                           <DeleteAdminAction
@@ -211,8 +233,10 @@ function CreateUserForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [planDays, setPlanDays] = useState("30");
+  const [contact, setContact] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [contactError, setContactError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
   const mutation = useMutation({
@@ -220,6 +244,8 @@ function CreateUserForm({
       const payload: Record<string, unknown> = { email, password, role: kind };
 
       if (kind === "client") payload.plan_days = Number(planDays);
+      // Optional — only send when filled; the backend normalizes (strips '@').
+      if (contact.trim()) payload.contact = contact.trim();
 
       return api.post<UserOut>("/api/admin/users", payload);
     },
@@ -227,6 +253,7 @@ function CreateUserForm({
       setEmail("");
       setPassword("");
       setPlanDays("30");
+      setContact("");
       onCreated();
     },
     onError: (err) => {
@@ -235,6 +262,7 @@ function CreateUserForm({
       if (err instanceof ApiError) {
         if (err.code === "email_taken") setEmailError(err.message);
         else if (err.code === "invalid_plan_days") setPlanError(err.message);
+        else if (err.code === "invalid_contact") setContactError(err.message);
         else setBanner(err.message);
       } else {
         setBanner("No pudimos conectar. Intenta de nuevo.");
@@ -246,6 +274,7 @@ function CreateUserForm({
     e.preventDefault();
     setEmailError(null);
     setPlanError(null);
+    setContactError(null);
     setBanner(null);
 
     if (kind === "client" && !isPositiveInt(planDays)) {
@@ -312,6 +341,24 @@ function CreateUserForm({
             <Label>Días del plan</Label>
             <Input placeholder="30" />
             {planError && <FieldError>{planError}</FieldError>}
+          </TextField>
+        )}
+
+        {/* Client-only: contact is for renewal outreach; admins carry none. */}
+        {kind === "client" && (
+          <TextField
+            className="flex w-full flex-col gap-1"
+            isInvalid={contactError !== null}
+            name="contact"
+            value={contact}
+            onChange={(v) => {
+              setContact(v);
+              if (contactError) setContactError(null);
+            }}
+          >
+            <Label>Telegram (opcional)</Label>
+            <Input placeholder="@usuario" />
+            {contactError && <FieldError>{contactError}</FieldError>}
           </TextField>
         )}
 
@@ -556,9 +603,121 @@ function ClientLifecycleActions({
   return (
     <div className="flex gap-2">
       <RenewAction userId={user.id} onChanged={onChanged} />
+      <EditContactAction user={user} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
       <ResetPasswordAction user={user} onChanged={onChanged} />
     </div>
+  );
+}
+
+// --- Edit Telegram contact (spec-client-telegram-contact) -----------------
+// Same dialog shape as RenewAction: a small form in an AlertDialog, constant
+// row height. Empty input clears the contact (persists NULL).
+
+function EditContactAction({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [contact, setContact] = useState(user.contact ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<UserOut>(`/api/admin/users/${user.id}/contact`, {
+        contact: contact.trim(),
+      }),
+    onSuccess: () => {
+      setOpen(false);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => {
+      // invalid_contact (and anything else) carries the server's Spanish copy.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos guardar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="secondary"
+        onPress={() => {
+          // Re-sync the draft to the current value each open (a prior cancel or
+          // an external refresh may have moved it).
+          setContact(user.contact ?? "");
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        Contacto
+      </Button>
+
+      <AlertDialog
+        isOpen={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <AlertDialog.Backdrop>
+          <AlertDialog.Container>
+            <AlertDialog.Dialog>
+              <AlertDialog.Header>
+                <AlertDialog.Heading>Contacto de Telegram</AlertDialog.Heading>
+              </AlertDialog.Header>
+              <AlertDialog.Body>
+                <div className="flex flex-col gap-3">
+                  <TextField
+                    className="flex flex-col gap-1"
+                    name="contact"
+                    value={contact}
+                    onChange={(v) => {
+                      setContact(v);
+                      if (error) setError(null);
+                    }}
+                  >
+                    <Label>Usuario (vacío para quitar)</Label>
+                    <Input placeholder="@usuario" />
+                  </TextField>
+
+                  {error && <Alert status="danger">{error}</Alert>}
+                </div>
+              </AlertDialog.Body>
+              <AlertDialog.Footer>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => {
+                    setOpen(false);
+                    setError(null);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  isDisabled={mutation.isPending}
+                  size="sm"
+                  variant="primary"
+                  onPress={() => mutation.mutate()}
+                >
+                  {mutation.isPending ? "Guardando…" : "Guardar"}
+                </Button>
+              </AlertDialog.Footer>
+            </AlertDialog.Dialog>
+          </AlertDialog.Container>
+        </AlertDialog.Backdrop>
+      </AlertDialog>
+    </>
   );
 }
 

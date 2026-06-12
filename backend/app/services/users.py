@@ -27,6 +27,7 @@ async def create_account(
     password: str,
     role: str,
     plan_days: int | None,
+    contact: str | None = None,
 ) -> User:
     """Create a user (and its own tenant); returns the unflushed-then-flushed row.
 
@@ -59,6 +60,7 @@ async def create_account(
             password_hash=hash_password(password),
             role=role,
             expires_at=expires_at,
+            contact=contact,
         )
     except IntegrityError as exc:
         # The pre-check above is racy: a concurrent insert of the same email
@@ -66,3 +68,16 @@ async def create_account(
         # email_taken contract instead of a 500. (get_session rolls the
         # transaction back when this AppError propagates.)
         raise email_taken() from exc
+
+
+async def set_contact(
+    session: AsyncSession, target: User, contact: str | None
+) -> User:
+    """Set (or clear) a user's Telegram contact handle; flush, caller commits.
+
+    ``contact`` must already be normalized/validated by the router (canonical
+    handle without ``@``, or ``None`` to clear).
+    """
+    target.contact = contact
+    await session.flush()
+    return target

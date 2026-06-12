@@ -144,3 +144,107 @@ async def test_admin_delete_is_forbidden_for_admin_actor(ctx: dict[str, object])
     # An admin actor hits the owner-only DELETE → 403 before any lookup.
     res = await admin_client.delete(f"/api/admin/users/{owner.id}")
     assert res.status_code == 403
+
+
+# --- Telegram contact (spec-client-telegram-contact) ----------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("@yesterWhite", "yesterWhite"),  # leading @ stripped
+        ("  https://t.me/foo_bar ", "foo_bar"),  # link + whitespace cleaned
+        ("t.me/abcde", "abcde"),  # bare t.me prefix
+        ("plainhandle", "plainhandle"),  # already canonical
+        ("", None),  # empty → cleared
+        ("   ", None),  # whitespace-only → cleared
+        ("HTTPS://T.me/abcde", "abcde"),  # uppercase scheme/host
+        ("www.t.me/foo_bar", "foo_bar"),  # www. host
+        ("https://t.me/user_x?start=ref", "user_x"),  # query suffix dropped
+        ("t.me/s/durov", "durov"),  # /s/ share segment
+        ("@@abcde", "abcde"),  # repeated @ collapsed
+    ],
+)
+def test_normalize_contact_canonicalizes(raw: str, expected: str | None) -> None:
+    from app.api.admin import _normalize_contact
+
+    assert _normalize_contact(raw) == expected
+
+
+@pytest.mark.parametrize("bad", ["ab c", "with!bang", "tiny", "x" * 33])
+def test_normalize_contact_rejects_malformed(bad: str) -> None:
+    from app.api.admin import _normalize_contact
+    from app.errors import AppError
+
+    with pytest.raises(AppError) as exc:
+        _normalize_contact(bad)
+    assert exc.value.code == "invalid_contact"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_create_client_stores_normalized_contact(ctx: dict[str, object]) -> None:
+    admin_client: AsyncClient = ctx["admin_client"]  # type: ignore[assignment]
+    created: set[str] = ctx["created"]  # type: ignore[assignment]
+
+    email = unique_email("client")
+    created.add(email)
+    res = await admin_client.post(
+        "/api/admin/users",
+        json={
+            "email": email,
+            "password": "pw123456",
+            "role": "client",
+            "plan_days": 30,
+            "contact": "@yesterWhite",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["contact"] == "yesterWhite"  # stored sin '@'
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_create_client_with_invalid_contact_rejected(
+    ctx: dict[str, object],
+) -> None:
+    admin_client: AsyncClient = ctx["admin_client"]  # type: ignore[assignment]
+
+    res = await admin_client.post(
+        "/api/admin/users",
+        json={
+            "email": unique_email("client"),
+            "password": "pw123456",
+            "role": "client",
+            "plan_days": 30,
+            "contact": "bad handle!",
+        },
+    )
+    assert res.status_code == 400
+    assert res.json()["code"] == "invalid_contact"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_set_and_clear_contact_endpoint(ctx: dict[str, object]) -> None:
+    admin_client: AsyncClient = ctx["admin_client"]  # type: ignore[assignment]
+    created: set[str] = ctx["created"]  # type: ignore[assignment]
+
+    email = unique_email("client")
+    created.add(email)
+    create = await admin_client.post(
+        "/api/admin/users",
+        json={"email": email, "password": "pw123456", "role": "client", "plan_days": 30},
+    )
+    assert create.status_code == 201, create.text
+    cid = create.json()["id"]
+    assert create.json()["contact"] is None  # opcional → arranca NULL
+
+    setres = await admin_client.post(
+        f"/api/admin/users/{cid}/contact", json={"contact": "@nuevo_handle"}
+    )
+    assert setres.status_code == 200, setres.text
+    assert setres.json()["contact"] == "nuevo_handle"
+
+    clear = await admin_client.post(
+        f"/api/admin/users/{cid}/contact", json={"contact": ""}
+    )
+    assert clear.status_code == 200, clear.text
+    assert clear.json()["contact"] is None  # vaciar → NULL

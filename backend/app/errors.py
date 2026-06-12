@@ -90,6 +90,14 @@ def user_not_found() -> AppError:
     )
 
 
+def invalid_contact() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_contact",
+        message="Usuario de Telegram inválido (5–32 caracteres: letras, números o _).",
+    )
+
+
 # --- Codes this story (1.4) defines --------------------------------------
 
 

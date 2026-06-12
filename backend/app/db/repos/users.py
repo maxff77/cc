@@ -56,6 +56,7 @@ async def create_user(
     password_hash: str,
     role: str,
     expires_at: datetime | None,
+    contact: str | None = None,
 ) -> User:
     """Insert and flush a fresh user row."""
     user = User(
@@ -64,6 +65,7 @@ async def create_user(
         password_hash=password_hash,
         role=role,
         expires_at=expires_at,
+        contact=contact,
     )
     session.add(user)
     await session.flush()

@@ -46,6 +46,7 @@ from app.errors import (
     gate_exists,
     gate_not_found,
     invalid_admission_cap,
+    invalid_contact,
     invalid_plan_days,
     invalid_renewal,
     renewal_would_shorten,
@@ -75,10 +76,40 @@ require_owner = require_role("owner")
 # case-insensitively so we canonicalise to lowercase here too.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PASSWORD_MIN = 8
+# Telegram username shape (5–32 chars, letters/digits/underscore). Stored
+# canonical: no leading '@', no t.me prefix. The frontend re-adds '@' + link.
+_CONTACT_RE = re.compile(r"[A-Za-z0-9_]{5,32}")
+# A pasted Telegram link prefix (any case): optional scheme, optional www., the
+# t.me/telegram.me host, and the optional /s/ "share" segment. Stripped so an
+# operator can paste a copied URL, not only a bare handle.
+_CONTACT_URL_PREFIX = re.compile(
+    r"^(?:https?://)?(?:www\.)?(?:t|telegram)\.me/(?:s/)?", re.IGNORECASE
+)
 # Upper bound on plan length; guards datetime/timedelta overflow on a fat-finger
 # value. ~100 years is far beyond any real plan. Lower bound stays in the route
 # (so a missing/<=0 value surfaces the invalid_plan_days code, not a 422).
 PLAN_DAYS_MAX = 36500
+
+
+def _normalize_contact(value: str | None) -> str | None:
+    """Single source of truth for the Telegram-handle format (create + edit).
+
+    Lenient on input (a pasted '@handle' or 't.me/handle' link is accepted),
+    strict on storage: returns the canonical handle (no '@', no prefix) or
+    ``None`` when empty. A malformed value raises ``invalid_contact``.
+    """
+    if value is None:
+        return None
+    v = _CONTACT_URL_PREFIX.sub("", value.strip())
+    v = v.lstrip("@").strip()
+    # Drop any trailing path/query/fragment left after the handle
+    # (e.g. a pasted "t.me/user?start=x" → "user").
+    v = re.split(r"[/?#]", v, maxsplit=1)[0].strip()
+    if v == "":
+        return None
+    if not _CONTACT_RE.fullmatch(v):
+        raise invalid_contact()
+    return v
 
 
 def _validate_plan_days(days: int | None) -> int:
@@ -93,6 +124,9 @@ class CreateUserRequest(BaseModel):
     password: str
     role: str = "client"
     plan_days: int | None = None
+    # Raw handle; normalized/validated in the route so a bad value surfaces the
+    # invalid_contact code (400), not a pydantic 422.
+    contact: str | None = None
 
     @field_validator("email")
     @classmethod
@@ -108,6 +142,11 @@ class CreateUserRequest(BaseModel):
         if len(v) < _PASSWORD_MIN:
             raise ValueError("contraseña demasiado corta")
         return v
+
+
+class SetContactRequest(BaseModel):
+    # Raw handle (or null/empty to clear); normalized in the route.
+    contact: str | None = None
 
 
 class RenewPlanRequest(BaseModel):
@@ -126,6 +165,7 @@ class UserOut(BaseModel):
     tenant_id: int
     expires_at: datetime | None
     is_blocked: bool
+    contact: str | None
 
 
 class UserListResponse(BaseModel):
@@ -140,6 +180,7 @@ def _to_out(user: User) -> UserOut:
         tenant_id=user.tenant_id,
         expires_at=user.expires_at,
         is_blocked=user.is_blocked,
+        contact=user.contact,
     )
 
 
@@ -189,6 +230,9 @@ async def create_user(
         password=body.password,
         role=body.role,
         plan_days=plan_days,
+        # Contact is a client-only field (renewal outreach); admins carry none
+        # and have no edit path, so never store one for them.
+        contact=_normalize_contact(body.contact) if body.role == "client" else None,
     )
     await session.commit()
     return _to_out(user)
@@ -315,6 +359,27 @@ async def unblock_user(
 ) -> UserOut:
     """Unblock a client; they can log in again normally (AC4)."""
     return await _set_blocked(session, user_id, blocked=False)
+
+
+@router.post("/users/{user_id}/contact", response_model=UserOut)
+async def set_contact(
+    user_id: int,
+    body: SetContactRequest,
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Set (or clear) a client's Telegram contact for renewal outreach.
+
+    Same shape as the other lifecycle actions: client target → normalize →
+    persist → commit. An empty/null body clears the contact; a malformed handle
+    raises ``invalid_contact`` (400).
+    """
+    target = await _require_client_target(session, user_id)
+    user = await users_service.set_contact(
+        session, target, _normalize_contact(body.contact)
+    )
+    await session.commit()
+    return _to_out(user)
 
 
 # --- Password reset (Story 1.6) -------------------------------------------

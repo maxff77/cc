@@ -70,6 +70,9 @@ class User(Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Telegram handle for renewal outreach (sin '@'; un solo formato canónico).
+    # Optional — clientes previos quedan NULL hasta que se llene.
+    contact: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
