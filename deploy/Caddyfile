@@ -31,7 +31,8 @@
 	}
 
 	# Everything else → Next.js production server.
+	# Port 3100: the lohari VPS already runs another Next.js on 3000.
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:3100
 	}
 }

@@ -17,7 +17,8 @@ Group=cc
 WorkingDirectory=/srv/cc/frontend
 Environment=NODE_ENV=production
 # Bind 127.0.0.1 ONLY — Caddy is the sole public listener.
-ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000
+# Port 3100: the lohari VPS already runs another Next.js on 3000.
+ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3100
 Restart=on-failure
 RestartSec=3
 
