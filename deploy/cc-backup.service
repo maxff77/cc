@@ -1,0 +1,23 @@
+# CC daily Postgres backup — oneshot, fired by cc-backup.timer (Story 4.4)
+#
+# Install: sudo cp deploy/cc-backup.service deploy/cc-backup.timer /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now cc-backup.timer
+# Manual run / verify:  sudo systemctl start cc-backup.service
+#                       systemctl status cc-backup.service
+#
+# Runs as root: it drives docker exec and writes the root-only
+# /var/backups/cc. Restore procedure: docs/runbooks/backups-y-restauracion.md
+
+[Unit]
+Description=CC daily Postgres backup (pg_dump)
+# Postgres lives in Docker on this VPS (lohari-postgres).
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /srv/cc/deploy/backup_db.sh
+# Overrides if the VPS layout ever changes (see backup_db.sh header):
+# Environment=PG_CONTAINER=lohari-postgres
+# Environment=BACKUP_DIR=/var/backups/cc
+# Environment=RETENTION_DAYS=14

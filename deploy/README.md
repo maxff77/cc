@@ -171,3 +171,23 @@ systemctl status cc-core cc-web
 3. `curl -s -o /dev/null -w '%{http_code}\n' https://cc.lohari.com.mx/api/health`
    → `200` (uvicorn answering over HTTPS through Caddy).
 4. Try a wrong password → inline Spanish error on the login form.
+
+## 12. Daily backups (Story 4.4)
+
+Daily `pg_dump` of the `cc` database at 04:30 UTC via systemd timer
+(`deploy/backup_db.sh` + `cc-backup.{service,timer}`); dumps land root-only
+in `/var/backups/cc`, retained 14 days, each verified with
+`pg_restore --list`.
+
+```bash
+sudo cp /srv/cc/deploy/cc-backup.service /srv/cc/deploy/cc-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cc-backup.timer
+sudo systemctl start cc-backup.service        # run one immediately
+systemctl status cc-backup.service            # must end "backup done: ..."
+sudo ls -l /var/backups/cc                     # dump present, mode 600, root-only dir
+systemctl list-timers cc-backup.timer          # next trigger scheduled
+```
+
+Restore procedure and the monthly restore drill:
+`docs/runbooks/backups-y-restauracion.md`.

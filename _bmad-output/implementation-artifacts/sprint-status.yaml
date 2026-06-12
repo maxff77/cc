@@ -37,6 +37,7 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 4-4 → done 2026-06-12 (merged from story/4-4: gate harnesses + pg_dump timer + runbooks; sin migraciones)
 # 4-2 → done 2026-06-12 (merged from story/4-2: cap owner en system_settings + cola FIFO waiting + queue_position e2e; migración re-encadenada f3a9c1d4e8b7→d7f4b2a91c63; watchdog gate antes del admission sweep en step())
 # 4-1 → done 2026-06-12 (merged from story/4-1 onto main tras epic 3; conflictos resueltos en models.py/errors.py/sprint-status)
 # 3-6 → done 2026-06-12 (cross-tenant support view: audit_log modelo+migración+repo con fail-closed, GET /api/admin/tenants/{id}/sessions con trío 404, página /admin/tenants/[id] Table+duales sin export, smoke manual verificado)
@@ -64,6 +65,7 @@ project: cc
 # 2-3 → ready-for-dev 2026-06-11 (story file created — pause/resume/stop endpoints + máquina de estados, worker release/abort, pill/controles/flood-notice; absorbe diferidos 2-2 #1/#3/#6)
 # 2-2 → done 2026-06-11 (implementation complete: gate categories + category-filtered selector + batch creation/queuing + send worker + WS broadcaster + full tests)
 # 2-2 → ready-for-dev 2026-06-11 (story file created — full context: gate rename, scope fence vs 2.3/2.4/2.5/3.x, legacy port map; owner additions: gate_categories + cliente ve name/categoría/value + selector dos pasos)
+# 4-4 → review 2026-06-12 (launch prep: gate harnesses + 14 tests, daily pg_dump timer, docs/runbooks/; epic-4 → in-progress; owner manual actions pending — see story file)
 # 2-1 → review 2026-06-11 (gate catalog implemented: migration + CRUD API + /admin/gates page + 16 tests; all gates green)
 # 2-1 → ready-for-dev 2026-06-11 (story file created; epic-2 → in-progress)
 # 1-3 → review 2026-06-11
@@ -113,5 +115,5 @@ development_status:
   4-1-watchdog-de-respuestas-y-deteccion-de-perdida-de-sesion: done
   4-2-admission-control-con-cola-de-espera: done
   4-3-observabilidad-del-guardarrail-de-baneo: backlog
-  4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: backlog
+  4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: done
   epic-4-retrospective: optional

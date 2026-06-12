@@ -41,7 +41,10 @@ echo "==> [4/6] frontend build"
 (cd frontend && sudo -u cc npm ci && sudo -u cc npm run build)
 
 echo "==> [5/6] refresh systemd units"
-cp deploy/cc-core.service deploy/cc-web.service /etc/systemd/system/
+# cc-backup.{service,timer} (Story 4.4) are refreshed too; copying them does
+# not enable the timer — first-time enable is README step 12.
+cp deploy/cc-core.service deploy/cc-web.service \
+   deploy/cc-backup.service deploy/cc-backup.timer /etc/systemd/system/
 systemctl daemon-reload
 
 echo "==> [6/6] restart services"

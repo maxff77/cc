@@ -1,0 +1,19 @@
+# CC daily Postgres backup schedule (Story 4.4)
+#
+# Install: sudo cp deploy/cc-backup.service deploy/cc-backup.timer /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now cc-backup.timer
+# Verify:  systemctl list-timers cc-backup.timer
+
+[Unit]
+Description=Daily CC Postgres backup at 04:30 UTC
+
+[Timer]
+# 04:30 UTC — low-traffic window for the lohari VPS.
+OnCalendar=*-*-* 04:30:00 UTC
+# A run missed while the VPS was down fires on the next boot.
+Persistent=true
+# Spread load a little; never skips a day.
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
