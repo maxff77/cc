@@ -4,7 +4,7 @@ baseline_commit: a2d3aa3
 
 # Story 1.5: Renovar plan y bloquear/desbloquear cliente
 
-Status: review
+Status: done
 
 ## Story
 

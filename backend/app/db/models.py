@@ -6,7 +6,7 @@ via new Alembic migrations (no tables ahead of need).
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, false, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, false, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -89,3 +89,38 @@ class AuthSession(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="auth_sessions")
+
+
+class Gate(Base):
+    """Catalog entry for a gate (Story 2.1).
+
+    GLOBAL catalog — intentionally NO tenant_id: the owner curates one shared
+    list for all tenants. ``value`` is stored verbatim with its dot (e.g.
+    ``.zo``). Soft-delete via ``deleted_at`` (NULL = active): retiring an entry
+    hides it from selectors but keeps the row, since batches/sessions snapshot
+    the gate string at creation and history must never be rewritten.
+    """
+
+    __tablename__ = "gates"
+    __table_args__ = (
+        # Uniqueness among ACTIVE entries only — a retired value can be
+        # re-created as a new active row.
+        Index(
+            "uq_gates_value_active",
+            "value",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    value: Mapped[str] = mapped_column(String(20))
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
