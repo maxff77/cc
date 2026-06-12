@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from app.core import capture, send_worker
+from app.core import alerts, capture, send_worker
 from app.core.scheduler import scheduler
 from app.core.telegram import gateway
 from app.core.watchdog import watchdog
@@ -189,6 +189,19 @@ def reset_watchdog() -> Iterator[None]:
     watchdog.reset()
     yield
     watchdog.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_alerts() -> Iterator[None]:
+    """Wipe the guardrail alert windows around every test.
+
+    Story 4.3 state is process memory by design — without this, FloodWaits
+    raised in one test would saturate the alert window (or leave its latch
+    set) for every later module (the same trap as the 2.4 governor).
+    """
+    alerts.reset()
+    yield
+    alerts.reset()
 
 
 @pytest.fixture(autouse=True)

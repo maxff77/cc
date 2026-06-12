@@ -25,6 +25,7 @@ from app.api.auth import router as auth_router
 from app.api.batches import router as batches_router
 from app.api.gates import router as gates_router
 from app.api.health import router as health_router
+from app.api.observability import router as observability_router
 from app.api.sessions import router as sessions_router
 from app.api.watchdog import router as watchdog_router
 from app.api.ws import router as ws_router
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(batches_router)
     app.include_router(sessions_router)
     app.include_router(watchdog_router)
+    app.include_router(observability_router)
     app.include_router(ws_router)
     return app
 

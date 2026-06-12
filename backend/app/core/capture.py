@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import exc as sa_exc
 
-from app.core import attribution
+from app.core import alerts, attribution
 from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
 from app.core.watchdog import watchdog
@@ -105,6 +105,11 @@ _boot_gate.set()
 # of send_worker._sent_by_tenant: observability only (ban-guardrail,
 # architecture assumption A1), seed of Story 4.3's dashboards.
 _unmatched_total = 0
+
+
+def unmatched_total() -> int:
+    """Current unmatched bucket size (Story 4.3 observability slice)."""
+    return _unmatched_total
 
 
 def enqueue(reply: IncomingReply) -> None:
@@ -267,6 +272,10 @@ async def process_incoming(reply: IncomingReply) -> None:
                 reply.reply_to_msg_id,
                 _unmatched_total,
             )
+            # Abnormal growth alerts the owner (Story 4.3, AC 3 — attribution
+            # health is part of the ban guardrail). Final attempts only:
+            # retries of the send→record race never feed the window.
+            await alerts.note_unmatched()
             return
 
         previous = await responses_repo.last_full_revision(

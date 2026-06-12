@@ -354,6 +354,13 @@ async def queue_position(session: AsyncSession, batch_id: int) -> int:
     return ahead + 1
 
 
+async def count_waiting(session: AsyncSession) -> int:
+    """Depth of the FIFO waiting queue (Story 4.3 observability slice)."""
+    stmt = select(func.count()).where(Batch.state == STATE_WAITING)
+    count: int = (await session.execute(stmt)).scalar_one()
+    return count
+
+
 async def mark_sending(session: AsyncSession, line: BatchLine) -> None:
     """Claim a line: state → 'sending' (flush; caller commits)."""
     line.state = LINE_SENDING

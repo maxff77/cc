@@ -62,13 +62,32 @@ class Scheduler:
         self._last_client_tenant_id: int | None = None
         self._last_owner_tenant_id: int | None = None
         self._last_was_owner: bool = False
+        # Observability counters (Story 4.3) — process memory like the rest
+        # of the governor: the structured logs are the durable series.
+        self._flood_events_total: int = 0
+        self._governor_raises: int = 0
 
     # --- adaptive interval (AC 2) + governor (AC 4) -------------------------
 
     @property
     def g_min(self) -> float:
-        """Current governor floor (observability for tests/logs)."""
+        """Current governor floor (observability for tests/logs).
+
+        Decay is LAZY (it runs in ``interval()``): this may read high until
+        the worker's next turn — accepted, the read is observability.
+        """
         return self._g_min
+
+    @property
+    def flood_events_total(self) -> int:
+        """FloodWaits seen since boot (Story 4.3 observability slice)."""
+        return self._flood_events_total
+
+    @property
+    def governor_raises(self) -> int:
+        """Times a FloodWait actually RAISED ``g_min`` (at the ceiling a
+        FloodWait still counts as an event but not as a raise)."""
+        return self._governor_raises
 
     def interval(self, n: int) -> float:
         """``G = max(g_min, P(n)/n)`` for ``n`` active (non-paused) senders."""
@@ -87,7 +106,11 @@ class Scheduler:
         the shared account escalates everyone's next FloodWait). No default on
         ``seconds`` on purpose — no caller may forget the window.
         """
+        before = self._g_min
         self._g_min = min(self._g_min * _GOVERNOR_FACTOR, _G_MIN_CEIL)
+        self._flood_events_total += 1
+        if self._g_min > before:
+            self._governor_raises += 1
         self._last_flood_at = self._now()
         self._flood_until = max(self._flood_until, self._now() + seconds)
 

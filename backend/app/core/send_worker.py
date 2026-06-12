@@ -70,7 +70,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import capture
+from app.core import alerts, capture
 from app.core.broadcaster import broadcaster
 from app.core.scheduler import scheduler
 from app.core.telegram import FloodWaitError, SessionLostError, gateway
@@ -95,8 +95,13 @@ _ERROR_RETRY_SECONDS = 2.0
 _MAX_SEND_ATTEMPTS = 3
 
 # Per-tenant sent counter — process memory ON PURPOSE (mirror of the legacy
-# "counters never reset"); structured-log observability only, never durable.
+# "counters never reset"); structured-log + GET observability, never durable.
 _sent_by_tenant: Counter[int] = Counter()
+
+
+def sent_by_tenant() -> dict[int, int]:
+    """Copy of the per-tenant sent counters (Story 4.3 observability slice)."""
+    return dict(_sent_by_tenant)
 
 # Wakes any in-flight sleep (pause/resume/stop interrupt instantly).
 _wake = asyncio.Event()
@@ -575,14 +580,20 @@ async def _send_with_retries(
             # claiming ANY tenant's line (Task 5) …
             scheduler.note_flood_wait(float(e.seconds))
             logger.warning(
-                "event=flood_wait seconds=%s g_min=%s tenant=%s batch=%s",
+                "event=flood_wait seconds=%s g_min=%s flood_total=%s "
+                "raises_total=%s tenant=%s batch=%s",
                 e.seconds,
                 scheduler.g_min,
+                scheduler.flood_events_total,
+                scheduler.governor_raises,
                 tenant_id,
                 batch_id,
             )
             # … and is explained to everyone (global event, architecture).
             await broadcaster.emit_global("flood.wait", {"seconds": e.seconds})
+            # Repeated FloodWaits inside the alert window alert the OWNER
+            # (Story 4.3, AC 1 — the leading ban indicator).
+            await alerts.note_flood_wait()
             outcome = await _wait_respecting_state(batch_id, float(e.seconds))
             if outcome != "elapsed":
                 return outcome
