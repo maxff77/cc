@@ -242,7 +242,9 @@ function CreateUserForm({
   }
 
   return (
-    <SectionCard legend={title}>
+    // legendAs="h2": the legend replaces the old "Crear cliente"/"Crear
+    // admin" h2 headings — keep the document outline under the page h1.
+    <SectionCard legend={title} legendAs="h2">
       {banner && (
         <Alert className="mb-3" status="danger">
           {banner}
@@ -760,14 +762,19 @@ function ResetPasswordAction({
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) {
-            // Exactly-once semantics: closing by ANY route (ESC, backdrop,
-            // Listo) runs dismiss() while the password is showing.
+            // Today only the footer buttons close this dialog (the Backdrop
+            // below pins isDismissable={false} + isKeyboardDismissDisabled —
+            // HeroUI 3.1's defaults, made explicit so a library upgrade or a
+            // stray prop can't silently open an ESC/backdrop path that
+            // destroys the one-time password by accident). This branch is
+            // the safety net: if any close route ever bypasses "Listo", the
+            // exactly-once password is still destroyed, never recoverable.
             if (tempPassword) dismiss();
             else setError(null);
           }
         }}
       >
-        <AlertDialog.Backdrop>
+        <AlertDialog.Backdrop isKeyboardDismissDisabled isDismissable={false}>
           <AlertDialog.Container>
             <AlertDialog.Dialog>
               {tempPassword ? (

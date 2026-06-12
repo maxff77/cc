@@ -17,20 +17,14 @@ export function DataRow({ left, text, status, nueva }: DataRowProps) {
   return (
     <div
       className={clsx(
-        // transition-colors: the `nueva` highlight fades out smoothly when
-        // the store drops the flag (CSS only, respects reduced motion).
-        "flex items-center gap-2 border-b border-separator px-3 py-1 font-mono text-[11px] leading-[1.4] transition-colors duration-700 motion-reduce:transition-none",
+        "flex items-center gap-2 border-b border-separator px-3 py-1 font-mono text-[11px] leading-[1.4]",
         nueva && "bg-success/12 text-success",
       )}
     >
-      {/* Fixed-width right-aligned gutter: timestamps/indexes align like a
-          true tape. */}
-      <span className="w-14 shrink-0 text-right text-muted tabular-nums">
-        {left}
-      </span>
+      <span className="shrink-0 text-muted tabular-nums">{left}</span>
       <span className="min-w-0 flex-1 truncate">{text}</span>
       {nueva && (
-        <span className="shrink-0 rounded bg-success/20 px-1 text-[9px] font-medium uppercase tracking-[0.1em] text-success">
+        <span className="shrink-0 rounded-md bg-success/20 px-1 text-[9px] font-medium uppercase tracking-[0.08em] text-success">
           nueva
         </span>
       )}

@@ -27,7 +27,10 @@ export function PageHeader({
             className="self-start text-[10px] font-bold uppercase tracking-[0.1em] text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
             href={back.href}
           >
-            ← {back.label.toUpperCase()}
+            {/* The caps are visual only (CSS `uppercase` above) — an
+                all-caps string in the accessibility tree gets spelled
+                letter-by-letter by some screen readers. */}
+            ← {back.label}
           </Link>
         )}
         <h1 className="truncate text-lg font-bold tracking-[-0.01em]">

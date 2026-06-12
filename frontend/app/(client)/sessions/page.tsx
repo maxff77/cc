@@ -10,7 +10,6 @@
 // here: the spine's row actions are Renombrar/Continuar/Eliminar only.
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -117,7 +116,6 @@ function groupByGate(items: SessionOut[]): GateGroup[] {
 }
 
 export default function SessionsPage() {
-  const router = useRouter();
   const sessions = useQuery({
     queryKey: SESSIONS_KEY,
     queryFn: () => api.get<SessionListResponse>("/api/sessions"),
@@ -134,13 +132,16 @@ export default function SessionsPage() {
       </Alert>
     );
   } else if (sessions.data.items.length === 0) {
-    // Empty state (AC 7) — copy verbatim, never a dead-end (UX-DR16).
+    // Empty state (AC 7) — copy verbatim, never a dead-end (UX-DR16). A REAL
+    // link, not a Button+router.push: navigation keeps anchor semantics
+    // (middle-click, copy-link, announced as link) and matches the detail
+    // page's NotFound escape action.
     content = (
       <EmptyState
         action={
-          <Button variant="primary" onPress={() => router.push("/")}>
+          <Link className="text-accent underline" href="/">
             Ir a Envío
-          </Button>
+          </Link>
         }
         eyebrow="Historial"
         message="Todavía no tienes sesiones. Tu primer lote crea una."

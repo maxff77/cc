@@ -1,5 +1,8 @@
-// Live mono count badge (ui-polish-spec §2.5) — extracted from
-// response-views (Filtrada's travels in success green). Visible at 0 too.
+// Live mono count badge (ui-polish-spec §2.5) — Filtrada's travels in
+// success green; visible at 0 too. Currently unreferenced ON PURPOSE: its
+// consumer (response-views, §3.9 data panels) was reverted to the pre-polish
+// look because those panels render inside Envío — the §3.9 restyle is
+// deferred until story 2-2 lands and re-adopts this primitive.
 import clsx from "clsx";
 
 export function CountBadge({

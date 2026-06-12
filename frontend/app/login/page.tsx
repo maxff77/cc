@@ -103,7 +103,8 @@ export default function LoginPage() {
           <ContactPanel message={COPY.account_blocked} />
         )}
 
-        <SectionCard legend="ACCESO">
+        {/* legendAs="h2": the legend is the form's section heading. */}
+        <SectionCard legend="ACCESO" legendAs="h2">
           <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <TextField
               isRequired

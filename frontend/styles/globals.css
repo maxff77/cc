@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
+/* NOTE: app/layout.tsx viewport.themeColor hardcodes hex approximations of
+   the two --background values below (light #f5f6f8 / dark #15181b) — an HTML
+   meta tag cannot reference CSS variables. If you retune --background,
+   update those hexes too. */
 /* === BEGIN canonical theme tokens (heroui-theme.css — copied VERBATIM, UX-DR1/UX-DR2) === */
 /*
  * HeroUI Theme Customization

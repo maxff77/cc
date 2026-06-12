@@ -102,7 +102,8 @@ export default function ChangePasswordPage() {
 
         {banner && <Alert status="danger">{banner}</Alert>}
 
-        <SectionCard legend="CONTRASEÑA">
+        {/* legendAs="h2": the legend is the form's section heading. */}
+        <SectionCard legend="CONTRASEÑA" legendAs="h2">
           <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <TextField
               isRequired

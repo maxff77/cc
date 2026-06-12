@@ -302,7 +302,8 @@ function CategoriesBlock({
   }
 
   return (
-    <SectionCard legend="CATEGORÍAS">
+    // legendAs="h2": replaces the old "Categorías" h2 heading.
+    <SectionCard legend="CATEGORÍAS" legendAs="h2">
       <div className="flex flex-col gap-3">
         {banner && <Alert status="danger">{banner}</Alert>}
 
@@ -616,7 +617,8 @@ function CreateGateForm({
   }
 
   return (
-    <SectionCard legend="CREAR GATE">
+    // legendAs="h2": replaces the old "Crear gate" h2 heading.
+    <SectionCard legend="CREAR GATE" legendAs="h2">
       {banner && (
         <Alert className="mb-3" status="danger">
           {banner}
