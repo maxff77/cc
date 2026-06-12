@@ -43,6 +43,7 @@ project: cc
 # 1-2 → done 2026-06-11 (code review: 1 patch applied — logout delete_cookie flags, gates green)
 # 1-4 → done 2026-06-11 (code review: 10 findings fixed)
 # 1-6 → done 2026-06-11 (code review: 8 patches applied, 1 deferred, 45 tests green)
+# 1-7 → in-progress 2026-06-11 (code review: 15 patches applied, 3 deferred; 2 owner actions remain — telegram re-auth AC4 + browser smoke AC5)
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
@@ -56,7 +57,7 @@ development_status:
   1-4-expiracion-automatica-del-plan-y-lockout-total: done
   1-5-renovar-plan-y-bloquear-desbloquear-cliente: done
   1-6-reset-de-contrasena-con-cambio-forzado: done
-  1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: review
+  1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: in-progress
   epic-1-retrospective: optional
 
   # Epic 2: Envío en lote controlado

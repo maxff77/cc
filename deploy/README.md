@@ -1,6 +1,9 @@
 # CC — first-deploy runbook (Story 1.7)
 
 **Subsequent deploys are one command: `sudo bash /srv/cc/deploy/deploy.sh`.**
+The script refuses to run off `main` — if the first install was done from a
+story branch (the 1.7 deploy was), switch once after the merge:
+`cd /srv/cc && sudo -u cc git fetch && sudo -u cc git switch main`.
 Everything below is the one-time first install on the VPS (37.27.12.92).
 
 ## 1. DNS
@@ -31,6 +34,9 @@ touches it) and outside anything Caddy serves.
 ## 3. Clone
 
 Prerequisites: git, Python 3.12+, Node 22+ (frontend was generated for it).
+Install Node via **NodeSource** (`https://deb.nodesource.com`) or the distro
+package so that `/usr/bin/npm` exists — `cc-web.service` hardcodes that path
+(nvm/asdf installs land elsewhere and the unit fails with `203/EXEC`).
 
 ```bash
 sudo -u cc git clone <repo-url> /srv/cc
@@ -43,6 +49,7 @@ cd /srv/cc
 sudo -u cc python3.12 -m venv backend/.venv
 sudo -u cc backend/.venv/bin/pip install -e ./backend
 sudo -u cc cp backend/.env.example backend/.env
+sudo -u cc chmod 600 backend/.env   # holds every prod credential
 sudo -u cc nano backend/.env   # prod values: see "Production (Story 1.7)" section
 ```
 
@@ -50,13 +57,36 @@ Required prod values: `DATABASE_URL` (step 5), `COOKIE_SECURE=true`,
 `TRUST_FORWARDED_FOR=true`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`.
 Real credentials — never committed.
 
-## 5. Postgres (already running on the VPS)
+## 5. Postgres (Dockerized on this VPS)
+
+Postgres runs in Docker (`lohari-postgres`), fronted by `lohari-pgbouncer`
+on `:5432` in **transaction** pool mode — which breaks asyncpg's prepared
+statements. The backend must connect **directly to the postgres container**,
+NOT through pgbouncer.
 
 ```bash
-sudo -u postgres psql -c "CREATE ROLE cc LOGIN PASSWORD '<strong-password>';"
-sudo -u postgres psql -c "CREATE DATABASE cc OWNER cc;"
+sudo docker exec -it lohari-postgres psql -U postgres
+postgres=# CREATE ROLE cc LOGIN;
+postgres=# \password cc          -- prompts; keeps the password out of shell history/ps
+postgres=# CREATE DATABASE cc OWNER cc;
+postgres=# \q
+# Container IP on the lohari-net bridge (reachable from the host):
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' lohari-postgres
+```
+
+`DATABASE_URL=postgresql+asyncpg://cc:<password>@<container-ip>:5432/cc`
+
+> ⚠️ **The container IP (`172.18.0.5` at deploy time) is not stable across
+> container recreates.** If the backend suddenly loses the DB after Docker
+> maintenance: re-run the `docker inspect` above, update `DATABASE_URL` in
+> `/srv/cc/backend/.env`, then `sudo systemctl restart cc-core`.
+
+```bash
 cd /srv/cc/backend && sudo -u cc .venv/bin/alembic upgrade head
 ```
+
+(Generic VPS with native Postgres: `sudo -u postgres psql`, same `CREATE
+ROLE` / `\password` / `CREATE DATABASE`, and `127.0.0.1:5432` in the URL.)
 
 ## 6. Owner seed
 
@@ -101,20 +131,23 @@ ss -tlnp | grep -E ':80|:443'
 
 **Caddy is ALREADY running on this VPS** (verified 2026-06-11: port 80
 answers `Server: Caddy`, serving other lohari sites). Do **NOT** reinstall
-or overwrite `/etc/caddy/Caddyfile` — APPEND the cc site block to the
-existing config:
+or overwrite `/etc/caddy/Caddyfile` — add the cc site as a separate
+**imported** file (this is what the live deploy did; idempotent to re-run):
 
 ```bash
-sudo systemctl edit caddy        # add:  [Service]
-                                 #       Environment=CC_DOMAIN=cc.lohari.com.mx
-cat /srv/cc/deploy/Caddyfile | sudo tee -a /etc/caddy/Caddyfile
+sudo cp /srv/cc/deploy/Caddyfile /etc/caddy/cc.caddy
+sudo sed -i 's/{$CC_DOMAIN}/cc.lohari.com.mx/' /etc/caddy/cc.caddy
+grep -q 'import cc.caddy' /etc/caddy/Caddyfile \
+    || echo 'import cc.caddy' | sudo tee -a /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-(Alternative to the env var: replace `{$CC_DOMAIN}` with
-`cc.lohari.com.mx` directly in `/etc/caddy/Caddyfile` — that file is
-server-local, not committed.)
+The domain is substituted directly (sed) instead of using an
+`Environment=CC_DOMAIN=…` drop-in: a drop-in is only applied at process
+START — `systemctl reload` never sees a new value, and `caddy validate`
+from a shell can't see it either. `/etc/caddy/cc.caddy` is server-local,
+never committed.
 
 Caddy obtains the Let's Encrypt certificate for the new site on reload.
 

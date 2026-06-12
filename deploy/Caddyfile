@@ -1,15 +1,21 @@
 # CC production Caddyfile (Story 1.7)
 #
-# Install: copy (or symlink) this file to /etc/caddy/Caddyfile and reload:
-#     sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+# Install — the VPS Caddy already serves other lohari sites. NEVER overwrite
+# /etc/caddy/Caddyfile; add this site as a separate imported file
+# (idempotent, this is what the live deploy did — runbook step 9):
+#     sudo cp deploy/Caddyfile /etc/caddy/cc.caddy
+#     sudo sed -i 's/{$CC_DOMAIN}/<subdomain>/' /etc/caddy/cc.caddy
+#     grep -q 'import cc.caddy' /etc/caddy/Caddyfile \
+#         || echo 'import cc.caddy' | sudo tee -a /etc/caddy/Caddyfile
+#     sudo caddy validate --config /etc/caddy/Caddyfile
 #     sudo systemctl reload caddy
 #
-# CC_DOMAIN: the public subdomain is NOT hardcoded — Caddy substitutes the
-# {$CC_DOMAIN} placeholder from its process environment. Set it in Caddy's
-# systemd drop-in (sudo systemctl edit caddy):
-#     [Service]
-#     Environment=CC_DOMAIN=cc.example.com
-# or in an EnvironmentFile such as /etc/caddy/caddy.env referenced there.
+# CC_DOMAIN: the public subdomain is NOT hardcoded — substitute the
+# {$CC_DOMAIN} placeholder at install time (sed above; /etc/caddy/cc.caddy is
+# server-local, never committed). An Environment= drop-in also works, but is
+# only applied at process START — `systemctl reload` never sees it, and
+# `caddy validate` from a shell can't see it either. Direct substitution
+# keeps validate meaningful.
 #
 # HTTPS: Caddy v2 provisions and renews Let's Encrypt certificates
 # automatically for any concrete site address — no TLS config needed.

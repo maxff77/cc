@@ -13,7 +13,10 @@
 
 [Unit]
 Description=CC backend (FastAPI/uvicorn)
-After=network-online.target postgresql.service
+# Postgres may be native (postgresql.service) or Dockerized (docker.service,
+# the lohari VPS case) — systemd silently ignores After= on absent units, so
+# both are listed.
+After=network-online.target postgresql.service docker.service
 Wants=network-online.target
 
 [Service]

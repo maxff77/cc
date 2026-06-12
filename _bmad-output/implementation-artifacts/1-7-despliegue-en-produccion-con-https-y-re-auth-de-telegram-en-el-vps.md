@@ -4,7 +4,7 @@ baseline_commit: dcdb03f
 
 # Story 1.7: Despliegue en producción con HTTPS y re-auth de Telegram en el VPS
 
-Status: review
+Status: in-progress
 
 ## Story
 
@@ -45,7 +45,7 @@ so that clients log in to a real production service.
   - [x] Routing, in this order (Caddy `handle` blocks; first match wins):
     - `handle /api/*` → `reverse_proxy 127.0.0.1:8000`
     - `handle /ws` → `reverse_proxy 127.0.0.1:8000` (WebSocket upgrade is automatic in Caddy v2 `reverse_proxy`; no special directive. `/ws` 404s until Story 2.2 ships it — route it NOW anyway, AC1 demands it)
-    - `handle` (catch-all) → `reverse_proxy 127.0.0.1:3000` (Next.js)
+    - `handle` (catch-all) → `reverse_proxy 127.0.0.1:3100` (Next.js; 3100 porque la VPS lohari ya corre otro Next en 3000 — fix `ea29780`)
   - [x] Caddy sets `X-Forwarded-For` by default when reverse-proxying — this is what makes `TRUST_FORWARDED_FOR=true` safe in prod (the login throttle's per-IP key, see Task 5).
   - [x] Comment header in the file: how to install (`/etc/caddy/Caddyfile` or import), where `CC_DOMAIN` is set, and the nginx+certbot fallback note (architecture: if nginx already holds :80/:443 on the VPS, it takes Caddy's place — check `ss -tlnp | grep -E ':80|:443'` before installing Caddy).
 - [x] Task 2: systemd units (AC: 2)
@@ -58,7 +58,7 @@ so that clients log in to a real production service.
     - Comment in the unit: this is the process that will own `anon.session` from Story 2.2 on — NEVER run a second instance (single-owner rule, architecture mandate).
   - [x] `deploy/cc-web.service` — Next.js production server:
     - `User=cc`, `WorkingDirectory=/srv/cc/frontend`
-    - `ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3000` (requires a prior `npm run build` — deploy.sh's job; `next start` refuses to run without `.next/`)
+    - `ExecStart=/usr/bin/npm run start -- -H 127.0.0.1 -p 3100` (3100: port 3000 taken on the lohari VPS; requires a prior `npm run build` — deploy.sh's job; `next start` refuses to run without `.next/`)
     - `Restart=on-failure`, `RestartSec=3`, `Environment=NODE_ENV=production`
     - Node 22+ on the VPS is a prerequisite (frontend was generated for it) — runbook item, not unit config.
   - [x] Both units: `[Install] WantedBy=multi-user.target`. Installed via symlink or copy to `/etc/systemd/system/` + `systemctl daemon-reload` + `enable --now` (runbook, Task 6).
@@ -101,6 +101,30 @@ so that clients log in to a real production service.
   - [x] Frontend gates: `npm run lint` + `npx tsc --noEmit` + `next build` — nothing in `frontend/` changes, but run them anyway (definition-of-done gate inherited from 1.1–1.6).
   - [x] `bash -n deploy/deploy.sh` (syntax check) and, if available locally, `caddy validate --config deploy/Caddyfile --adapter caddyfile` with a dummy `CC_DOMAIN`. systemd units: visual review against the directives in Task 2 (no local systemd on macOS).
   - [x] No new automated tests: this story's artifacts are infra files exercised on the VPS. The real verification is the runbook's smoke test executed by the owner (Richard) on the VPS — list it in the Dev Agent Record as "manual verification: pending VPS execution" rather than claiming it done from the dev machine.
+
+### Review Findings
+
+- [x] [Review][Decision] Production DATABASE_URL pinned to ephemeral Docker bridge IP — backend connects to `172.18.0.5:5432` (bypassing pgbouncer transaction mode). **RESOLVED (2026-06-11): documented + accepted** — touching the shared lohari postgres container risks the other sites; recovery procedure (docker inspect → update `.env` → restart cc-core) now in runbook step 5.
+- [ ] [Review][Decision] AC4 unmet — `anon.session` absent in production. **RESOLVED (2026-06-11): deferred to owner** — re-auth is interactive (phone→code→2FA), only Richard can run it. REMAINING ACTION (Richard, on the VPS): set `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` in `/srv/cc/backend/.env`, then `cd /srv/cc/backend && sudo .venv/bin/python -m scripts.telegram_auth`; verify `-rw------- cc cc /var/lib/cc/anon.session`. Blocks story → done.
+- [ ] [Review][Decision] AC5 smoke test was curl-only — runbook step 11 requires browser-level checks. **RESOLVED (2026-06-11): record softened** to "curl-level, browser pass PENDING" (needs the owner's browser + password). REMAINING ACTION (Richard, 1 min): open `https://cc.lohari.com.mx`, login → home, check padlock, wrong password → inline Spanish error.
+- [x] [Review][Patch] deploy.sh privilege model broken — README says `sudo bash deploy.sh` but the script runs git/pip/npm as root in a cc-owned repo (git "dubious ownership" abort; root-owned `.venv`/`node_modules`/`.next`); run as `cc` instead and the final `sudo systemctl` fails (no sudoers rule) after migrations already applied [deploy/deploy.sh]
+- [x] [Review][Patch] telegram_auth.py: session file created world-readable (umask default) at `connect()`; `_harden()` runs only on success paths — Ctrl+C/EOF at the code/2FA prompt leaves an authorized 644 session. Set `os.umask(0o077)` before connect + `try/finally` for harden/disconnect [backend/scripts/telegram_auth.py:431]
+- [x] [Review][Patch] telegram_auth.py hardening gaps: `mkdir` without `mode=0o700` (silently creates 755 dir if runbook step 2 skipped); `os.chmod` can raise uncaught PermissionError when file owned by another user; file ownership never verified (root-owned 600 file in a 700 cc dir is unreadable by cc) [backend/scripts/telegram_auth.py:409-424]
+- [x] [Review][Patch] telegram_auth.py: missing/invalid TELEGRAM_* env vars → raw pydantic ValidationError traceback; bootstrap_owner.py has the friendly sys.exit pattern for exactly this [backend/scripts/telegram_auth.py:main]
+- [x] [Review][Patch] Caddyfile header instructs `sudo cp` over the live shared `/etc/caddy/Caddyfile` — following it destroys the other lohari sites; README step 9 forbids exactly that. Rewrite header to the append/import procedure [deploy/Caddyfile:2-4]
+- [x] [Review][Patch] README step 9 doesn't match the executed deploy and has 4 procedural bugs: actual deploy used `/etc/caddy/cc.caddy` + `import` (not `tee -a`); `systemctl reload` won't pick up a new `Environment=` drop-in (needs restart); `tee -a` is non-idempotent (duplicate site block breaks all sites); `caddy validate` runs in a shell where CC_DOMAIN is unset [deploy/README.md:step 9]
+- [x] [Review][Patch] README step 5 (Postgres) unexecutable on the target VPS — prescribes `sudo -u postgres psql` + `127.0.0.1:5432`, but VPS Postgres is Dockerized behind pgbouncer (transaction mode breaks asyncpg); actual deploy used `docker exec` + container IP. Fold reality back into the runbook [deploy/README.md:step 5]
+- [x] [Review][Patch] README step 4 creates `backend/.env` (all prod credentials) world-readable — add `chmod 600` [deploy/README.md:step 4]
+- [x] [Review][Patch] README step 5 passes the Postgres role password on the command line (shell history + ps) — use `\password cc` or heredoc [deploy/README.md:step 5]
+- [x] [Review][Patch] Story file contradicts shipped artifacts on frontend port: Task 1, Task 2, Completion Notes and Deliverable Inventory all say 3000; shipped Caddyfile + cc-web.service use 3100 [this file]
+- [x] [Review][Patch] File List omits `frontend/.gitignore` and `frontend/package-lock.json` (committed in 0b7571f) [this file: File List]
+- [x] [Review][Patch] deploy.sh blind-pulls the checked-out branch; VPS currently sits on `story/1.7-production-deploy` — after merge+branch-delete every deploy fails or tracks a dead branch. Add a main-branch guard + post-merge `git switch main` note [deploy/deploy.sh:12]
+- [x] [Review][Patch] cc-core `After=postgresql.service` is a silent no-op on this VPS (Postgres is in Docker) — add `docker.service` to After= (harmless where absent) [deploy/cc-core.service:16]
+- [x] [Review][Patch] deploy.sh never refreshes the installed systemd units — unit changes ship in git but `/etc/systemd/system/` copies go stale; add cp + daemon-reload before restart [deploy/deploy.sh]
+- [x] [Review][Patch] cc-web hardcodes `/usr/bin/npm` but the runbook never pins the Node install method (nvm/asdf installs → 203/EXEC) — pin NodeSource (or equivalent providing /usr/bin/npm) in README step 3 [deploy/cc-web.service + deploy/README.md:step 3]
+- [x] [Review][Defer] Caddy `handle /ws` is exact-match (no `/ws/*`) and bare `/api` falls through to Next.js — real path shape unknown until Story 2.2 ships the endpoint; revisit then [deploy/Caddyfile:29] — deferred, blocked on 2.2
+- [x] [Review][Defer] Partial-failure window: if `npm run build` fails after `alembic upgrade head`, old code keeps running on the migrated schema with no rollback path — accepted at MVP scale (additive migrations) [deploy/deploy.sh:18-24] — deferred, accepted risk
+- [x] [Review][Defer] telegram_auth.py: corrupt/foreign pre-existing session file → raw sqlite/Telethon traceback with no delete-and-rerun hint — rare; full re-auth runbook is Story 4.4 [backend/scripts/telegram_auth.py:426-433] — deferred, 4.4 territory
 
 ## Dev Notes
 
@@ -155,9 +179,9 @@ IS NOT — resist building these:
 
 | File | AC | Content |
 |---|---|---|
-| `deploy/Caddyfile` | 1 | `{$CC_DOMAIN}` site, `/api/*`+`/ws` → :8000, catch-all → :3000, auto-HTTPS |
+| `deploy/Caddyfile` | 1 | `{$CC_DOMAIN}` site, `/api/*`+`/ws` → :8000, catch-all → :3100, auto-HTTPS |
 | `deploy/cc-core.service` | 2 | uvicorn 127.0.0.1:8000, User=cc, Restart=on-failure, single-owner comment |
-| `deploy/cc-web.service` | 2 | `next start` 127.0.0.1:3000, User=cc, Restart=on-failure |
+| `deploy/cc-web.service` | 2 | `next start` 127.0.0.1:3100, User=cc, Restart=on-failure |
 | `deploy/deploy.sh` | 3 | ff-only pull → pip install → alembic upgrade head → npm ci+build → restart both |
 | `deploy/README.md` | 1,2,4,5 | first-deploy runbook + smoke test |
 | `backend/scripts/telegram_auth.py` | 4 | interactive Telethon auth, chmod 600, idempotent, never-copy rule |
@@ -213,8 +237,8 @@ claude-fable-5 (Claude Fable 5)
 ### Completion Notes List
 
 - Task 0: dangling 1.6-review fix to `backend/app/api/auth.py` committed on its own on main (`5d93017 fix(backend): logout delete_cookie attribute parity`) before branching `story/1.7-production-deploy`. `.agents/` and `skills-lock.json` left untracked as instructed.
-- Task 1: `deploy/Caddyfile` — `{$CC_DOMAIN}` placeholder site, `handle /api/*` → 127.0.0.1:8000, `handle /ws` → 127.0.0.1:8000 (404 until Story 2.2 — expected), catch-all `handle` → 127.0.0.1:3000. Header comment covers install, CC_DOMAIN via systemd drop-in/env file, automatic HTTPS, and the nginx+certbot fallback with the `ss -tlnp` check.
-- Task 2: `deploy/cc-core.service` (uvicorn 127.0.0.1:8000, User/Group=cc, WorkingDirectory=/srv/cc/backend, Restart=on-failure RestartSec=3, After=network-online.target postgresql.service, single-owner-of-anon.session comment, no EnvironmentFile= — config.py resolves backend/.env CWD-independently) and `deploy/cc-web.service` (npm run start -H 127.0.0.1 -p 3000, NODE_ENV=production, same restart policy). Both WantedBy=multi-user.target.
+- Task 1: `deploy/Caddyfile` — `{$CC_DOMAIN}` placeholder site, `handle /api/*` → 127.0.0.1:8000, `handle /ws` → 127.0.0.1:8000 (404 until Story 2.2 — expected), catch-all `handle` → 127.0.0.1:3100. Header comment covers install (import cc.caddy, never overwrite the shared Caddyfile), CC_DOMAIN substituted at install time, automatic HTTPS, and the nginx+certbot fallback with the `ss -tlnp` check.
+- Task 2: `deploy/cc-core.service` (uvicorn 127.0.0.1:8000, User/Group=cc, WorkingDirectory=/srv/cc/backend, Restart=on-failure RestartSec=3, After=network-online.target postgresql.service, single-owner-of-anon.session comment, no EnvironmentFile= — config.py resolves backend/.env CWD-independently) and `deploy/cc-web.service` (npm run start -H 127.0.0.1 -p 3100, NODE_ENV=production, same restart policy). Both WantedBy=multi-user.target.
 - Task 3: `deploy/deploy.sh` — `set -euo pipefail`; ff-only pull → pip install -e ./backend → alembic upgrade head → npm ci + build → systemctl restart cc-core cc-web; each phase echoed; migrate/build strictly before restart. `bash -n` clean; executable bit set.
 - Task 4: `telethon>=1.40,<2.0` added to `backend/pyproject.toml` (story's only dep change; installs as 1.43.2). `backend/scripts/telegram_auth.py` — script-local `TelegramAuthSettings` (pydantic-settings, same backend/.env, extra="ignore" on the app side; NOT added to app/config.py), `TELEGRAM_SESSION_PATH` default `/var/lib/cc/anon.session`, parent-dir mkdir, idempotent already-authorized exit, Telethon `start()` drives phone→code→2FA, post-auth chmod 600 + verify + chown reminder, never-copy rule in the docstring. Passes `ruff check .` and standalone mypy; imports clean.
 - Task 5: `backend/.env.example` extended with the `# --- Production (Story 1.7) ---` commented section (COOKIE_SECURE=true, TRUST_FORWARDED_FOR=true with the Caddy/XFF rationale, prod DATABASE_URL shape, three TELEGRAM_* vars). Verified `frontend/middleware.ts` and `frontend/next.config.mjs` need no changes (origin-based /me fetch and dev-only rewrites, as the story predicted) — untouched.
@@ -231,7 +255,7 @@ Deployed live to the lohari VPS (37.27.12.92, Ubuntu 24.04). VPS-specific adapta
 - **Postgres is Dockerized** (`lohari-postgres:18`, fronted by `lohari-pgbouncer` on :5432 in **transaction** pool mode). pgbouncer transaction mode breaks asyncpg prepared statements, so the backend connects **directly to the postgres container IP `172.18.0.5:5432`** (reachable from the host over the `lohari-net` bridge), NOT through pgbouncer. Role `cc` + db `cc` created via `docker exec`. ⚠️ KNOWN RISK: if the postgres container is recreated its IP may change — update `DATABASE_URL` in `/srv/cc/backend/.env` if the backend loses the DB after a docker recreate.
 - **package-lock.json was gitignored** by the Next starter → `npm ci` failed on first deploy. Un-ignored and committed (`0b7571f`) so `deploy.sh`'s `npm ci` is reproducible.
 - **Owner seeded**: `owner@lohari.com.mx` (bootstrap_owner, idempotent).
-- **Smoke test PASSED over public HTTPS** (AC5): `GET /` → 307 → `/login` with a valid LE cert (TLS verify 0); `/api/health` → 200; owner login → 200 with `Set-Cookie: cc_session=…; HttpOnly; Secure; SameSite=lax` (COOKIE_SECURE=true confirmed); wrong password → 401; `/login` serves the Spanish HTML ("Iniciar sesión").
+- **Smoke test passed at curl level over public HTTPS** (AC5, partial): `GET /` → 307 → `/login` with a valid LE cert (TLS verify 0); `/api/health` → 200; owner login → 200 with `Set-Cookie: cc_session=…; HttpOnly; Secure; SameSite=lax` (COOKIE_SECURE=true confirmed); wrong password → 401; `/login` serves the Spanish HTML ("Iniciar sesión"). **Browser-level pass PENDING** (runbook step 11 items 1–2 + 4: owner login → home render, padlock, inline Spanish error) — curl evidence does not cover the rendered flow.
 - **AC4 (Telegram re-auth) PENDING — manual, owner-only**: requires `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` from https://my.telegram.org/apps + an interactive phone→code→2FA session. Does NOT block AC5 (Telethon client is Story 2.2). To complete: set the two TELEGRAM_* vars in `/srv/cc/backend/.env`, then `cd /srv/cc/backend && sudo -u cc .venv/bin/python -m scripts.telegram_auth` ON the VPS; verify `/var/lib/cc/anon.session` is `cc:cc` mode 600. `anon.session` is currently absent (expected).
 - Branch `story/1.7-production-deploy` deployed (cloned + checked out on the VPS); HEAD `0b7571f` at deploy time.
 
@@ -246,6 +270,8 @@ Deployed live to the lohari VPS (37.27.12.92, Ubuntu 24.04). VPS-specific adapta
 - `backend/pyproject.toml` (modified — telethon dependency)
 - `backend/.env.example` (modified — production section)
 - `backend/app/api/auth.py` (modified — Task 0 housekeeping commit `5d93017` on main, pre-branch)
+- `frontend/.gitignore` (modified — un-ignore `package-lock.json`, needed by deploy.sh's `npm ci`; commit `0b7571f`)
+- `frontend/package-lock.json` (new — committed for reproducible `npm ci`; commit `0b7571f`)
 - `_bmad-output/implementation-artifacts/1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps.md` (modified — this story file)
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` (modified — status tracking)
 
@@ -255,3 +281,4 @@ Deployed live to the lohari VPS (37.27.12.92, Ubuntu 24.04). VPS-specific adapta
 |------------|-------------------------------------------------------------|
 | 2026-06-11 | Story 1.7 drafted (context engine). Status → ready-for-dev. |
 | 2026-06-11 | Story 1.7 implemented: deploy/ artifacts (Caddyfile, 2 systemd units, deploy.sh, runbook), scripts/telegram_auth.py + telethon dep, prod env docs. All gates green (45 tests). VPS smoke test pending owner execution. Status → review. |
+| 2026-06-11 | Code review: 3 layers, 21 findings → 15 patches applied (deploy.sh privilege model + branch guard + unit refresh; telegram_auth umask/try-finally/ownership/friendly errors; Caddyfile header + README steps 3/4/5/9 rewritten to match the executed deploy; port 3100 + File List corrections), 3 deferred, 5 dismissed. 2 owner actions remain: Telegram re-auth on VPS (AC4) + browser smoke pass (AC5). Status → in-progress. |
