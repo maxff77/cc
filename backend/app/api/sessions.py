@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.broadcaster import broadcaster
+from app.core.redact import redact_reply_text
 from app.db.base import get_session
 from app.db.models import CaptureSession, User
 from app.db.repos import batches as batches_repo
@@ -188,7 +189,7 @@ async def get_session_detail(
                 id=row.id,
                 message_id=row.message_id,
                 status=row.status,
-                text=row.text,
+                text=redact_reply_text(row.text),
                 created_at=row.created_at,
             )
             for row in responses

@@ -43,6 +43,7 @@ from sqlalchemy import exc as sa_exc
 from app.core import alerts, attribution
 from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
+from app.core.redact import redact_reply_text
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
 from app.db.repos import responses as responses_repo
@@ -278,17 +279,22 @@ async def process_incoming(reply: IncomingReply) -> None:
             await alerts.note_unmatched()
             return
 
+        # 🔒 Strip the operator "Checked By" line BEFORE anything reads the
+        # text — dedup, storage, CC extraction and emission must all see the
+        # redacted version so the name never persists nor reaches a tenant.
+        clean_text = redact_reply_text(reply.text)
+
         previous = await responses_repo.last_full_revision(
             session, reply.message_id
         )
-        if previous is not None and previous.text == reply.text:
+        if previous is not None and previous.text == clean_text:
             return  # edition with no real change (legacy parity) — total no-op
 
         previous_status = previous.status if previous is not None else None
         status: str | None
-        if "✅" in reply.text:
+        if "✅" in clean_text:
             status = responses_repo.STATUS_OK
-        elif "❌" in reply.text:
+        elif "❌" in clean_text:
             status = responses_repo.STATUS_REJECTED
         else:
             # Intermediate edit (⏳) keeps the previous state (legacy parity).
@@ -309,7 +315,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             line_id=attributed.line_id,
             message_id=reply.message_id,
             status=status,
-            text=reply.text,
+            text=clean_text,
         )
         new_cc: list[str] = []
         if status == responses_repo.STATUS_OK:
@@ -320,7 +326,7 @@ async def process_incoming(reply: IncomingReply) -> None:
                 batch_id=attributed.batch_id,
                 line_id=attributed.line_id,
                 message_id=reply.message_id,
-                values=extract_cc(reply.text),
+                values=extract_cc(clean_text),
             )
         cc_total = await responses_repo.cc_count(
             session, attributed.capture_session_id
@@ -352,7 +358,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             "status": status,
             "previous_status": previous_status,
             "edited": reply.edited,
-            "text": reply.text,
+            "text": clean_text,
             "new_cc": new_cc,
             "cc_total": cc_total,
             "captured_at": datetime.now(UTC).isoformat(),

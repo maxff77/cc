@@ -25,6 +25,7 @@ the legacy. Three recorded decisions live here:
 
 import re
 
+from app.core.redact import redact_reply_text
 from app.db.models import CaptureSession, Response
 
 # Anything outside this set becomes "_" in the filename slug (latin-1-safe,
@@ -45,7 +46,8 @@ def completa_txt(rows: list[Response]) -> str:
     Zero rows ⇒ ``""`` (honest empty file, never a 404).
     """
     return "".join(
-        f"[{row.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {row.text}\n\n"
+        f"[{row.created_at.strftime('%Y-%m-%d %H:%M:%S')}] "
+        f"{redact_reply_text(row.text)}\n\n"
         for row in rows
     )
 

@@ -8,6 +8,7 @@ order (in-batch dedup is an AC).
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redact import redact_reply_text
 from app.core.scheduler import scheduler
 from app.core.watchdog import watchdog
 from app.db.models import Batch, BatchLine
@@ -176,7 +177,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
                 "id": row.id,
                 "message_id": row.message_id,
                 "status": row.status,
-                "text": row.text,
+                "text": redact_reply_text(row.text),
                 "created_at": row.created_at.isoformat(),
             }
             for row in await responses_repo.list_full(

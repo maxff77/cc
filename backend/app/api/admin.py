@@ -29,6 +29,7 @@ from app.api.sessions import (
     session_to_out,
 )
 from app.core import send_worker
+from app.core.redact import redact_reply_text
 from app.db.base import get_session
 from app.db.models import Gate, GateCategory, User
 from app.db.repos import audit as audit_repo
@@ -883,7 +884,7 @@ async def get_tenant_session_detail(
                 id=row.id,
                 message_id=row.message_id,
                 status=row.status,
-                text=row.text,
+                text=redact_reply_text(row.text),
                 created_at=row.created_at,
             )
             for row in responses
