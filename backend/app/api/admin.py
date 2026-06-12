@@ -18,10 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.db.base import get_session
-from app.db.models import User
+from app.db.models import Gate, User
+from app.db.repos import gates as gates_repo
 from app.db.repos import users as users_repo
 from app.errors import (
     forbidden,
+    gate_exists,
+    gate_not_found,
     invalid_plan_days,
     invalid_renewal,
     renewal_would_shorten,
@@ -317,3 +320,125 @@ async def reset_password(
     await users_repo.revoke_all_sessions_for_user(session, target.id)
     await session.commit()
     return ResetPasswordResponse(temp_password=temp)
+
+
+# --- Gate catalog CRUD (Story 2.1) -----------------------------------------
+#
+# Owner-only curation of the GLOBAL gate catalog (no tenant scoping — see the
+# ``db.repos.gates`` module note). Values are stored VERBATIM, dot included
+# (`.zo` stays `.zo`); delete is a soft-delete (``deleted_at``) so history that
+# snapshots the gate string is never rewritten.
+
+GATE_VALUE_MAX = 20
+
+
+def _validate_gate_value(value: str) -> str:
+    """Single copy of the gate-value policy: trimmed, non-empty, no inner
+    whitespace, ≤20 chars. Verbatim otherwise — the leading dot is data, not
+    a format requirement."""
+    value = value.strip()
+    if not value:
+        raise ValueError("gate vacío")
+    if any(ch.isspace() for ch in value):
+        raise ValueError("el gate no puede contener espacios")
+    if len(value) > GATE_VALUE_MAX:
+        raise ValueError("gate demasiado largo")
+    return value
+
+
+class CreateGateRequest(BaseModel):
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _valid_value(cls, v: str) -> str:
+        return _validate_gate_value(v)
+
+
+class UpdateGateRequest(BaseModel):
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _valid_value(cls, v: str) -> str:
+        return _validate_gate_value(v)
+
+
+class GateOut(BaseModel):
+    id: int
+    value: str
+    created_at: datetime
+
+
+class GateListResponse(BaseModel):
+    items: list[GateOut]
+    total: int
+
+
+def _gate_to_out(gate: Gate) -> GateOut:
+    return GateOut(id=gate.id, value=gate.value, created_at=gate.created_at)
+
+
+@router.get("/gates", response_model=GateListResponse)
+async def list_gates(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> GateListResponse:
+    """List active catalog entries (owner curation view)."""
+    gates = await gates_repo.list_active(session)
+    return GateListResponse(items=[_gate_to_out(g) for g in gates], total=len(gates))
+
+
+@router.post("/gates", response_model=GateOut, status_code=201)
+async def create_gate(
+    body: CreateGateRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> GateOut:
+    """Add a gate to the catalog; duplicate ACTIVE value → 409 gate_exists."""
+    if await gates_repo.get_active_by_value(session, body.value) is not None:
+        raise gate_exists()
+    gate = await gates_repo.create(session, value=body.value)
+    await session.commit()
+    return _gate_to_out(gate)
+
+
+async def _require_active_gate(session: AsyncSession, gate_id: int) -> Gate:
+    """Resolve an ACTIVE gate or raise 404 (missing and retired look the same).
+
+    ``FOR UPDATE`` mirrors ``_require_client_target``: edit/delete are
+    read-modify-write, so concurrent mutations serialize.
+    """
+    gate = await gates_repo.get_by_id(session, gate_id, for_update=True)
+    if gate is None or gate.deleted_at is not None:
+        raise gate_not_found()
+    return gate
+
+
+@router.patch("/gates/{gate_id}", response_model=GateOut)
+async def update_gate(
+    gate_id: int,
+    body: UpdateGateRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> GateOut:
+    """Edit a gate's value. History is untouched — batches snapshot the string."""
+    gate = await _require_active_gate(session, gate_id)
+    duplicate = await gates_repo.get_active_by_value(session, body.value)
+    if duplicate is not None and duplicate.id != gate.id:
+        raise gate_exists()
+    gate.value = body.value
+    await session.commit()
+    return _gate_to_out(gate)
+
+
+@router.delete("/gates/{gate_id}", status_code=204)
+async def delete_gate(
+    gate_id: int,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Retire a gate (soft-delete, AC5): hidden from selectors, row kept."""
+    gate = await _require_active_gate(session, gate_id)
+    await gates_repo.soft_delete(session, gate)
+    await session.commit()

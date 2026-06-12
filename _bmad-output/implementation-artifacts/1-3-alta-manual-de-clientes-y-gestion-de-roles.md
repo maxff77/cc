@@ -4,7 +4,7 @@ baseline_commit: 24cc87a
 
 # Story 1.3: Alta manual de clientes y gestión de roles
 
-Status: review
+Status: done
 
 ## Story
 

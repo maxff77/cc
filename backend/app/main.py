@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
+from app.api.gates import router as gates_router
 from app.api.health import router as health_router
 from app.db.base import engine
 from app.errors import AppError
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
+    app.include_router(gates_router)
     return app
 
 

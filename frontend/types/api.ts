@@ -263,6 +263,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/gates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Gates
+         * @description List active catalog entries (owner curation view).
+         */
+        get: operations["list_gates_api_admin_gates_get"];
+        put?: never;
+        /**
+         * Create Gate
+         * @description Add a gate to the catalog; duplicate ACTIVE value → 409 gate_exists.
+         */
+        post: operations["create_gate_api_admin_gates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/gates/{gate_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Gate
+         * @description Retire a gate (soft-delete, AC5): hidden from selectors, row kept.
+         */
+        delete: operations["delete_gate_api_admin_gates__gate_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Gate
+         * @description Edit a gate's value. History is untouched — batches snapshot the string.
+         */
+        patch: operations["update_gate_api_admin_gates__gate_id__patch"];
+        trace?: never;
+    };
+    "/api/gates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Gates
+         * @description List active catalog entries (read-only — clients pick, never type).
+         */
+        get: operations["list_gates_api_gates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -279,6 +347,11 @@ export interface components {
             /** Home Path */
             home_path: string;
         };
+        /** CreateGateRequest */
+        CreateGateRequest: {
+            /** Value */
+            value: string;
+        };
         /** CreateUserRequest */
         CreateUserRequest: {
             /** Email */
@@ -292,6 +365,25 @@ export interface components {
             role: string;
             /** Plan Days */
             plan_days?: number | null;
+        };
+        /** GateListResponse */
+        GateListResponse: {
+            /** Items */
+            items: components["schemas"]["GateOut"][];
+            /** Total */
+            total: number;
+        };
+        /** GateOut */
+        GateOut: {
+            /** Id */
+            id: number;
+            /** Value */
+            value: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -340,6 +432,11 @@ export interface components {
         ResetPasswordResponse: {
             /** Temp Password */
             temp_password: string;
+        };
+        /** UpdateGateRequest */
+        UpdateGateRequest: {
+            /** Value */
+            value: string;
         };
         /** UserListResponse */
         UserListResponse: {
@@ -715,6 +812,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_gates_api_admin_gates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GateListResponse"];
+                };
+            };
+        };
+    };
+    create_gate_api_admin_gates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_gate_api_admin_gates__gate_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_gate_api_admin_gates__gate_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_gates_api_gates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GateListResponse"];
                 };
             };
         };

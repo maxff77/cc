@@ -10,3 +10,7 @@
 - deploy.sh partial-failure window: if `npm run build` fails after `alembic upgrade head`, the old backend keeps running on the migrated schema with no rollback path — accepted at MVP scale (additive migrations) (`deploy/deploy.sh`).
 - telegram_auth.py: a corrupt/foreign pre-existing session file produces a raw sqlite/Telethon traceback with no delete-and-rerun hint — rare; the full re-auth runbook is Story 4.4's deliverable (`backend/scripts/telegram_auth.py`).
 - AC4 pending owner action: `anon.session` absent in production — interactive re-auth (phone→code→2FA) only Richard can run; commands in story 1.7 Review Findings. Blocks story 1.7 → done.
+
+## Deferred from: code review of 2-1-catalogo-global-de-prefijos (2026-06-11)
+
+- Hand-written `GateOut`/`GateListResponse` interfaces in `frontend/app/admin/gates/page.tsx` instead of consuming generated `types/api.ts` — mirrors the users-page idiom from story 1.3, contradicts architecture.md "never hand-write API types"; migrate all admin pages to generated types in one epic-wide pass.

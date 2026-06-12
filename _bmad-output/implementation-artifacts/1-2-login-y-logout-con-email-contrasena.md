@@ -4,7 +4,7 @@ baseline_commit: c15b742
 
 # Story 1.2: Login y logout con email + contraseña
 
-Status: review
+Status: done
 
 ## Story
 
@@ -75,6 +75,10 @@ so that I access my own private space securely.
   - [x] With the backend running, re-run `npm run generate:api` so `frontend/types/api.ts` includes the new auth schemas (never hand-edit it)
   - [x] Gates green: backend `ruff check .` + `mypy app`; frontend `npm run lint` (eslint) + `npx tsc --noEmit`
   - [x] Manual verification: seed a user → login (happy path lands on role home) → `/api/auth/me` returns the user → logout clears cookie → unauthenticated visit to a protected route redirects to `/login` → wrong password shows inline error → blocked user shows blocking notice → repeated failures hit the throttle
+
+### Review Findings
+
+- [x] [Review][Patch] logout `delete_cookie` missing `secure`/`httponly` flags — `set_cookie` (auth.py:99) sets `httponly=True, secure=settings.cookie_secure` but `delete_cookie` only passes `path`/`samesite`; AC5 requires deletion with the same attributes [backend/app/api/auth.py:181]
 
 ## Dev Notes
 

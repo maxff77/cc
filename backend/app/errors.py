@@ -144,3 +144,22 @@ def password_reuse() -> AppError:
         code="password_reuse",
         message="Elige una contraseña distinta a la temporal.",
     )
+
+
+# --- Codes this story (2.1) defines --------------------------------------
+
+
+def gate_exists() -> AppError:
+    return AppError(
+        status_code=409,
+        code="gate_exists",
+        message="Ya existe ese gate en el catálogo.",
+    )
+
+
+def gate_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="gate_not_found",
+        message="Ese gate no existe.",
+    )

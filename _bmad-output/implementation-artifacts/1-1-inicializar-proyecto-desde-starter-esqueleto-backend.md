@@ -4,7 +4,7 @@ baseline_commit: c9318924ec38267cae0a5e3fb214d3fb0974faf0
 
 # Story 1.1: Inicializar proyecto desde starter + esqueleto backend
 
-Status: review
+Status: done
 
 ## Story
 

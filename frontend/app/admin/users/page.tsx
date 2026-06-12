@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -85,7 +86,17 @@ export default function AdminUsersPage() {
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-10">
       <header className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Gestión de usuarios</h1>
+        <div className="flex items-baseline gap-4">
+          <h1 className="text-2xl font-semibold">Gestión de usuarios</h1>
+          {isOwner && (
+            <Link
+              className="text-sm text-default-500 underline"
+              href="/admin/gates"
+            >
+              Gates
+            </Link>
+          )}
+        </div>
         <Button variant="secondary" onPress={logout}>
           Cerrar sesión
         </Button>
