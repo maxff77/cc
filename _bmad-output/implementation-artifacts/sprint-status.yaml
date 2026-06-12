@@ -37,6 +37,9 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 3-2 → done 2026-06-12 (snapshot com filas/totales de sesión activa + session_id en state_data, response.captured con guard + ccNew autoritativo, components/sessions/ DataRow/paneles duales, tabs móvil/paneles desktop, auto-scroll pinning; diferidos 2-5/2-2 resueltos, suite 196 verde, gates limpios)
+# 3-2 → review 2026-06-12 (implementado: snapshot con filas/totales de la sesión activa + session_id en state_data, reducer response.captured con guard de sesión + ccNew autoritativo, components/sessions/ (DataRow + paneles/tabs duales con pinning de scroll), montaje móvil+desktop en page.tsx; diferidos 2-5 ws.ts:162 y 2-2 ws.ts:197 resueltos; suite 196 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
+# 3-2 → ready-for-dev 2026-06-12 (story file created — vistas Completa/Filtrada en Envío: snapshot con filas de sesión + session_id en batch.state, reducer response.captured, components/sessions/ dual tabs/paneles, auto-scroll pinning; absorbe diferidos 2-5 ws.ts:162 y 2-2 ws.ts:197)
 # 3-1 → done 2026-06-12 (captura + atribución de replies via reply_to_msg_id, sessions, CC dedup, unmatched bucket, 182 tests green)
 # 2-5 → done 2026-06-11 (endurecimiento de pipeline completo: write-ahead, cap=3 fallidas, panel rojo, FloodWait global, fail-stop, reconciliación, cancelación, logs)
 # 2-5 → review 2026-06-12 (implementado: send_log write-ahead + cap=3/'failed' + panel rojo de fallidas + ventana FloodWait global + fail-stop de registro + reconciliación al boot + 'cancelled' por expiración + logs estructurados; suite 165 verde, diferidos 2-2 #5 y 2-4 #1/#3 resueltos)
@@ -84,7 +87,7 @@ development_status:
   # Epic 3: Captura de respuestas, sesiones e historial
   epic-3: in-progress
   3-1-captura-y-atribucion-de-respuestas-del-bot: done
-  3-2-vistas-completa-filtrada-en-vivo-en-envio: backlog
+  3-2-vistas-completa-filtrada-en-vivo-en-envio: done
   3-3-historial-listar-ver-detalle-renombrar-y-eliminar-sesiones: backlog
   3-4-continuar-una-sesion-con-dedup-preservado: backlog
   3-5-exportar-resultados-como-txt: backlog

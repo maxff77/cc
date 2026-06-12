@@ -14,6 +14,12 @@ from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
 
+# Cap on the rows each snapshot list ships (Story 3.2) — a module constant,
+# NOT a setting (2.5 rule: pipeline internals are never configuration). The
+# TOTALS stay real even when the lists are trimmed (badges never lie); the
+# full data belongs to Historial (3.3) and export (3.5).
+_SNAPSHOT_ROWS = 200
+
 
 def apply_gate(text: str, gate_value: str) -> list[str]:
     """Prefix every non-blank line with the gate; dedup preserving order."""
@@ -62,12 +68,16 @@ def state_data(batch: Batch, state: str) -> dict:
     DB terminals ``completed``/``stopped`` both travel as ``"idle"`` (2.2
     pattern). Carrying the gate fields fixes the 2.2 review finding where a
     second tab never learned the gate of a batch started elsewhere.
+    ``session_id`` (Story 3.2) propagates the capture-session binding to every
+    tab the moment the batch starts — the UI reducer needs it to tell "new
+    session → clear the panels" from "late reply of an old session → ignore".
     """
     return {
         "batch_id": batch.id,
         "state": state,
         "gate_name": batch.gate_name,
         "gate_value": batch.gate_value,
+        "session_id": batch.capture_session_id,
     }
 
 
@@ -90,22 +100,60 @@ async def progress_data(session: AsyncSession, batch: Batch) -> dict:
     }
 
 
-async def _cc_new(session: AsyncSession, tenant_id: int) -> int:
-    """``cc_new`` metric: deduped CC rows of the tenant's ACTIVE capture
-    session (Story 3.1). Recorded decision: it does NOT reset between batches
-    (legacy "counters never reset" — the session, not the batch, owns it);
-    0 when no session exists yet."""
+async def _active_session_data(session: AsyncSession, tenant_id: int) -> dict:
+    """Snapshot slice for the tenant's ACTIVE capture session (Story 3.2).
+
+    Carries ``session_id`` + the rows that rebuild the Completa/Filtrada
+    panels (capped at ``_SNAPSHOT_ROWS`` per list) and the REAL totals —
+    ``cc_new`` (Story 3.1's metric, the same number as the event's
+    ``cc_total``) and ``responses_total``. Recorded decision: none of this
+    resets between batches (legacy "counters never reset" — the session, not
+    the batch, owns it). Everything is materialized inside the session (the
+    2.3 MissingGreenlet lesson).
+    """
     active = await capture_sessions_repo.get_active(session, tenant_id)
     if active is None:
-        return 0
-    return await responses_repo.cc_count(session, active.id)
+        return {
+            "session_id": None,
+            "cc_new": 0,
+            "responses_total": 0,
+            "responses": [],
+            "cc": [],
+        }
+    return {
+        "session_id": active.id,
+        "cc_new": await responses_repo.cc_count(session, active.id),
+        "responses_total": await responses_repo.full_count(session, active.id),
+        "responses": [
+            {
+                "id": row.id,
+                "message_id": row.message_id,
+                "status": row.status,
+                "text": row.text,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in await responses_repo.list_full(
+                session, active.id, _SNAPSHOT_ROWS
+            )
+        ],
+        # Filtrada rows carry no timestamp — parity with filtrada.txt: one
+        # value per line.
+        "cc": [
+            {"id": row.id, "text": row.text}
+            for row in await responses_repo.list_cc(
+                session, active.id, _SNAPSHOT_ROWS
+            )
+        ],
+    }
 
 
 async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
     """Full state for a tenant's freshly connected tab (snapshot-first, AC 8).
 
-    ``cc_new`` is real since Story 3.1: the active capture session's CC count
-    — a reconnected tab rebuilds the metric from the snapshot alone.
+    Since Story 3.2 BOTH branches merge ``_active_session_data``: a
+    reconnected tab rebuilds Completa/Filtrada/badges from the snapshot ALONE
+    (the 2.2 contract — exact precedent: ``failed_lines``, added in 2.5 for
+    the same reason).
     """
     batch = await batches_repo.get_live_batch(session, tenant_id)
     if batch is None:
@@ -120,7 +168,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "failed_lines": [],
             "total": 0,
             "eta_seconds": 0,
-            "cc_new": await _cc_new(session, tenant_id),
+            **await _active_session_data(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
@@ -143,5 +191,5 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         ],
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
-        "cc_new": await _cc_new(session, tenant_id),
+        **await _active_session_data(session, tenant_id),
     }

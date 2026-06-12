@@ -1,5 +1,6 @@
 // Singleton auto-reconnecting WebSocket client + live-batch store (Story 2.2;
-// pause/resume/stop + FloodWait state since Story 2.3; failed lines since 2.5).
+// pause/resume/stop + FloodWait state since Story 2.3; failed lines since
+// 2.5; capture-session rows for the Completa/Filtrada views since 3.2).
 //
 // WS event payloads are NOT in the generated OpenAPI types — this is the one
 // legitimate hand-typed contract, kept next to the reducer. Envelope:
@@ -20,6 +21,26 @@ export interface FailedLine {
   code: string;
 }
 
+// One Completa row (Story 3.2): a captured 'full' revision. `nueva` is true
+// ONLY for rows that landed live via `response.captured` — snapshot rows are
+// reconciliation, not novelty.
+export interface ResponseRow {
+  key: string;
+  messageId: number;
+  status: "ok" | "rejected";
+  text: string;
+  capturedAt: string;
+  nueva: boolean;
+}
+
+// One Filtrada row: a session-new deduped CC value (no timestamp — parity
+// with legacy filtrada.txt: one value per line).
+export interface CcRow {
+  key: string;
+  text: string;
+  nueva: boolean;
+}
+
 export interface LiveBatchState {
   state: BatchSurfaceState;
   batchId: number | null;
@@ -35,12 +56,34 @@ export interface LiveBatchState {
   total: number;
   etaSeconds: number;
   ccNew: number;
+  // Capture-session fields (Story 3.2). They belong to the SESSION, not the
+  // batch: they survive the idle reset and seedFromBatch — only a
+  // snapshot/batch.state carrying ANOTHER session_id clears them.
+  sessionId: number | null;
+  responses: ResponseRow[];
+  cc: CcRow[];
+  // Real total of 'full' revisions — honest even when the snapshot list is
+  // capped server-side (the Completa badge).
+  responsesTotal: number;
   // Epoch ms when the FloodWait window ends; null = no active notice. Set by
   // `flood.wait`, cleared by any signal that sending flows again (AC 6).
   floodUntil: number | null;
 }
 
 // --- Hand-typed WS payload shapes (mirror backend services/batches.py) ------
+
+interface SnapshotResponseRow {
+  id: number;
+  message_id: number;
+  status: "ok" | "rejected";
+  text: string;
+  created_at: string;
+}
+
+interface SnapshotCcRow {
+  id: number;
+  text: string;
+}
 
 interface SnapshotData {
   state: BatchSurfaceState;
@@ -54,6 +97,12 @@ interface SnapshotData {
   total: number;
   eta_seconds: number;
   cc_new: number;
+  // Story 3.2: the active capture session's slice — rows capped server-side,
+  // totals real.
+  session_id: number | null;
+  responses: SnapshotResponseRow[];
+  cc: SnapshotCcRow[];
+  responses_total: number;
 }
 
 interface ProgressData {
@@ -76,11 +125,28 @@ interface LineFailedData {
 
 // Full-context batch.state payload (Story 2.3, Task 5 — fixes the 2.2 finding
 // where a second tab never learned the gate of a batch started elsewhere).
+// `session_id` since 3.2: the capture-session binding travels with EVERY
+// batch.state so the reducer can tell a session change apart.
 interface BatchStateData {
   state: BatchSurfaceState;
   batch_id: number | null;
   gate_name: string | null;
   gate_value: string | null;
+  session_id: number | null;
+}
+
+// VERBATIM mirror of the `response.captured` emit (backend core/capture.py).
+interface ResponseCapturedData {
+  session_id: number;
+  batch_id: number | null;
+  message_id: number;
+  status: "ok" | "rejected";
+  previous_status: "ok" | "rejected" | null;
+  edited: boolean;
+  text: string;
+  new_cc: string[];
+  cc_total: number;
+  captured_at: string;
 }
 
 interface FloodWaitData {
@@ -99,11 +165,26 @@ const IDLE: LiveBatchState = {
   total: 0,
   etaSeconds: 0,
   ccNew: 0,
+  sessionId: null,
+  responses: [],
+  cc: [],
+  responsesTotal: 0,
   floodUntil: null,
 };
 
 let store: LiveBatchState = IDLE;
 const listeners = new Set<() => void>();
+
+// Monotonic key source for rows that land live — `response.captured` carries
+// no DB row id, so `l-${n}` keeps React keys stable; snapshot rows use the
+// DB id (`s-${id}`).
+let liveRowSeq = 0;
+
+// Cap for the live-append lists (responses/cc). The server caps snapshots at
+// `_SNAPSHOT_ROWS = 200` so reconnects don't weigh megas; this is the same
+// rationale applied to the live path, where a long-lived tab otherwise
+// accumulates rows forever ("counters never reset" — sessions do not either).
+const _LIVE_ROWS = 500;
 
 let socket: WebSocket | null = null;
 let started = false;
@@ -135,6 +216,24 @@ function reduce(event: string, data: unknown) {
         total: d.total,
         etaSeconds: d.eta_seconds,
         ccNew: d.cc_new,
+        // Session slice (3.2): the panels rebuild from the snapshot alone.
+        // Rows arrive with `nueva: false` — the highlight marks only what
+        // lands live; a snapshot is reconciliation, not novelty.
+        sessionId: d.session_id,
+        responses: d.responses.map((row) => ({
+          key: `s-${row.id}`,
+          messageId: row.message_id,
+          status: row.status,
+          text: row.text,
+          capturedAt: row.created_at,
+          nueva: false,
+        })),
+        cc: d.cc.map((row) => ({
+          key: `s-${row.id}`,
+          text: row.text,
+          nueva: false,
+        })),
+        responsesTotal: d.responses_total,
         // The snapshot carries no flood info → drop any notice. Honest: after
         // a reconnect the countdown is no longer verifiable.
         floodUntil: null,
@@ -162,6 +261,10 @@ function reduce(event: string, data: unknown) {
     case "batch.line_failed": {
       const d = data as LineFailedData;
 
+      // Scope to the live batch (deferred 2-5): a stale frame crossing a
+      // seedFromBatch of another lote must not attach a foreign row — and its
+      // position-collision dedup would then mask a legitimate failure.
+      if (store.batchId !== null && store.batchId !== d.batch_id) break;
       // Append with dedup by position: a released/re-claimed line that fails
       // again must not duplicate its panel entry.
       if (store.failedLines.some((line) => line.position === d.position)) break;
@@ -184,22 +287,112 @@ function reduce(event: string, data: unknown) {
         // idle in one burst, and a full IDLE reset would wipe the red panel
         // milliseconds after it appeared. It clears on the next snapshot or
         // on seedFromBatch for a different batch (both reset it already).
+        // The session fields (incl. ccNew) survive too (3.2): capture stays
+        // armed between batches — the lote ends and the data stays on screen
+        // (legacy "counters never reset").
         setStore({
           ...IDLE,
           failed: store.failed,
           failedLines: store.failedLines,
+          sessionId: store.sessionId,
+          responses: store.responses,
+          cc: store.cc,
+          ccNew: store.ccNew,
+          responsesTotal: store.responsesTotal,
         });
       } else {
+        // A live batch bound to ANOTHER session ⇒ gate change replaced the
+        // session — the panels belong to the old one: start clean (3.2).
+        const sessionChanged =
+          d.session_id !== null &&
+          store.sessionId !== null &&
+          d.session_id !== store.sessionId;
+
         setStore({
           ...store,
           state: d.state,
           batchId: d.batch_id,
           gateName: d.gate_name,
           gateValue: d.gate_value,
+          sessionId: d.session_id ?? store.sessionId,
+          responses: sessionChanged ? [] : store.responses,
+          cc: sessionChanged ? [] : store.cc,
+          ccNew: sessionChanged ? 0 : store.ccNew,
+          responsesTotal: sessionChanged ? 0 : store.responsesTotal,
           // Resumed sending ⇒ the FloodWait notice self-dismisses (AC 6).
           floodUntil: d.state === "sending" ? null : store.floodUntil,
         });
       }
+      break;
+    }
+    case "response.captured": {
+      const d = data as ResponseCapturedData;
+
+      // Session guard (3.2): a late reply of an OLD session persists in the
+      // DB (Historial 3.3 shows it) but the Envío panels represent the
+      // ACTIVE session only. A fresh tab with no session adopts the first
+      // event's session. Never touches `state` (same contract as
+      // batch.progress): capture stays armed between batches and late
+      // replies keep landing with the surface idle.
+      if (store.sessionId !== null && d.session_id !== store.sessionId) break;
+
+      // Snapshot-race dedup (3.2 review fix): the backend commits BEFORE it
+      // emits (core/capture.py), and ws.py registers a connecting socket
+      // BEFORE building its snapshot — so a tab connecting inside that gap
+      // gets a snapshot that already contains this row, and this frame
+      // arrives AFTER it. The (messageId, status, text) triple can only
+      // repeat consecutively via that race: process_incoming already no-ops
+      // identical-text editions against the last revision.
+      const lastRow = store.responses[store.responses.length - 1];
+      const isDupRow =
+        lastRow !== undefined &&
+        lastRow.messageId === d.message_id &&
+        lastRow.status === d.status &&
+        lastRow.text === d.text;
+      // CC values are session-unique (uq_responses_session_cc), so a plain
+      // text match is an exact dedup against snapshot rows.
+      const knownCc = new Set(store.cc.map((row) => row.text));
+      const freshCc = d.new_cc.filter((value) => !knownCc.has(value));
+
+      setStore({
+        ...store,
+        sessionId: store.sessionId ?? d.session_id,
+        // Live lists are capped (mirror of `_SNAPSHOT_ROWS`): the session
+        // never resets while the gate is reused and capture stays armed
+        // between batches, so without a cap the longest-lived tab grows —
+        // and re-renders — without bound. The badges stay honest (they come
+        // from the authoritative totals, not the list lengths), and any
+        // reconnect already truncates the lists to the snapshot's 200.
+        responses: isDupRow
+          ? store.responses
+          : [
+              ...store.responses,
+              {
+                key: `l-${++liveRowSeq}`,
+                messageId: d.message_id,
+                status: d.status,
+                text: d.text,
+                capturedAt: d.captured_at,
+                nueva: true,
+              },
+            ].slice(-_LIVE_ROWS),
+        responsesTotal: isDupRow
+          ? store.responsesTotal
+          : store.responsesTotal + 1,
+        // `new_cc` may be [] (e.g. an edit with nothing session-new).
+        cc: [
+          ...store.cc,
+          ...freshCc.map((value) => ({
+            key: `l-${++liveRowSeq}`,
+            text: value,
+            nueva: true,
+          })),
+        ].slice(-_LIVE_ROWS),
+        // Authoritative server total (the ring's "CC nuevas" metric) — never
+        // client-side sums, which drift on lost frames; assigning reconciles
+        // for free. Same number as the snapshot's cc_new.
+        ccNew: d.cc_total,
+      });
       break;
     }
     case "flood.wait": {
@@ -210,7 +403,6 @@ function reduce(event: string, data: unknown) {
     }
     case "batch.line_sent":
       // A line went out ⇒ sending flows again — clear any FloodWait notice.
-      // (Other consumers arrive in Stories 2.5/3.2.)
       if (store.floodUntil !== null) {
         setStore({ ...store, floodUntil: null });
       }
@@ -298,6 +490,10 @@ export function seedFromBatch(batch: {
   failed: number;
   total: number;
 }) {
+  // Same batch already in the store ⇒ WS got there first (the backend emits
+  // progress — even line 1 — before the POST returns): seeding would REGRESS
+  // fresher state, rolling the ring back up to a full interval (deferred 2-2).
+  if (store.batchId === batch.id) return;
   setStore({
     state: "sending",
     batchId: batch.id,
@@ -306,12 +502,20 @@ export function seedFromBatch(batch: {
     sent: batch.sent,
     queued: batch.queued,
     failed: batch.failed,
-    // The POST response carries no line detail — keep the panel for the same
-    // batch, start clean otherwise (the snapshot remains the source of truth).
-    failedLines: store.batchId === batch.id ? store.failedLines : [],
+    // The POST response carries no line detail — start the panel clean for
+    // the new batch (the snapshot remains the source of truth).
+    failedLines: [],
     total: batch.total,
-    etaSeconds: store.batchId === batch.id ? store.etaSeconds : 0,
-    ccNew: store.batchId === batch.id ? store.ccNew : 0,
+    etaSeconds: 0,
+    // The session fields belong to the SESSION, not the batch — never seeded
+    // away (3.2). If this batch activated ANOTHER session, the batch.state
+    // the POST emits right after carries the new session_id and the reducer
+    // clears — the server decides, the seed never guesses.
+    ccNew: store.ccNew,
+    sessionId: store.sessionId,
+    responses: store.responses,
+    cc: store.cc,
+    responsesTotal: store.responsesTotal,
     // A global FloodWait window doesn't end because a batch was posted.
     floodUntil: store.floodUntil,
   });

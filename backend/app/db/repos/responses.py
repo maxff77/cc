@@ -149,3 +149,57 @@ async def cc_count(session: AsyncSession, capture_session_id: int) -> int:
     )
     count: int = (await session.execute(stmt)).scalar_one()
     return count
+
+
+async def full_count(session: AsyncSession, capture_session_id: int) -> int:
+    """Total 'full' revisions of one capture session (Story 3.2: the Completa
+    badge — the REAL total, honest even when the snapshot list is capped)."""
+    stmt = (
+        select(func.count())
+        .select_from(Response)
+        .where(
+            Response.capture_session_id == capture_session_id,
+            Response.kind == KIND_FULL,
+        )
+    )
+    count: int = (await session.execute(stmt)).scalar_one()
+    return count
+
+
+async def _list_last(
+    session: AsyncSession, capture_session_id: int, kind: str, limit: int
+) -> list[Response]:
+    """The LAST ``limit`` rows of ``kind``, returned ASCENDING by ``id``.
+
+    SELECT newest-first + reverse in Python: the snapshot must carry the most
+    RECENT rows when capped, but the panel paints oldest→newest and anchors
+    its scroll at the bottom (Story 3.2).
+    """
+    stmt = (
+        select(Response)
+        .where(
+            Response.capture_session_id == capture_session_id,
+            Response.kind == kind,
+        )
+        .order_by(Response.id.desc())
+        .limit(limit)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    rows.reverse()
+    return rows
+
+
+async def list_full(
+    session: AsyncSession, capture_session_id: int, limit: int
+) -> list[Response]:
+    """The session's last ``limit`` 'full' revisions, oldest→newest — the
+    rows the snapshot ships to rebuild the Completa view."""
+    return await _list_last(session, capture_session_id, KIND_FULL, limit)
+
+
+async def list_cc(
+    session: AsyncSession, capture_session_id: int, limit: int
+) -> list[Response]:
+    """The session's last ``limit`` deduped CC values in insertion order —
+    the rows the snapshot ships to rebuild the Filtrada view."""
+    return await _list_last(session, capture_session_id, KIND_CC, limit)

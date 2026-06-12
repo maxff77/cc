@@ -366,12 +366,20 @@ async def test_batch_state_events_carry_batch_and_gate_context(
     http, _ = client_user
 
     batch_id = await _create_batch(http, gate)
+    # Story 3.2: every batch.state emission carries the capture-session
+    # binding (state_data is the single source for all of them).
+    async with async_session_factory() as session:
+        batch = await session.get(Batch, batch_id)
+        assert batch is not None
+        session_id = batch.capture_session_id
+    assert session_id is not None
     assert _states(events) == [
         {
             "batch_id": batch_id,
             "state": "sending",
             "gate_name": gate["name"],
             "gate_value": gate["value"],
+            "session_id": session_id,
         }
     ]
 
@@ -383,6 +391,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "state": "paused",
             "gate_name": gate["name"],
             "gate_value": gate["value"],
+            "session_id": session_id,
         }
     ]
 
@@ -395,6 +404,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "state": "idle",
             "gate_name": gate["name"],
             "gate_value": gate["value"],
+            "session_id": session_id,
         }
     ]
 

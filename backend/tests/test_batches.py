@@ -403,6 +403,11 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "total": 0,
         "eta_seconds": 0,
         "cc_new": 0,
+        # Story 3.2: session slice — no active session, empty panels.
+        "session_id": None,
+        "responses_total": 0,
+        "responses": [],
+        "cc": [],
     }
 
 
@@ -427,6 +432,11 @@ async def test_snapshot_live_shape_and_eta_math(
     # active sender → 3 × 1 × interval(1)=10.0.
     assert snap["eta_seconds"] == 30.0
     assert snap["cc_new"] == 0  # real since 3.1 — this test captures nothing
+    # Story 3.2: the POST bound an active capture session — the snapshot
+    # carries its id, with empty panels and honest zero totals (no captures).
+    assert snap["session_id"] is not None
+    assert (snap["responses"], snap["cc"]) == ([], [])
+    assert snap["responses_total"] == 0
 
 
 @pytest.mark.asyncio(loop_scope="session")

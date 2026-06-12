@@ -971,3 +971,134 @@ async def test_snapshot_cc_new_counts_the_active_session(
         assert snap_other["cc_new"] == 0  # someone else's captures never leak
     finally:
         await cleanup_users({other.email})
+
+
+# --- Snapshot rebuilds the dual views (Story 3.2) ---------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_snapshot_carries_active_session_rows_and_totals(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """After a ✅ capture with CC the snapshot ALONE rebuilds both panels:
+    session_id, the full revision (Completa), the truncated CC value
+    (Filtrada) and the honest totals."""
+    http, user = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()
+    session_id = (await _get_batch(batch_id)).capture_session_id
+    assert session_id is not None
+
+    text = "✅ Aprobada CC: 4111 Status aprobada"
+    await capture.process_incoming(
+        IncomingReply(message_id=9301, reply_to_msg_id=1, text=text, edited=False)
+    )
+
+    async with async_session_factory() as session:
+        snap = await batches_service.snapshot(session, user.tenant_id)
+    assert snap["session_id"] == session_id
+    assert snap["responses_total"] == 1
+    assert snap["cc_new"] == 1
+    (row,) = snap["responses"]
+    assert row["message_id"] == 9301
+    assert row["status"] == "ok"
+    assert row["text"] == text
+    assert row["created_at"]  # ISO-8601 timestamp present
+    (cc_row,) = snap["cc"]
+    assert cc_row["text"] == "4111"  # truncated at the literal "Status"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_snapshot_rejected_revision_travels_with_status(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """A ❌ revision ships with status='rejected' — AC 2's ❌ glyph in the
+    Completa panel comes from here."""
+    http, user = client_user
+    await _post_batch(http, "uno", gate["id"])
+    await _drain()
+
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=9302, reply_to_msg_id=1, text="❌ Rechazada", edited=False
+        )
+    )
+
+    async with async_session_factory() as session:
+        snap = await batches_service.snapshot(session, user.tenant_id)
+    (row,) = snap["responses"]
+    assert row["status"] == "rejected"
+    assert (snap["cc"], snap["cc_new"]) == ([], 0)  # ❌ extracts nothing
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_snapshot_rows_capped_but_totals_stay_honest(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the cap at 1 and two captures, the list ships ONLY the latest
+    revision but responses_total keeps the REAL count (badges never lie)."""
+    http, user = client_user
+    await _post_batch(http, "uno", gate["id"])
+    await _drain()
+    monkeypatch.setattr(batches_service, "_SNAPSHOT_ROWS", 1)
+
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=9303, reply_to_msg_id=1, text="✅ Primera", edited=False
+        )
+    )
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=9304, reply_to_msg_id=1, text="✅ Segunda", edited=False
+        )
+    )
+
+    async with async_session_factory() as session:
+        snap = await batches_service.snapshot(session, user.tenant_id)
+    assert snap["responses_total"] == 2
+    (row,) = snap["responses"]  # capped to the LAST revision only
+    assert row["message_id"] == 9304
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_snapshot_session_rows_are_tenant_isolated(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """Another tenant's snapshot keeps a null session and empty panels even
+    while this tenant's session holds captured rows."""
+    http, user = client_user
+    await _post_batch(http, "uno", gate["id"])
+    await _drain()
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=9305, reply_to_msg_id=1, text="✅ CC: 4111 Status a",
+            edited=False,
+        )
+    )
+
+    other = await seed_user(
+        "client", expires_at=datetime.now(UTC) + timedelta(days=30)
+    )
+    try:
+        async with async_session_factory() as session:
+            snap = await batches_service.snapshot(session, user.tenant_id)
+            snap_other = await batches_service.snapshot(session, other.tenant_id)
+        assert snap["session_id"] is not None and snap["responses_total"] == 1
+        assert snap_other["session_id"] is None
+        assert (snap_other["responses"], snap_other["cc"]) == ([], [])
+        assert (snap_other["responses_total"], snap_other["cc_new"]) == (0, 0)
+    finally:
+        await cleanup_users({other.email})
