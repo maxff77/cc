@@ -518,6 +518,12 @@ async def _cancel_expired_batch(tenant_id: int, batch_id: int) -> None:
         batch = await _locked_batch(session, batch_id)
         if batch is None:
             return
+        # Re-check under the lock (2.5 deferred fix): a user stop can finalize
+        # the batch 'stopped' between the expiry check and this transaction —
+        # rewriting a terminal state as 'cancelled' would misrepresent the
+        # user's stop as a system cancellation in Epic 3 history.
+        if batch.state not in batches_repo.LIVE_STATES:
+            return
         cancelled = await batches_repo.cancel_queued_lines(session, batch_id)
         batch.state = batches_repo.STATE_CANCELLED
         state_payload = batches_service.state_data(batch, "idle")
@@ -630,17 +636,33 @@ async def _release_line(tenant_id: int, batch_id: int, line_id: int) -> None:
     that case the line is abandoned and the batch finalized instead.
     """
     state_payload: dict | None = None
-    async with async_session_factory() as session:
-        batch = await _locked_batch(session, batch_id)
-        if batch is not None and batch.state == batches_repo.STATE_STOPPING:
-            await batches_repo.delete_line(session, line_id)
-            batch.state = batches_repo.STATE_STOPPED
-            state_payload = batches_service.state_data(batch, "idle")
-        else:
-            line = await session.get(BatchLine, line_id)
-            if line is not None:
-                await batches_repo.mark_queued(session, line)
-        await session.commit()
+    # Retry forever (2.5 deferred fix): a transient DB failure here would
+    # otherwise strand the claimed line in 'sending' while the loop claims
+    # OTHER lines — both branches are idempotent, same rationale as the
+    # record phases.
+    while True:
+        try:
+            async with async_session_factory() as session:
+                batch = await _locked_batch(session, batch_id)
+                if batch is not None and batch.state == batches_repo.STATE_STOPPING:
+                    await batches_repo.delete_line(session, line_id)
+                    batch.state = batches_repo.STATE_STOPPED
+                    state_payload = batches_service.state_data(batch, "idle")
+                else:
+                    line = await session.get(BatchLine, line_id)
+                    if line is not None:
+                        await batches_repo.mark_queued(session, line)
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=release line=%s — retrying until "
+                "the DB returns (a stuck claim would strand the batch)",
+                line_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
     if state_payload is not None:
         await broadcaster.emit(tenant_id, "batch.state", state_payload)
 
@@ -652,13 +674,26 @@ async def _abort_line(tenant_id: int, batch_id: int, line_id: int) -> None:
     deleted (it never went out). 'stopping' → 'stopped' + terminal idle event.
     """
     state_payload: dict | None = None
-    async with async_session_factory() as session:
-        batch = await _locked_batch(session, batch_id)
-        await batches_repo.delete_line(session, line_id)
-        if batch is not None and batch.state == batches_repo.STATE_STOPPING:
-            batch.state = batches_repo.STATE_STOPPED
-            state_payload = batches_service.state_data(batch, "idle")
-        await session.commit()
+    # Retry forever — same rationale and idempotence as ``_release_line``.
+    while True:
+        try:
+            async with async_session_factory() as session:
+                batch = await _locked_batch(session, batch_id)
+                await batches_repo.delete_line(session, line_id)
+                if batch is not None and batch.state == batches_repo.STATE_STOPPING:
+                    batch.state = batches_repo.STATE_STOPPED
+                    state_payload = batches_service.state_data(batch, "idle")
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=abort line=%s — retrying until "
+                "the DB returns (a stuck claim would strand the batch)",
+                line_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
     if state_payload is not None:
         await broadcaster.emit(tenant_id, "batch.state", state_payload)
 

@@ -207,7 +207,14 @@ class TelegramGateway:
         if self.client is None or self._entity is None:
             raise RuntimeError("telegram gateway not ready")
         try:
-            message = await self.client.send_message(self._entity, text)
+            # parse_mode=None (2.5 deferred fix): delivered text must equal
+            # line.text BYTE-FOR-BYTE — Telethon's default markdown rendering
+            # strips `**`/`__`/backticks from data lines, corrupting what the
+            # bot receives AND breaking both boot reconciliation's equality
+            # check and 3.1's attribution assumptions.
+            message = await self.client.send_message(
+                self._entity, text, parse_mode=None
+            )
         except _AUTH_LOSS_ERRORS as e:
             self.authorized = False
             logger.error("event=session_lost source=send error=%s: %s", type(e).__name__, e)
@@ -225,11 +232,23 @@ class TelegramGateway:
         if self.client is None or self._entity is None:
             raise RuntimeError("telegram gateway not ready")
         try:
+            # Plain history + client-side ``m.out`` filter (2.5 deferred fix):
+            # ``from_user="me"`` switches Telethon to messages.Search, whose
+            # weaker consistency can miss a message sent seconds before a
+            # crash — exactly the message reconciliation exists to find.
+            # getHistory is strongly consistent. ``raw_text`` (not ``text``)
+            # so the comparison sees what was sent, never a markdown render.
+            # Bot replies interleave with our sends (~1:1), so scan a wider
+            # raw window and stop once ``limit`` OUTGOING messages are found.
             messages: list[tuple[int, str]] = []
             async for message in self.client.iter_messages(
-                self._entity, from_user="me", limit=limit
+                self._entity, limit=limit * 4
             ):
-                messages.append((int(message.id), message.text or ""))
+                if not message.out:
+                    continue
+                messages.append((int(message.id), message.raw_text or ""))
+                if len(messages) >= limit:
+                    break
         except _AUTH_LOSS_ERRORS as e:
             # Same conversion as send() — the boot-recovery caller falls into
             # its existing reconcile_unverified fallback; the first real send

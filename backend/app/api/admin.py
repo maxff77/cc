@@ -485,8 +485,11 @@ async def create_gate(
         await session.commit()
     except IntegrityError as exc:
         # The pre-check above is racy: a concurrent insert of the same value
-        # only trips uq_gates_value_active at flush/commit. Map to the same
-        # gate_exists contract instead of a 500.
+        # only trips uq_gates_value_active at flush/commit — but a concurrent
+        # category delete trips the FK instead (2-2 deferred fix): map each
+        # constraint to its own error instead of a misleading "duplicate".
+        if "fk_gates_category_id" in str(exc.orig):
+            raise category_not_found() from exc
         raise gate_exists() from exc
     await session.refresh(gate, ["category"])
     return gate_to_out(gate)
@@ -529,6 +532,9 @@ async def update_gate(
     except IntegrityError as exc:
         # Duplicate check is racy (the duplicate row isn't locked); a
         # concurrent create/edit of the same value trips the index at commit.
+        # A concurrent category delete trips the FK instead (2-2 deferred fix).
+        if "fk_gates_category_id" in str(exc.orig):
+            raise category_not_found() from exc
         raise gate_exists() from exc
     await session.refresh(gate, ["category"])
     return gate_to_out(gate)

@@ -37,6 +37,8 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 1-7 → done 2026-06-12 (re-auth Telegram ejecutado en VPS por el owner+agente — @maxff9778, TELEGRAM_TARGET seteado; browser smoke del owner OK; epic-1 → done)
+# deferred-work → cerrado 2026-06-12 (5 fixes: parse_mode=None + getHistory/m.out, re-auth WS cada 60s, re-check LIVE_STATES en cancel, retry release/abort, FK→category_not_found; resto aceptado con justificación)
 # 4-3 → done 2026-06-12 (observabilidad: alerts.py SlidingAlert flood_wait/unmatched + guardrail.alert + GET /api/observability owner-only; 10 tests, suite 275 verde; epic-4 → done)
 # 4-4 → done 2026-06-12 (merged from story/4-4: gate harnesses + pg_dump timer + runbooks; sin migraciones)
 # 4-2 → done 2026-06-12 (merged from story/4-2: cap owner en system_settings + cola FIFO waiting + queue_position e2e; migración re-encadenada f3a9c1d4e8b7→d7f4b2a91c63; watchdog gate antes del admission sweep en step())
@@ -82,14 +84,14 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   # Epic 1: Plataforma accesible y cuentas de clientes
-  epic-1: in-progress
+  epic-1: done
   1-1-inicializar-proyecto-desde-starter-esqueleto-backend: done
   1-2-login-y-logout-con-email-contrasena: done
   1-3-alta-manual-de-clientes-y-gestion-de-roles: done
   1-4-expiracion-automatica-del-plan-y-lockout-total: done
   1-5-renovar-plan-y-bloquear-desbloquear-cliente: done
   1-6-reset-de-contrasena-con-cambio-forzado: done
-  1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: in-progress
+  1-7-despliegue-en-produccion-con-https-y-re-auth-de-telegram-en-el-vps: done
   epic-1-retrospective: optional
 
   # Epic 2: Envío en lote controlado

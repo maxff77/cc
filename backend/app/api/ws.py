@@ -12,6 +12,9 @@ silently), then the socket joins the tenant-scoped broadcaster. Client
 payloads are read only as keep-alive and discarded — commands go through REST.
 """
 
+import asyncio
+import time
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +30,12 @@ router = APIRouter()
 
 # Custom close code (app range) for a failed cookie handshake.
 WS_UNAUTHORIZED = 4401
+
+# How often an OPEN socket re-runs the auth chain (2.2 deferred fix): a
+# blocked user / revoked session / expired plan must stop receiving live
+# tenant events without waiting for a reconnect. 60s bounds the exposure
+# window at one cheap indexed query per socket per minute.
+_REAUTH_SECONDS = 60.0
 
 
 async def resolve_ws_user(session: AsyncSession, token: str | None) -> User | None:
@@ -76,10 +85,24 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         async with async_session_factory() as session:
             snapshot = await batches_service.snapshot(session, tenant_id)
         await websocket.send_json({"event": "snapshot", "data": snapshot})
+        next_check = time.monotonic() + _REAUTH_SECONDS
         while True:
             # Keep-alive only. Server→client contract: any client payload is
-            # discarded, never acted upon (commands go through REST).
-            await websocket.receive_text()
+            # discarded, never acted upon (commands go through REST). The
+            # receive doubles as the re-auth timer: every _REAUTH_SECONDS the
+            # full handshake chain re-runs and a no-longer-valid user is
+            # closed with the same 4401 as a failed handshake.
+            if (remaining := next_check - time.monotonic()) <= 0:
+                async with async_session_factory() as session:
+                    if await resolve_ws_user(session, token) is None:
+                        await websocket.close(code=WS_UNAUTHORIZED)
+                        return
+                next_check = time.monotonic() + _REAUTH_SECONDS
+                continue
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+            except TimeoutError:
+                pass
     except WebSocketDisconnect:
         pass
     finally:
