@@ -306,7 +306,7 @@ export interface paths {
         head?: never;
         /**
          * Update Gate
-         * @description Edit a gate's value. History is untouched — batches snapshot the string.
+         * @description Edit a gate's value/name. History is untouched — batches snapshot the string.
          */
         patch: operations["update_gate_api_admin_gates__gate_id__patch"];
         trace?: never;
@@ -351,6 +351,8 @@ export interface components {
         CreateGateRequest: {
             /** Value */
             value: string;
+            /** Name */
+            name: string;
         };
         /** CreateUserRequest */
         CreateUserRequest: {
@@ -379,6 +381,8 @@ export interface components {
             id: number;
             /** Value */
             value: string;
+            /** Name */
+            name: string;
             /**
              * Created At
              * Format: date-time
@@ -437,6 +441,8 @@ export interface components {
         UpdateGateRequest: {
             /** Value */
             value: string;
+            /** Name */
+            name: string;
         };
         /** UserListResponse */
         UserListResponse: {

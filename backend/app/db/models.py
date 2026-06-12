@@ -115,6 +115,9 @@ class Gate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     value: Mapped[str] = mapped_column(String(20))
+    # Friendly label shown to clients (the value/prefix stays internal). Required;
+    # not unique — two gates may share a name, ``value`` is the identity.
+    name: Mapped[str] = mapped_column(String(80))
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

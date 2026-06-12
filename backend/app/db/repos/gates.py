@@ -42,9 +42,9 @@ async def get_active_by_value(session: AsyncSession, value: str) -> Gate | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def create(session: AsyncSession, *, value: str) -> Gate:
-    """Insert and flush a fresh active gate (value stored verbatim, dot included)."""
-    gate = Gate(value=value)
+async def create(session: AsyncSession, *, value: str, name: str) -> Gate:
+    """Insert and flush a fresh active gate (value verbatim; name is the label)."""
+    gate = Gate(value=value, name=name)
     session.add(gate)
     await session.flush()
     return gate

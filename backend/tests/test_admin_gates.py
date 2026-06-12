@@ -59,10 +59,16 @@ async def client_client() -> AsyncIterator[AsyncClient]:
 
 
 async def _create_gate(
-    owner_client: AsyncClient, value: str, created: set[str]
+    owner_client: AsyncClient,
+    value: str,
+    created: set[str],
+    name: str | None = None,
 ) -> dict[str, object]:
     created.add(value)
-    res = await owner_client.post("/api/admin/gates", json={"value": value})
+    res = await owner_client.post(
+        "/api/admin/gates",
+        json={"value": value, "name": name if name is not None else f"Gate {value}"},
+    )
     assert res.status_code == 201, res.text
     return res.json()
 
@@ -94,7 +100,9 @@ async def test_duplicate_active_value_is_gate_exists(
 
     value = unique_gate_value()
     await _create_gate(owner_client, value, gates_created)
-    dup = await owner_client.post("/api/admin/gates", json={"value": value})
+    dup = await owner_client.post(
+        "/api/admin/gates", json={"value": value, "name": "Otro"}
+    )
     assert dup.status_code == 409
     assert dup.json()["code"] == "gate_exists"
 
@@ -109,10 +117,12 @@ async def test_owner_edits_gate_value(
     new_value = unique_gate_value()
     gates_created.add(new_value)
     res = await owner_client.patch(
-        f"/api/admin/gates/{body['id']}", json={"value": new_value}
+        f"/api/admin/gates/{body['id']}",
+        json={"value": new_value, "name": "Nombre nuevo"},
     )
     assert res.status_code == 200, res.text
     assert res.json()["value"] == new_value
+    assert res.json()["name"] == "Nombre nuevo"
 
     listed = await owner_client.get("/api/admin/gates")
     assert new_value in [g["value"] for g in listed.json()["items"]]
@@ -127,7 +137,8 @@ async def test_edit_to_duplicate_value_is_gate_exists(
     other = await _create_gate(owner_client, unique_gate_value(), gates_created)
     target = await _create_gate(owner_client, unique_gate_value(), gates_created)
     res = await owner_client.patch(
-        f"/api/admin/gates/{target['id']}", json={"value": other["value"]}
+        f"/api/admin/gates/{target['id']}",
+        json={"value": other["value"], "name": "X"},
     )
     assert res.status_code == 409
     assert res.json()["code"] == "gate_exists"
@@ -181,7 +192,9 @@ async def test_edit_or_delete_unknown_gate_is_gate_not_found(
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    res = await owner_client.patch("/api/admin/gates/999999", json={"value": ".x"})
+    res = await owner_client.patch(
+        "/api/admin/gates/999999", json={"value": ".x", "name": "X"}
+    )
     assert res.status_code == 404
     assert res.json()["code"] == "gate_not_found"
     res = await owner_client.delete("/api/admin/gates/999999")
@@ -196,7 +209,9 @@ async def test_out_of_range_gate_id_is_gate_not_found(
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     huge = "99999999999999999999"
-    res = await owner_client.patch(f"/api/admin/gates/{huge}", json={"value": ".x"})
+    res = await owner_client.patch(
+        f"/api/admin/gates/{huge}", json={"value": ".x", "name": "X"}
+    )
     assert res.status_code == 404
     assert res.json()["code"] == "gate_not_found"
     res = await owner_client.delete(f"/api/admin/gates/{huge}")
@@ -214,10 +229,14 @@ async def test_admin_and_client_are_forbidden_on_admin_gates(
     for http_client in (admin_client, client_client):
         assert (await http_client.get("/api/admin/gates")).status_code == 403
         assert (
-            await http_client.post("/api/admin/gates", json={"value": ".nope"})
+            await http_client.post(
+                "/api/admin/gates", json={"value": ".nope", "name": "X"}
+            )
         ).status_code == 403
         assert (
-            await http_client.patch("/api/admin/gates/1", json={"value": ".nope"})
+            await http_client.patch(
+                "/api/admin/gates/1", json={"value": ".nope", "name": "X"}
+            )
         ).status_code == 403
         assert (await http_client.delete("/api/admin/gates/1")).status_code == 403
 
@@ -271,7 +290,45 @@ async def test_validation_rejects_bad_values(
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    res = await owner_client.post("/api/admin/gates", json={"value": bad_value})
+    res = await owner_client.post(
+        "/api/admin/gates", json={"value": bad_value, "name": "Válido"}
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize(
+    "bad_name",
+    ["", "   ", "x" * 81, "n\x00m", "n\u200bm"],
+    ids=["empty", "whitespace-only", "too-long", "nul-byte", "zero-width-space"],
+)
+async def test_validation_rejects_bad_names(
+    ctx: dict[str, object], bad_name: str
+) -> None:
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    res = await owner_client.post(
+        "/api/admin/gates", json={"value": unique_gate_value(), "name": bad_name}
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_name_allows_spaces_and_is_required(
+    ctx: dict[str, object], gates_created: set[str]
+) -> None:
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    # Friendly name keeps inner spaces (unlike value); returned verbatim trimmed.
+    body = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, name="  Visa Oro  "
+    )
+    assert body["name"] == "Visa Oro"
+
+    # Missing name entirely → 422 (required).
+    res = await owner_client.post(
+        "/api/admin/gates", json={"value": unique_gate_value()}
+    )
     assert res.status_code == 422
 
 

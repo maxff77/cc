@@ -208,6 +208,18 @@ claude-fable-5 (Claude Code)
 - frontend/lib/api.ts (modified — `api.patch`)
 - frontend/types/api.ts (regenerated via `npm run generate:api`)
 
+## Post-review enhancement (owner request, 2026-06-12)
+
+- Added a required, non-unique **`name`** label to gates (the client-facing
+  display; the `value`/prefix stays internal). Migration `62f6cc07f7b0` adds
+  `gates.name String(80)` nullable → backfills existing rows from `value` →
+  sets NOT NULL. Validation `_validate_gate_name` (trimmed, non-empty, ≤80,
+  spaces allowed, no invisible chars). `GateOut` now carries `name`; create
+  and edit require it. Admin table shows **Nombre + Gate**; the client
+  selector (Story 2.2) will show the name only. Tests: +3 (name validation,
+  spaces-allowed/required, edit persists name); existing CRUD tests updated to
+  send `name`. Backend ruff/mypy/pytest 70 green; frontend eslint/tsc/build green.
+
 ## Change Log
 
 - 2026-06-11: Story 2.1 implemented — global gate catalog: `gates` table (soft-delete, partial unique index), owner-only CRUD API, read-only catalog API, `/admin/gates` page, middleware owner gate, 16 integration tests. All backend (ruff/mypy/pytest 61) and frontend (eslint/tsc/next build) gates green. Status → review.

@@ -331,6 +331,7 @@ async def reset_password(
 # snapshots the gate string is never rewritten.
 
 GATE_VALUE_MAX = 20
+GATE_NAME_MAX = 80
 _PG_INT_MAX = 2**31 - 1  # gates.id is int4; larger ids overflow the bind
 
 
@@ -348,27 +349,53 @@ def _validate_gate_value(value: str) -> str:
     return value
 
 
+def _validate_gate_name(name: str) -> str:
+    """Gate name policy: trimmed, non-empty, ≤80 chars. Spaces ARE allowed
+    (it's a friendly label); only control/invisible chars are rejected."""
+    name = name.strip()
+    if not name:
+        raise ValueError("nombre vacío")
+    if any(not ch.isprintable() for ch in name):
+        raise ValueError("el nombre no puede contener caracteres invisibles")
+    if len(name) > GATE_NAME_MAX:
+        raise ValueError("nombre demasiado largo")
+    return name
+
+
 class CreateGateRequest(BaseModel):
     value: str
+    name: str
 
     @field_validator("value")
     @classmethod
     def _valid_value(cls, v: str) -> str:
         return _validate_gate_value(v)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        return _validate_gate_name(v)
 
 
 class UpdateGateRequest(BaseModel):
     value: str
+    name: str
 
     @field_validator("value")
     @classmethod
     def _valid_value(cls, v: str) -> str:
         return _validate_gate_value(v)
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        return _validate_gate_name(v)
 
 
 class GateOut(BaseModel):
     id: int
     value: str
+    name: str
     created_at: datetime
 
 
@@ -379,7 +406,9 @@ class GateListResponse(BaseModel):
 
 def gate_to_out(gate: Gate) -> GateOut:
     """Shared Gate → GateOut mapper (also used by the public gates router)."""
-    return GateOut(id=gate.id, value=gate.value, created_at=gate.created_at)
+    return GateOut(
+        id=gate.id, value=gate.value, name=gate.name, created_at=gate.created_at
+    )
 
 
 @router.get("/gates", response_model=GateListResponse)
@@ -402,7 +431,7 @@ async def create_gate(
     if await gates_repo.get_active_by_value(session, body.value) is not None:
         raise gate_exists()
     try:
-        gate = await gates_repo.create(session, value=body.value)
+        gate = await gates_repo.create(session, value=body.value, name=body.name)
         await session.commit()
     except IntegrityError as exc:
         # The pre-check above is racy: a concurrent insert of the same value
@@ -435,12 +464,13 @@ async def update_gate(
     actor: User = Depends(require_owner),
     session: AsyncSession = Depends(get_session),
 ) -> GateOut:
-    """Edit a gate's value. History is untouched — batches snapshot the string."""
+    """Edit a gate's value/name. History is untouched — batches snapshot the string."""
     gate = await _require_active_gate(session, gate_id)
     duplicate = await gates_repo.get_active_by_value(session, body.value)
     if duplicate is not None and duplicate.id != gate.id:
         raise gate_exists()
     gate.value = body.value
+    gate.name = body.name
     try:
         await session.commit()
     except IntegrityError as exc:

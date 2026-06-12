@@ -22,6 +22,7 @@ import { api, ApiError } from "@/lib/api";
 interface GateOut {
   id: number;
   value: string;
+  name: string;
   created_at: string;
 }
 
@@ -32,6 +33,7 @@ interface GateListResponse {
 
 const GATES_KEY = ["admin-gates"] as const;
 const GATE_VALUE_MAX = 20;
+const GATE_NAME_MAX = 80;
 
 // Client-side mirror of the backend `_validate_gate_value` policy, so the
 // owner gets an inline message instead of a raw 422 round-trip.
@@ -42,6 +44,16 @@ function validateGateValue(raw: string): string | null {
   if (/\s/.test(value)) return "El gate no puede contener espacios.";
   if (value.length > GATE_VALUE_MAX)
     return `Máximo ${GATE_VALUE_MAX} caracteres.`;
+
+  return null;
+}
+
+// Mirror of `_validate_gate_name`: required, ≤80 chars, spaces allowed.
+function validateGateName(raw: string): string | null {
+  const name = raw.trim();
+
+  if (!name) return "Ingresá un nombre.";
+  if (name.length > GATE_NAME_MAX) return `Máximo ${GATE_NAME_MAX} caracteres.`;
 
   return null;
 }
@@ -110,7 +122,8 @@ export default function AdminGatesPage() {
           <Table>
             <Table.Content aria-label="Catálogo de gates">
               <Table.Header>
-                <Table.Column isRowHeader>Gate</Table.Column>
+                <Table.Column isRowHeader>Nombre</Table.Column>
+                <Table.Column>Gate</Table.Column>
                 <Table.Column>Creado</Table.Column>
                 <Table.Column>Acciones</Table.Column>
               </Table.Header>
@@ -120,6 +133,7 @@ export default function AdminGatesPage() {
               >
                 {(g) => (
                   <Table.Row id={g.id}>
+                    <Table.Cell>{g.name}</Table.Cell>
                     <Table.Cell>
                       <span className="font-mono text-sm">{g.value}</span>
                     </Table.Cell>
@@ -148,19 +162,22 @@ export default function AdminGatesPage() {
 // --- Create ----------------------------------------------------------------
 
 function CreateGateForm({ onCreated }: { onCreated: () => void }) {
+  const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: () => api.post<GateOut>("/api/admin/gates", { value }),
+    mutationFn: () => api.post<GateOut>("/api/admin/gates", { value, name }),
     onSuccess: () => {
+      setName("");
       setValue("");
       onCreated();
     },
     onError: (err) => {
       // Backend sends user-facing Spanish in `message`; route gate_exists to
-      // the field, everything else to the banner.
+      // the value field, everything else to the banner.
       if (err instanceof ApiError) {
         if (err.code === "gate_exists") setFieldError(err.message);
         else setBanner(err.message);
@@ -175,15 +192,15 @@ function CreateGateForm({ onCreated }: { onCreated: () => void }) {
     // Enter can re-submit the Form while a POST is in flight (isDisabled only
     // blocks the button) — would double-create and show a spurious duplicate.
     if (mutation.isPending) return;
+    setNameError(null);
     setFieldError(null);
     setBanner(null);
-    const invalid = validateGateValue(value);
+    const invalidName = validateGateName(name);
+    const invalidValue = validateGateValue(value);
 
-    if (invalid) {
-      setFieldError(invalid);
-
-      return;
-    }
+    if (invalidName) setNameError(invalidName);
+    if (invalidValue) setFieldError(invalidValue);
+    if (invalidName || invalidValue) return;
     mutation.mutate();
   }
 
@@ -201,6 +218,22 @@ function CreateGateForm({ onCreated }: { onCreated: () => void }) {
         className="flex flex-col gap-3 sm:flex-row sm:items-end"
         onSubmit={onSubmit}
       >
+        <TextField
+          isRequired
+          className="flex flex-col gap-1 sm:w-56"
+          isInvalid={nameError !== null}
+          name="name"
+          value={name}
+          onChange={(v) => {
+            setName(v);
+            if (nameError) setNameError(null);
+          }}
+        >
+          <Label>Nombre</Label>
+          <Input placeholder="Visa Oro" />
+          {nameError && <FieldError>{nameError}</FieldError>}
+        </TextField>
+
         <TextField
           isRequired
           className="flex flex-col gap-1 sm:w-48"
@@ -240,12 +273,13 @@ function EditGateAction({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [name, setName] = useState(gate.name);
   const [value, setValue] = useState(gate.value);
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () =>
-      api.patch<GateOut>(`/api/admin/gates/${gate.id}`, { value }),
+      api.patch<GateOut>(`/api/admin/gates/${gate.id}`, { value, name }),
     onSuccess: () => {
       setOpen(false);
       setError(null);
@@ -269,7 +303,7 @@ function EditGateAction({
 
   function save() {
     if (mutation.isPending) return;
-    const invalid = validateGateValue(value);
+    const invalid = validateGateName(name) ?? validateGateValue(value);
 
     if (invalid) {
       setError(invalid);
@@ -286,6 +320,7 @@ function EditGateAction({
         size="sm"
         variant="secondary"
         onPress={() => {
+          setName(gate.name);
           setValue(gate.value);
           setOpen(true);
         }}
@@ -297,6 +332,18 @@ function EditGateAction({
 
   return (
     <div className="flex flex-col gap-2">
+      <TextField
+        className="flex flex-col gap-1 sm:w-48"
+        name="name"
+        value={name}
+        onChange={(v) => {
+          setName(v);
+          if (error) setError(null);
+        }}
+      >
+        <Label>Nombre</Label>
+        <Input />
+      </TextField>
       <TextField
         className="flex flex-col gap-1 sm:w-40"
         name="value"
