@@ -8,8 +8,16 @@ The app must BOOT without Telegram: missing/zero credentials, a missing or
 unauthorized session file, or an unresolvable target leave ``authorized``/
 ``target_ok`` False — login/admin keep working, the worker idles and
 ``POST /api/batches`` answers 503 ``telegram_unauthorized``. Re-auth is
-operational (run ``scripts/telegram_auth.py`` on the VPS); ``AuthKeyError``
-detection/watchdog is Story 4.1 — deliberately NOT built here.
+operational (run ``scripts/telegram_auth.py`` on the VPS).
+
+Session-loss detection (Story 4.1): an ``AuthKeyError``/deauthorization
+surfacing on the HOT path (``send``/``recent_outgoing``) flips
+``authorized=False`` and crosses the boundary as the domain
+``SessionLostError`` — the worker releases its claimed line and latches the
+watchdog's global pause. Boot-time unauthorized is deliberately NOT a
+watchdog trigger (recorded decision): it is not a silent failure (warning +
+503 on every new send since 2.2) and would false-alert on every fresh deploy
+before the first auth.
 """
 
 import logging
@@ -18,6 +26,7 @@ from typing import Any
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
+from telethon.errors.rpcbaseerrors import AuthKeyError, UnauthorizedError
 
 from app.config import settings
 
@@ -27,9 +36,24 @@ from app.core.capture import IncomingReply
 
 # Re-exported so the worker can catch FloodWaitError without importing
 # telethon itself (the boundary: telethon imports live ONLY in this module).
-__all__ = ["FloodWaitError", "TelegramGateway", "gateway"]
+__all__ = ["FloodWaitError", "SessionLostError", "TelegramGateway", "gateway"]
 
 logger = logging.getLogger(__name__)
+
+
+class SessionLostError(Exception):
+    """The Telegram session died (Story 4.1) — a DOMAIN exception.
+
+    Raised instead of the underlying telethon error so the worker never
+    imports telethon classes (the architecture boundary). ``UnauthorizedError``
+    is the base of every 401 (AUTH_KEY_UNREGISTERED, SESSION_REVOKED,
+    SESSION_EXPIRED, USER_DEACTIVATED…) and ``AuthKeyError`` the 406 base
+    (AUTH_KEY_DUPLICATED) — the AC's literal "AuthKeyError or deauthorization".
+    """
+
+
+# The telethon shapes that mean "the session is gone" on a hot call.
+_AUTH_LOSS_ERRORS = (UnauthorizedError, AuthKeyError)
 
 
 class TelegramGateway:
@@ -176,11 +200,18 @@ class TelegramGateway:
 
         The id feeds ``send_log`` (Story 2.5 write-ahead → Story 3.1
         attribution). ``FloodWaitError`` propagates to the worker (the worker
-        owns retry policy).
+        owns retry policy); an auth-loss error is converted to the domain
+        ``SessionLostError`` (Story 4.1) after flipping ``authorized`` off so
+        new ``POST /api/batches`` 503 on their own.
         """
         if self.client is None or self._entity is None:
             raise RuntimeError("telegram gateway not ready")
-        message = await self.client.send_message(self._entity, text)
+        try:
+            message = await self.client.send_message(self._entity, text)
+        except _AUTH_LOSS_ERRORS as e:
+            self.authorized = False
+            logger.error("event=session_lost source=send error=%s: %s", type(e).__name__, e)
+            raise SessionLostError(f"{type(e).__name__}: {e}") from e
         return int(message.id)
 
     async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
@@ -193,11 +224,24 @@ class TelegramGateway:
         """
         if self.client is None or self._entity is None:
             raise RuntimeError("telegram gateway not ready")
-        messages: list[tuple[int, str]] = []
-        async for message in self.client.iter_messages(
-            self._entity, from_user="me", limit=limit
-        ):
-            messages.append((int(message.id), message.text or ""))
+        try:
+            messages: list[tuple[int, str]] = []
+            async for message in self.client.iter_messages(
+                self._entity, from_user="me", limit=limit
+            ):
+                messages.append((int(message.id), message.text or ""))
+        except _AUTH_LOSS_ERRORS as e:
+            # Same conversion as send() — the boot-recovery caller falls into
+            # its existing reconcile_unverified fallback; the first real send
+            # then latches the watchdog (Story 4.1 recorded decision: the
+            # WORKER triggers, it owns the claimed-line context).
+            self.authorized = False
+            logger.error(
+                "event=session_lost source=recent_outgoing error=%s: %s",
+                type(e).__name__,
+                e,
+            )
+            raise SessionLostError(f"{type(e).__name__}: {e}") from e
         return messages
 
     async def disconnect(self) -> None:

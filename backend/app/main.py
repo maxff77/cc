@@ -26,10 +26,12 @@ from app.api.batches import router as batches_router
 from app.api.gates import router as gates_router
 from app.api.health import router as health_router
 from app.api.sessions import router as sessions_router
+from app.api.watchdog import router as watchdog_router
 from app.api.ws import router as ws_router
 from app.core import capture
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
+from app.core.watchdog import watchdog
 from app.db.base import engine
 from app.errors import AppError
 
@@ -44,6 +46,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # capture queue meanwhile (review 3-1).
     capture.hold_until_boot()
     await gateway.connect()  # never raises — unauthorized just means 503s
+    # Restore a persisted watchdog latch BEFORE the worker can claim anything
+    # (Story 4.1, AC 3: a deploy/restart never resumes sending on its own).
+    await watchdog.load_persisted()
     worker_task = asyncio.create_task(run_worker())
     capture_task = asyncio.create_task(capture.run_capture())
     yield
@@ -78,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(gates_router)
     app.include_router(batches_router)
     app.include_router(sessions_router)
+    app.include_router(watchdog_router)
     app.include_router(ws_router)
     return app
 

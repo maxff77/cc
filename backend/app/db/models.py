@@ -3,7 +3,7 @@
 Tables arrive story by story via Alembic migrations (no tables ahead of need):
 tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
 batch_lines (2.2), send_log (2.5), capture_sessions + responses (3.1),
-audit_log (3.6).
+audit_log (3.6), watchdog_state (4.1).
 """
 
 from datetime import datetime
@@ -445,4 +445,39 @@ class AuditLog(Base):
     capture_session_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class WatchdogState(Base):
+    """Durable latch of the watchdog's GLOBAL send pause (Story 4.1).
+
+    ONE row (id=1, app-enforced — ``repos/watchdog.save_state`` is get-or-
+    create on that id). GLOBAL system state, deliberately NO ``tenant_id``
+    (same documented exception class as ``gates``): the watchdog pauses the
+    whole shared account, never one tenant.
+
+    The in-process singleton (``core/watchdog.py``) is the operating
+    authority (the worker gates on memory, zero queries per step); this row
+    is what survives a restart — CI deploys on every push to main, and a
+    watchdog pause that evaporates on deploy would be exactly the automatic
+    resume AC 3 forbids. ``reason`` is a plain String, no DB enum (2.2
+    decision): ``'reply_rate_collapse' | 'session_lost'``.
+    """
+
+    __tablename__ = "watchdog_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    paused: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
+    reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

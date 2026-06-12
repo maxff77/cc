@@ -45,6 +45,13 @@ control). The own tenant's pause/stop still land instantly (release/abort).
 The global FloodWait window (scheduler.flood_remaining) gates the TOP of
 ``step()`` — after a FloodWait nobody sends until it elapses, not even the
 window-owning tenant via pause→resume (2.5 recorded decision).
+
+Watchdog (Story 4.1): step 0 of ``step()`` gates on ``watchdog.is_paused`` —
+a latched global pause blocks every claim/send until the OWNER explicitly
+resumes (never automatic). ``SessionLostError`` from the gateway releases the
+claimed line intact (it never went out — not a bad line, no 'failed') and
+latches that pause; every real delivery feeds ``watchdog.note_sent()`` so a
+reply-rate collapse latches it too.
 """
 
 import asyncio
@@ -60,7 +67,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import capture
 from app.core.broadcaster import broadcaster
 from app.core.scheduler import scheduler
-from app.core.telegram import FloodWaitError, gateway
+from app.core.telegram import FloodWaitError, SessionLostError, gateway
+from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
 from app.db.models import Batch, BatchLine
 from app.db.repos import batches as batches_repo
@@ -170,6 +178,12 @@ async def step() -> bool:
     Factored out of the infinite loop so tests can await single steps
     deterministically (no real Telegram, no background task).
     """
+    # 0a. Watchdog latch (Story 4.1): a watchdog-triggered GLOBAL pause blocks
+    #     every claim/send until the owner explicitly resumes — never
+    #     automatic. Memory gate (zero queries); run_worker idles and rotates.
+    if watchdog.is_paused:
+        return False
+
     # 0. Global FloodWait window (Story 2.5, closing the 2.4 deferred bypass):
     #    after a FloodWait NOBODY claims/sends until the window elapses — not
     #    even the window-owning tenant via pause→resume. Wake-immune is
@@ -229,8 +243,19 @@ async def step() -> bool:
         else:  # "abort"
             await _abort_line(tenant_id, batch_id, line_id)
         return False
-    if isinstance(result, tuple):  # ("failed", code) — the cap was hit
-        await _record_failed(tenant_id, batch_id, line_id, position, text, result[1])
+    if isinstance(result, tuple):
+        kind, info = result
+        if kind == "session_lost":
+            # The Telegram session died (Story 4.1): the line NEVER went out —
+            # hand it back intact (release, not 'failed': it is not a bad
+            # line), then latch the global pause + owner alert. The batch
+            # stays 'sending' in the DB and resumes where it was once the
+            # owner explicitly resumes.
+            await _release_line(tenant_id, batch_id, line_id)
+            await watchdog.session_lost(info)
+            return False
+        # ("failed", code) — the cap was hit
+        await _record_failed(tenant_id, batch_id, line_id, position, text, info)
         return True
 
     # 3. Record + emit ("sent") — retries forever until the DB takes it.
@@ -295,6 +320,10 @@ async def _record_sent(
             await sleep_paced(_ERROR_RETRY_SECONDS)
 
     _sent_by_tenant[tenant_id] += 1
+    # Feed the reply-rate watchdog (Story 4.1) — REAL deliveries only (boot
+    # reconciliation confirms are old sends and never call this). May latch
+    # the global pause right here when the window collapsed.
+    await watchdog.note_sent()
     logger.info(
         "event=line_sent tenant=%s batch=%s line=%s message_id=%s tenant_total=%s",
         tenant_id,
@@ -430,7 +459,7 @@ def _fail_code(exc: BaseException) -> str:
 
 async def _send_with_retries(
     tenant_id: int, batch_id: int, text: str
-) -> int | tuple[Literal["failed"], str] | Literal["release", "abort"]:
+) -> int | tuple[Literal["failed", "session_lost"], str] | Literal["release", "abort"]:
     """Deliver ``text`` (→ its Telegram message id) — or yield/give up.
 
     The batch state is re-read at the TOP of every iteration AND inside every
@@ -444,7 +473,8 @@ async def _send_with_retries(
     error counts, and at ``_MAX_SEND_ATTEMPTS`` total attempts the line is
     given up as ``("failed", code)``. The counter is per CLAIM on purpose
     (recorded decision): a release/re-claim resets it — simple, and the case
-    is rare.
+    is rare. ``SessionLostError`` (Story 4.1) short-circuits as
+    ``("session_lost", detail)`` — neither a retry nor a 'failed'.
     """
     attempts = 0
     while True:
@@ -475,6 +505,11 @@ async def _send_with_retries(
                 return outcome
         except asyncio.CancelledError:
             raise
+        except SessionLostError as e:
+            # The session died (Story 4.1) — NOT a bad line: never counts
+            # toward the cap, never marks 'failed'. The caller releases the
+            # line and latches the watchdog's global pause.
+            return ("session_lost", str(e))
         except Exception as e:
             attempts += 1
             # Per-attempt error event kept — never silently dropped.

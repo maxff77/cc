@@ -15,6 +15,7 @@ import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
 import { ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
+import { WatchdogNotice } from "@/components/batch/watchdog-notice";
 import {
   CompletaPanel,
   FiltradaPanel,
@@ -60,6 +61,9 @@ export default function EnvioPage() {
 
         {/* Mobile order per DESIGN.md: ring → controls → data panels → form. */}
         <BatchControls live={live} />
+        {/* Watchdog global pause (4.1): danger banner + owner-only resume —
+            above FloodNotice (a latched pause outranks a transient wait). */}
+        <WatchdogNotice />
         <FloodNotice />
         {/* Failed lines (2.5, AC 4): visibility comes from this panel — the
             ring keeps EXACTLY three metrics (UX-DR21). */}

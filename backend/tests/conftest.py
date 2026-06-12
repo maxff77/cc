@@ -16,6 +16,7 @@ import pytest_asyncio
 from app.core import capture, send_worker
 from app.core.scheduler import scheduler
 from app.core.telegram import gateway
+from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
 from app.db.models import Gate, GateCategory, Tenant, User
 from app.db.repos import users as users_repo
@@ -174,6 +175,20 @@ def reset_capture() -> Iterator[None]:
     capture.reset()
     yield
     capture.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_watchdog() -> Iterator[None]:
+    """Wipe the watchdog singleton's window + latch around every test.
+
+    Story 4.1 state is process memory by design — a latched pause or a
+    half-full send window leaking across tests would silently block every
+    later ``step()`` (the same trap as the 2.4 governor). Memory only — the
+    DB row is owned by the explicit persistence tests.
+    """
+    watchdog.reset()
+    yield
+    watchdog.reset()
 
 
 @pytest.fixture(autouse=True)

@@ -299,3 +299,20 @@ def tenant_not_found() -> AppError:
         code="tenant_not_found",
         message="Ese cliente no existe.",
     )
+
+
+# --- Codes this story (4.1) defines --------------------------------------
+
+
+def sending_paused() -> AppError:
+    # POST /api/batches (create AND append) while the watchdog's global pause
+    # is latched — queuing lines that will not send invites confusion; the WS
+    # banner explains the state and only the owner can resume.
+    return AppError(
+        status_code=503,
+        code="sending_paused",
+        message=(
+            "Los envíos están pausados por protección de la cuenta. "
+            "Intenta más tarde."
+        ),
+    )

@@ -20,6 +20,7 @@ from app.api.deps import get_current_user
 from app.core import send_worker
 from app.core.broadcaster import broadcaster
 from app.core.telegram import gateway
+from app.core.watchdog import watchdog
 from app.db.base import get_session
 from app.db.models import Batch, User
 from app.db.repos import batches as batches_repo
@@ -31,6 +32,7 @@ from app.errors import (
     batch_stopping,
     empty_batch,
     gate_not_found,
+    sending_paused,
     telegram_unauthorized,
 )
 from app.services import batches as batches_service
@@ -78,6 +80,11 @@ async def create_or_append_batch(
     """
     if not gateway.authorized or not gateway.target_ok:
         raise telegram_unauthorized()
+    # Watchdog global pause (Story 4.1): create AND append are rejected while
+    # the latch holds — queuing lines that will not send invites confusion;
+    # the WS banner explains the state and only the owner can resume.
+    if watchdog.is_paused:
+        raise sending_paused()
 
     # Captured BEFORE any rollback: a rollback expires the session-loaded
     # ``user`` object and a later attribute access would lazy-refresh

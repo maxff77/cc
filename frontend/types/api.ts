@@ -474,6 +474,196 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description The tenant's sessions, newest first (AC 1).
+         *
+         *     Flat list — the grouping by gate is presentation, done client-side.
+         */
+        get: operations["list_sessions_api_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session Detail
+         * @description Detail with the COMPLETE Completa/Filtrada data (AC 2).
+         *
+         *     ``limit=None`` — the ``_SNAPSHOT_ROWS`` cap is per-reconnection only; the
+         *     full data lives here (3.2's recorded promise). With no cap the totals ARE
+         *     the list lengths — the count queries stay snapshot-only.
+         */
+        get: operations["get_session_detail_api_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Session
+         * @description Hard delete (AC 5) guarded by the LIVE-batch binding (AC 6).
+         *
+         *     The guard is "bound to a live batch", NOT ``is_active``: deleting the
+         *     active session with the surface idle IS allowed (no batch to stop) — the
+         *     tenant just has no active session until the next batch creates one.
+         *     ``responses`` rows die via FK CASCADE; the batch history survives with
+         *     ``capture_session_id`` NULL (SET NULL).
+         *
+         *     The lookup takes ``FOR UPDATE`` BEFORE the live-batch guard to close the
+         *     TOCTOU against a concurrent ``POST /api/batches`` binding this same
+         *     session (review 3-3 — the window is NOT harmless: the FK is SET NULL, so
+         *     a POST committing between the guard's read and this commit would not
+         *     500, it would be silently unbound, leaving a LIVE batch with no session).
+         *     A concurrent binding's batch INSERT takes ``FOR KEY SHARE`` on the
+         *     session row during its FK check, which conflicts with ``FOR UPDATE``:
+         *     either that POST blocks and errors on the gone row, or it commits first
+         *     and the guard's read here sees the live batch ⇒ 409.
+         */
+        delete: operations["delete_session_api_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Session
+         * @description Rename (AC 4). NO live-batch guard — recorded legacy parity
+         *     ("renombrar is unguarded") — and no uniqueness: names may repeat, the
+         *     stable id is the DB id. ``updated_at`` refreshes itself (onupdate).
+         */
+        patch: operations["rename_session_api_sessions__session_id__patch"];
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Session
+         * @description Download one view as ``.txt`` (Story 3.5, FR18) — generated on the fly
+         *     from rows, no cache, no files on disk (architecture mandate).
+         *
+         *     ``view`` maps the legacy ``?tipo=completa|filtrada`` (``tipo``→``view``);
+         *     the ``Literal`` validates at the edge ⇒ 422 on anything else (same
+         *     treatment as every validation 422 in the project — the UI never builds an
+         *     invalid view). The tenant-scoped lookup's 404 trío (unknown / foreign /
+         *     out-of-int4 id) IS the AC 3 isolation — no new code, no existence leak.
+         *
+         *     NO live-batch guard (AC 2: works both during a live batch and on closed
+         *     sessions — same lane as rename). Zero rows ⇒ 200 with an empty body
+         *     (recorded decision: a 404 here would conflate "no data" with "no
+         *     session"). ``PlainTextResponse`` already sets ``text/plain; charset=utf-8``;
+         *     the filename in ``Content-Disposition`` is the backend's single authority.
+         */
+        get: operations["export_session_api_sessions__session_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Continue Session
+         * @description Continuar (Story 3.4, AC 1–3): reactivate this session as the tenant's
+         *     active capture session.
+         *
+         *     The CC dedup needs NO preloading here — it is DB-backed per
+         *     ``capture_session_id`` (``add_new_cc`` + ``uq_responses_session_cc``), so
+         *     reactivating the session is the whole "dedup set preserved": the next
+         *     batch of the same gate binds to it via ``resolve_for_batch`` and every
+         *     already-captured CC value stays deduped.
+         *
+         *     Guard (AC 3): ANY live batch of the tenant (sending|paused|stopping) ⇒
+         *     409 ``batch_live`` — legacy parity "nueva/continuar return HTTP 409 while
+         *     a batch is live or paused (`_lote_vivo`)". Unlike delete's guard it does
+         *     NOT matter which session the live batch is bound to.
+         *
+         *     The lookup takes ``FOR UPDATE`` so it serializes with a concurrent DELETE
+         *     of the same target (3.3 takes the same lock) and with another continue of
+         *     the SAME target. Two continues of DIFFERENT targets (or a continue
+         *     crossing a batch start) can still race into
+         *     ``uq_capture_sessions_one_active_per_tenant`` at commit — mapped to 409
+         *     ``session_conflict``, never a raw 500.
+         *
+         *     Idempotent: continuing the ALREADY-active session (surface idle) is a
+         *     clean no-op in ``activate`` ⇒ 200 + emit (cheap multi-tab reconcile; the
+         *     UI never offers the button on "En curso", but another tab may have
+         *     activated it in between). Function name: ``continue`` is a reserved word.
+         */
+        post: operations["continue_session_api_sessions__session_id__continue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watchdog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Current latch state — the owner's alert surface polls/reads this.
+         */
+        get: operations["get_status_api_watchdog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watchdog/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume
+         * @description Clear the global pause (AC 3). Idempotent: not paused → 204, no event
+         *     (two tabs / double click — the idiom of the 2.3 batch controls).
+         */
+        post: operations["resume_api_watchdog_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -628,6 +818,11 @@ export interface components {
             /** Tenant Id */
             tenant_id: number;
         };
+        /** RenameSessionRequest */
+        RenameSessionRequest: {
+            /** Name */
+            name: string;
+        };
         /** RenewPlanRequest */
         RenewPlanRequest: {
             /** Plan Days */
@@ -639,6 +834,80 @@ export interface components {
         ResetPasswordResponse: {
             /** Temp Password */
             temp_password: string;
+        };
+        /** SessionCcRow */
+        SessionCcRow: {
+            /** Id */
+            id: number;
+            /** Text */
+            text: string;
+        };
+        /** SessionDetailOut */
+        SessionDetailOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string | null;
+            /** Gate Value */
+            gate_value: string;
+            /** Gate Name */
+            gate_name: string;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Responses */
+            responses: components["schemas"]["SessionResponseRow"][];
+            /** Cc */
+            cc: components["schemas"]["SessionCcRow"][];
+            /** Responses Total */
+            responses_total: number;
+            /** Cc Total */
+            cc_total: number;
+        };
+        /** SessionListResponse */
+        SessionListResponse: {
+            /** Items */
+            items: components["schemas"]["SessionOut"][];
+            /** Total */
+            total: number;
+        };
+        /** SessionOut */
+        SessionOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string | null;
+            /** Gate Value */
+            gate_value: string;
+            /** Gate Name */
+            gate_name: string;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** SessionResponseRow */
+        SessionResponseRow: {
+            /** Id */
+            id: number;
+            /** Message Id */
+            message_id: number;
+            /** Status */
+            status: string | null;
+            /** Text */
+            text: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** UpdateCategoryRequest */
         UpdateCategoryRequest: {
@@ -686,6 +955,17 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WatchdogStatusOut */
+        WatchdogStatusOut: {
+            /** Paused */
+            paused: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Detail */
+            detail: string | null;
+            /** Paused At */
+            paused_at: string | null;
         };
     };
     responses: never;
@@ -1403,6 +1683,223 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    list_sessions_api_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionListResponse"];
+                };
+            };
+        };
+    };
+    get_session_detail_api_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_api_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_session_api_sessions__session_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_session_api_sessions__session_id__export_get: {
+        parameters: {
+            query: {
+                view: "completa" | "filtrada";
+            };
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    continue_session_api_sessions__session_id__continue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_watchdog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchdogStatusOut"];
+                };
+            };
+        };
+    };
+    resume_api_watchdog_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

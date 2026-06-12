@@ -9,6 +9,7 @@ order (in-batch dedup is an AC).
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.scheduler import scheduler
+from app.core.watchdog import watchdog
 from app.db.models import Batch
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
@@ -172,6 +173,9 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "failed_lines": [],
             "total": 0,
             "eta_seconds": 0,
+            # Watchdog slice (Story 4.1) — a reconnected tab rebuilds the
+            # global-pause banner from the snapshot alone (snapshot-first).
+            "watchdog": watchdog.status(),
             **await active_session_data(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
@@ -195,5 +199,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         ],
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
+        # Watchdog slice (Story 4.1) — same rationale as the idle branch.
+        "watchdog": watchdog.status(),
         **await active_session_data(session, tenant_id),
     }

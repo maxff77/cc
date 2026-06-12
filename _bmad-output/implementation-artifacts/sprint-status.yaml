@@ -37,9 +37,12 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 4-1 → done 2026-06-12 (merged from story/4-1 onto main tras epic 3; conflictos resueltos en models.py/errors.py/sprint-status)
 # 3-6 → done 2026-06-12 (cross-tenant support view: audit_log modelo+migración+repo con fail-closed, GET /api/admin/tenants/{id}/sessions con trío 404, página /admin/tenants/[id] Table+duales sin export, smoke manual verificado)
 # 3-6 → review 2026-06-12 (implementado: audit_log (modelo+migración+repo) con commit fail-closed ANTES de servir datos, GET /api/admin/tenants/{id}/sessions[/{sid}] admin+owner con trío 404 tenant_not_found/session_not_found + 403 forbidden para clientes + guard Sec-Fetch-Site anti-CSRF, página /admin/tenants/[id] read-only con Table + paneles duales 3.2 sin export, link "Sesiones" en /admin/users; suite verde, ruff/lint/build limpios; pendiente smoke manual del owner)
 # 3-6 → ready-for-dev 2026-06-12 (story file created — vista de soporte cross-tenant: audit_log nuevo (modelo+migración+repo), GET /api/admin/tenants/{id}/sessions[/{sid}] admin+owner con trío 404 tenant_not_found + audit fail-closed, página /admin/tenants/[id] con Table + duales read-only sin export, link "Sesiones" en /admin/users; middleware sin cambios (AC 3 ya cubierto); sin diferidos absorbidos — 2-1 admin.py:466 NO absorbido con justificación)
+# 4-1 → review 2026-06-12 (implementado: watchdog reply-rate (ventana 300s, ≥5 sends + cero replies + span ≥60s) + SessionLostError (UnauthorizedError/AuthKeyError → release de línea + latch), pausa global durable (watchdog_state, load_persisted en lifespan), resume manual-only owner (POST /api/watchdog/resume + GET), sending_paused 503 en POST /api/batches, eventos watchdog.paused/resumed globales + slice en snapshot, banner danger con botón Reanudar del owner; 14 tests nuevos, suite 225 verde + 1 skip (persistencia hasta el alembic upgrade del merge), ruff/mypy/lint/tsc limpios; pendiente smoke manual del owner)
+# 4-1 → ready-for-dev 2026-06-12 (story file created — watchdog de respuestas: ventana deslizante + colapso, AuthKeyError/deauth → SessionLostError, latch global durable + resume solo-owner, logs estructurados event=watchdog_*; sin diferidos absorbidos)
 # 3-5 → done 2026-06-12 (export .txt: services/exports.py puro + GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard + Cache-Control no-store, downloadFile fetch+blob con Content-Disposition, ExportLink footer en duales, suite 212 verde)
 # 3-5 → review 2026-06-12 (implementado: services/exports.py puro (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= con Literal⇒422 + trío 404 sin guard de lote vivo + Cache-Control no-store, toApiError extraído + downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); suite 212 verde, ruff/mypy/tsc/lint/build limpios; pendiente smoke manual del owner)
 # 3-5 → ready-for-dev 2026-06-12 (story file created — export .txt: services/exports.py nuevo (completa/filtrada paridad legacy + filename ASCII-safe), GET /api/sessions/{id}/export?view= sin guard de lote, downloadFile fetch+blob en lib/api.ts, ExportLink footer en paneles duales (Envío via live.sessionId + Historial detalle); sin diferidos absorbidos)
@@ -105,8 +108,8 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Protección operativa de la cuenta (guardarraíl de baneo)
-  epic-4: backlog
-  4-1-watchdog-de-respuestas-y-deteccion-de-perdida-de-sesion: backlog
+  epic-4: in-progress
+  4-1-watchdog-de-respuestas-y-deteccion-de-perdida-de-sesion: done
   4-2-admission-control-con-cola-de-espera: backlog
   4-3-observabilidad-del-guardarrail-de-baneo: backlog
   4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: backlog

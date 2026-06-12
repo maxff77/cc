@@ -42,6 +42,17 @@ export interface CcRow {
   nueva: boolean;
 }
 
+// Watchdog global-pause latch (Story 4.1): SYSTEM state, not batch state —
+// it survives the idle reset and seedFromBatch, and only the snapshot or the
+// watchdog.* events touch it. `reason` is the backend's machine string
+// ('reply_rate_collapse' | 'session_lost'); copy lives in watchdog-notice.
+export interface WatchdogInfo {
+  paused: boolean;
+  reason: string | null;
+  detail: string | null;
+  pausedAt: string | null;
+}
+
 export interface LiveBatchState {
   state: BatchSurfaceState;
   batchId: number | null;
@@ -69,6 +80,9 @@ export interface LiveBatchState {
   // Epoch ms when the FloodWait window ends; null = no active notice. Set by
   // `flood.wait`, cleared by any signal that sending flows again (AC 6).
   floodUntil: number | null;
+  // Watchdog global pause (Story 4.1) — system-wide, role-agnostic state;
+  // the banner renders for everyone, the resume button only for the owner.
+  watchdog: WatchdogInfo;
 }
 
 // --- Hand-typed WS payload shapes (mirror backend services/batches.py) ------
@@ -104,6 +118,14 @@ interface SnapshotData {
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
   responses_total: number;
+  // Story 4.1: the watchdog latch — a reconnected tab rebuilds the
+  // global-pause banner from the snapshot alone (snapshot-first).
+  watchdog: {
+    paused: boolean;
+    reason: string | null;
+    detail: string | null;
+    paused_at: string | null;
+  };
 }
 
 interface ProgressData {
@@ -154,6 +176,14 @@ interface FloodWaitData {
   seconds: number;
 }
 
+// `watchdog.paused` (Story 4.1, GLOBAL like flood.wait): the watchdog latched
+// the system-wide pause — reply-rate collapse or session loss.
+interface WatchdogPausedData {
+  reason: string;
+  detail: string | null;
+  paused_at: string;
+}
+
 // VERBATIM mirror of `active_session_data` (backend services/batches.py) —
 // the `session.active` payload (Story 3.4) IS the snapshot's session slice:
 // a tab that misses the event reconciles with its next snapshot without any
@@ -185,6 +215,7 @@ const IDLE: LiveBatchState = {
   cc: [],
   responsesTotal: 0,
   floodUntil: null,
+  watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
 };
 
 let store: LiveBatchState = IDLE;
@@ -252,6 +283,14 @@ function reduce(event: string, data: unknown) {
         // The snapshot carries no flood info → drop any notice. Honest: after
         // a reconnect the countdown is no longer verifiable.
         floodUntil: null,
+        // Watchdog latch (4.1): the snapshot is authoritative — a reconnect
+        // rebuilds (or clears) the banner from here alone.
+        watchdog: {
+          paused: d.watchdog.paused,
+          reason: d.watchdog.reason,
+          detail: d.watchdog.detail,
+          pausedAt: d.watchdog.paused_at,
+        },
       });
       break;
     }
@@ -314,6 +353,9 @@ function reduce(event: string, data: unknown) {
           cc: store.cc,
           ccNew: store.ccNew,
           responsesTotal: store.responsesTotal,
+          // System state, not batch state (4.1): a draining batch never
+          // clears the global-pause banner.
+          watchdog: store.watchdog,
         });
       } else {
         // A live batch bound to ANOTHER session ⇒ gate change replaced the
@@ -449,6 +491,28 @@ function reduce(event: string, data: unknown) {
       setStore({ ...store, floodUntil: Date.now() + d.seconds * 1000 });
       break;
     }
+    case "watchdog.paused": {
+      const d = data as WatchdogPausedData;
+
+      // Global latch (4.1): never touches `state` — batches keep their DB
+      // state and resume where they were once the owner explicitly resumes.
+      setStore({
+        ...store,
+        watchdog: {
+          paused: true,
+          reason: d.reason,
+          detail: d.detail,
+          pausedAt: d.paused_at,
+        },
+      });
+      break;
+    }
+    case "watchdog.resumed":
+      setStore({
+        ...store,
+        watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
+      });
+      break;
     case "batch.line_sent":
       // A line went out ⇒ sending flows again — clear any FloodWait notice.
       if (store.floodUntil !== null) {
@@ -587,5 +651,8 @@ export function seedFromBatch(batch: {
     responsesTotal: store.responsesTotal,
     // A global FloodWait window doesn't end because a batch was posted.
     floodUntil: store.floodUntil,
+    // System state (4.1) — a new batch never clears the global-pause banner
+    // (and the backend rejects the POST while latched anyway).
+    watchdog: store.watchdog,
   });
 }

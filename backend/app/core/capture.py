@@ -43,6 +43,7 @@ from sqlalchemy import exc as sa_exc
 from app.core import attribution
 from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
+from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
 from app.db.repos import responses as responses_repo
 
@@ -107,7 +108,15 @@ _unmatched_total = 0
 
 
 def enqueue(reply: IncomingReply) -> None:
-    """Bridge entry point (synchronous — called from telegram.py handlers)."""
+    """Bridge entry point (synchronous — called from telegram.py handlers).
+
+    Feeds the reply-rate watchdog at ARRIVAL time (Story 4.1, recorded
+    decision): the signal is "the bot is alive", independent of DB health
+    (with the DB down replies buffer here and the watchdog must stay calm —
+    the fail-stop already halted sending) and of attribution (an unmatched
+    reply proves life all the same).
+    """
+    watchdog.note_reply()
     _queue.put_nowait(reply)
 
 

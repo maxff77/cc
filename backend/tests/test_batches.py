@@ -403,6 +403,13 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "total": 0,
         "eta_seconds": 0,
         "cc_new": 0,
+        # Story 4.1: watchdog slice — unpaused by default (autouse reset).
+        "watchdog": {
+            "paused": False,
+            "reason": None,
+            "detail": None,
+            "paused_at": None,
+        },
         # Story 3.2: session slice — no active session, empty panels.
         "session_id": None,
         "responses_total": 0,
