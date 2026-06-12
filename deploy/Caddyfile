@@ -1,0 +1,37 @@
+# CC production Caddyfile (Story 1.7)
+#
+# Install: copy (or symlink) this file to /etc/caddy/Caddyfile and reload:
+#     sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#     sudo systemctl reload caddy
+#
+# CC_DOMAIN: the public subdomain is NOT hardcoded — Caddy substitutes the
+# {$CC_DOMAIN} placeholder from its process environment. Set it in Caddy's
+# systemd drop-in (sudo systemctl edit caddy):
+#     [Service]
+#     Environment=CC_DOMAIN=cc.example.com
+# or in an EnvironmentFile such as /etc/caddy/caddy.env referenced there.
+#
+# HTTPS: Caddy v2 provisions and renews Let's Encrypt certificates
+# automatically for any concrete site address — no TLS config needed.
+#
+# Fallback (nginx): if nginx already holds :80/:443 on the VPS
+# (check: ss -tlnp | grep -E ':80|:443'), do NOT install Caddy — replicate
+# these routes as nginx `location` blocks + certbot instead.
+
+{$CC_DOMAIN} {
+	# FastAPI (uvicorn) — REST API. First matching handle wins.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# WebSocket — upgrade is automatic in Caddy v2 reverse_proxy. The backend
+	# endpoint ships in Story 2.2; until then this route returns 404 (expected).
+	handle /ws {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Everything else → Next.js production server.
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
