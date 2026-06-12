@@ -1,6 +1,9 @@
-// Flank metric: label-caps (10px tracked uppercase) over a mono metric value
-// (DESIGN.md typography ramp — mono is ONLY for data).
+// Flank metric: label-caps (LabelCaps, the system's ONE tracked-caps style —
+// ui-polish-spec §1.4/§4.3) over a mono metric value (DESIGN.md typography
+// ramp — mono is ONLY for data).
 import clsx from "clsx";
+
+import { LabelCaps } from "@/components/ui/label-caps";
 
 export function Metric({
   label,
@@ -13,9 +16,7 @@ export function Metric({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-        {label}
-      </span>
+      <LabelCaps>{label}</LabelCaps>
       <span
         className={clsx(
           "font-mono text-lg font-extrabold tabular-nums",

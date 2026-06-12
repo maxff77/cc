@@ -11,7 +11,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
-  Chip,
   FieldError,
   Form,
   Label,
@@ -23,6 +22,9 @@ import {
 
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
+import { LabelCaps } from "@/components/ui/label-caps";
+import { MonoChip } from "@/components/ui/mono-chip";
+import { SectionCard } from "@/components/ui/section-card";
 
 // Mirrors backend GateOut (snake_case end-to-end, users/gates-page idiom).
 export interface GateOut {
@@ -156,26 +158,40 @@ export function SendForm({
   }
 
   return (
-    <section className="flex flex-col gap-4">
+    // Rack instrument (ui-polish-spec §4.1): the form is the NUEVO LOTE
+    // plate of the cockpit; legendAs="h2" keeps a heading in the outline.
+    <SectionCard
+      className="flex flex-col gap-4"
+      legend="NUEVO LOTE"
+      legendAs="h2"
+    >
       {banner && <Alert status="danger">{banner}</Alert>}
 
       <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
         {isLive ? (
           // Active-gate chip (UX-DR9 / prefijo-chip token): name · value.
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-              Gate activo
-            </span>
-            <Chip className="border border-border bg-surface-secondary">
-              {live.gateName} ·{" "}
-              <span className="font-mono">{live.gateValue}</span>
-            </Chip>
+          <div className="flex flex-wrap items-center gap-2">
+            <LabelCaps>Gate activo</LabelCaps>
+            <MonoChip>
+              {live.gateName} · {live.gateValue}
+            </MonoChip>
+            {/* "No hay gates en el catálogo." — no select to anchor to while
+                live, so it speaks as an operation Alert (§1.8 case 2). */}
+            {selectError && (
+              <Alert className="w-full" status="danger">
+                {selectError}
+              </Alert>
+            )}
           </div>
         ) : (
-          <div className="flex flex-col gap-3 sm:flex-row">
+          // Stacked vertical selects (ui-polish-spec §4.5): inside the 300px
+          // cockpit column there is no side-by-side; the shared selectError
+          // anchors to the guilty select via isInvalid + FieldError.
+          <div className="flex flex-col gap-3">
             <Select
-              className="sm:w-56"
+              className="w-full"
               isDisabled={isLive}
+              isInvalid={selectError !== null && categoryKey == null}
               placeholder="Elige una categoría"
               selectedKey={categoryKey}
               onSelectionChange={(key) => {
@@ -189,6 +205,9 @@ export function SendForm({
                 <Select.Value />
                 <Select.Indicator />
               </Select.Trigger>
+              {selectError !== null && categoryKey == null && (
+                <FieldError>{selectError}</FieldError>
+              )}
               <Select.Popover>
                 <ListBox>
                   {categories.map((name) => (
@@ -201,8 +220,9 @@ export function SendForm({
             </Select>
 
             <Select
-              className="sm:w-64"
+              className="w-full"
               isDisabled={isLive || categoryKey == null}
+              isInvalid={selectError !== null && categoryKey != null}
               placeholder="Elige un gate"
               selectedKey={gateKey}
               onSelectionChange={(key) => {
@@ -215,6 +235,9 @@ export function SendForm({
                 <Select.Value />
                 <Select.Indicator />
               </Select.Trigger>
+              {selectError !== null && categoryKey != null && (
+                <FieldError>{selectError}</FieldError>
+              )}
               <Select.Popover>
                 <ListBox>
                   {gatesInCategory.map((g) => (
@@ -231,9 +254,6 @@ export function SendForm({
               </Select.Popover>
             </Select>
           </div>
-        )}
-        {selectError && (
-          <span className="text-sm text-danger">{selectError}</span>
         )}
 
         <TextField
@@ -264,6 +284,6 @@ export function SendForm({
           {mutation.isPending ? "Enviando…" : "Enviar"}
         </Button>
       </Form>
-    </section>
+    </SectionCard>
   );
 }

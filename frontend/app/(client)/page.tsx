@@ -6,17 +6,19 @@
 // seed). Desktop ≥lg: 3-col grid 300px 1fr 1fr (UX-DR19) — cockpit left, the
 // Completa and Filtrada panels side by side.
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Spinner } from "@heroui/react";
+import { Alert } from "@heroui/react";
 
 import { api } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
-import { ProgressRing } from "@/components/batch/progress-ring";
+import { IdleRing, ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
 import { WaitingNotice } from "@/components/batch/waiting-notice";
 import { WatchdogNotice } from "@/components/batch/watchdog-notice";
+import { PanelSkeleton } from "@/components/ui/panel-skeleton";
+import { SectionCard } from "@/components/ui/section-card";
 import {
   CompletaPanel,
   FiltradaPanel,
@@ -53,15 +55,14 @@ export default function EnvioPage() {
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
-            would read as a silent stall (AC 2). */}
+            would read as a silent stall (AC 2). Idle renders the ring at 0
+            (ui-polish-spec §4.2) so starting a lote causes no layout jump. */}
         {live.state === "waiting" ? (
           <WaitingNotice live={live} />
         ) : isLive ? (
           <ProgressRing live={live} />
         ) : (
-          <p className="py-4 text-center text-muted">
-            Pega tus líneas y elige un gate.
-          </p>
+          <IdleRing />
         )}
 
         {/* Mobile order per DESIGN.md: ring → controls → data panels → form. */}
@@ -88,10 +89,12 @@ export default function EnvioPage() {
           responsesTotal={live.responsesTotal}
         />
 
+        {/* Gates loading (ui-polish-spec §4.8): skeleton with the form's own
+            plate — never a floating centered spinner. */}
         {gates.isLoading && (
-          <div className="flex justify-center py-6">
-            <Spinner />
-          </div>
+          <SectionCard legend="NUEVO LOTE" padding="none">
+            <PanelSkeleton rows={2} />
+          </SectionCard>
         )}
         {gates.isError && (
           <Alert status="danger">

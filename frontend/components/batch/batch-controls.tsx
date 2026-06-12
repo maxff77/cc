@@ -13,9 +13,10 @@ import type { LiveBatchState } from "@/lib/ws";
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Button } from "@heroui/react";
+import { Alert, Button } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
+import { SectionCard } from "@/components/ui/section-card";
 
 type ControlAction = "pause" | "resume" | "stop";
 
@@ -45,35 +46,51 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
   const isDisabled = mutation.isPending || live.state === "stopping";
 
   return (
-    <section className="flex flex-col gap-2">
+    // Rack instrument (ui-polish-spec §4.1/§4.4): SectionCard with a live
+    // state rail; controls use HeroUI variants + text-color only — the
+    // solid success fill on Reanudar is the system's ONE recorded exception.
+    <SectionCard
+      className="flex flex-col gap-2"
+      legend="CONTROLES"
+      rail={
+        live.state === "sending"
+          ? "accent"
+          : live.state === "paused"
+            ? "warning"
+            : "none"
+      }
+    >
       <div className="flex gap-3">
         {live.state === "paused" ? (
           // Reanudar — the ONLY solid control (DESIGN.md control-button).
           <Button
             className="flex-1 bg-success text-success-foreground"
             isDisabled={isDisabled}
+            variant="primary"
             onPress={() => mutation.mutate("resume")}
           >
             Reanudar
           </Button>
         ) : live.state === "waiting" ? null : ( // waiting: Detener only (4.2)
           <Button
-            className="flex-1 bg-surface-secondary text-warning"
+            className="flex-1 text-warning"
             isDisabled={isDisabled}
+            variant="secondary"
             onPress={() => mutation.mutate("pause")}
           >
             Pausar
           </Button>
         )}
         <Button
-          className="flex-1 bg-surface-secondary text-danger"
+          className="flex-1 text-danger"
           isDisabled={isDisabled}
+          variant="secondary"
           onPress={() => mutation.mutate("stop")}
         >
           Detener
         </Button>
       </div>
-      {error && <span className="text-sm text-danger">{error}</span>}
-    </section>
+      {error && <Alert status="danger">{error}</Alert>}
+    </SectionCard>
   );
 }

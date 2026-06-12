@@ -18,7 +18,9 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
     live.total > 0 ? Math.round((live.sent / live.total) * 100) : 0;
 
   return (
-    <section className="flex items-center justify-center gap-8 py-4">
+    // justify-between gap-4 (ui-polish-spec §4.3): justify-center gap-8
+    // overflowed the 300px cockpit column.
+    <section className="flex items-center justify-between gap-4 py-4">
       <div className="relative">
         <ProgressCircle
           aria-label="Progreso del lote"
@@ -31,7 +33,7 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
           </ProgressCircle.Track>
         </ProgressCircle>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="font-mono text-[26px] font-extrabold leading-none tabular-nums">
+          <span className="font-mono text-[26px] font-extrabold leading-none tracking-[-0.03em] tabular-nums">
             {percent}%
           </span>
           <span className="mt-1 font-mono text-xs text-muted tabular-nums">
@@ -51,6 +53,33 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
         />
         <Metric label="CC nuevas" tone="success" value={String(live.ccNew)} />
       </div>
+    </section>
+  );
+}
+
+// Idle placeholder (ui-polish-spec §4.2): the ring renders at 0 with the
+// default muted track and a mono em-dash center — same footprint as the live
+// ring, zero layout jump when the lote starts. The invitation sentence
+// (verbatim copy) sits below.
+export function IdleRing() {
+  return (
+    <section className="flex flex-col items-center gap-3 py-4">
+      <div className="relative">
+        <ProgressCircle aria-label="Sin lote activo" value={0}>
+          <ProgressCircle.Track className="size-32">
+            <ProgressCircle.TrackCircle />
+            <ProgressCircle.FillCircle />
+          </ProgressCircle.Track>
+        </ProgressCircle>
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span className="font-mono text-[26px] font-extrabold leading-none tracking-[-0.03em] text-muted tabular-nums">
+            —
+          </span>
+        </div>
+      </div>
+      <p className="text-center text-sm text-muted">
+        Pega tus líneas y elige un gate.
+      </p>
     </section>
   );
 }

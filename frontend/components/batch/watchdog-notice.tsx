@@ -50,16 +50,17 @@ export function WatchdogNotice() {
 
   return (
     <div
-      className="rounded-md border border-danger/50 bg-danger/10 px-3 py-2 text-xs"
+      className="rounded border border-danger/50 bg-danger/10 px-3 py-2 text-xs"
       role="alert"
     >
       <p className="font-semibold text-danger">{copy}</p>
       {isOwner ? (
         <div className="mt-2 flex flex-col gap-1">
           <Button
-            className="bg-surface-secondary text-danger"
+            className="text-danger"
             isDisabled={resume.isPending}
             size="sm"
+            variant="secondary"
             onPress={() => resume.mutate()}
           >
             Reanudar envíos
