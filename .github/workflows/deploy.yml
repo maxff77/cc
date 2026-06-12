@@ -1,0 +1,49 @@
+# Auto-deploy to the production VPS on every push to main.
+#
+# The VPS side is the existing idempotent script (deploy/deploy.sh):
+# git pull --ff-only → pip install → alembic upgrade head → npm ci+build →
+# refresh systemd units → restart cc-core/cc-web. This workflow only SSHes
+# in and runs it — no build artifacts are shipped from CI.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   VPS_HOST     e.g. 37.27.12.92
+#   VPS_SSH_USER a user that can run the script as root (root, or sudoer
+#                with NOPASSWD for "bash /srv/cc/deploy/deploy.sh")
+#   VPS_SSH_KEY  private OpenSSH key whose public half is in that user's
+#                ~/.ssh/authorized_keys on the VPS
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run deploy script on VPS
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o ConnectTimeout=15 \
+              "${{ secrets.VPS_SSH_USER }}@${{ secrets.VPS_HOST }}" \
+              'if [ "$(id -u)" -eq 0 ]; then bash /srv/cc/deploy/deploy.sh; else sudo bash /srv/cc/deploy/deploy.sh; fi'
+
+      - name: Smoke test
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://cc.lohari.com.mx/api/health)
+          echo "GET /api/health -> $code"
+          test "$code" = "200"
