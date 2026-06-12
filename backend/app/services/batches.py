@@ -8,7 +8,7 @@ order (in-batch dedup is an AC).
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.core.scheduler import scheduler
 from app.db.models import Batch
 from app.db.repos import batches as batches_repo
 
@@ -29,12 +29,28 @@ def apply_gate(text: str, gate_value: str) -> list[str]:
     return result
 
 
-def eta_seconds(queued: int) -> float:
-    """Honest ETA: ``queued × interval`` (UX-DR14), recomputed per emission.
+def eta_seconds(queued: int, n_eff: int) -> float:
+    """Honest ETA derived from ``G×n`` (UX-DR14), recomputed per emission.
 
-    The adaptive ``G×n`` version is Story 2.4.
+    A tenant's turn comes every ``G×n``, so draining ``queued`` lines takes
+    ≈ ``queued × n_eff × interval(n_eff)`` (architecture: "UI must show honest
+    ETA derived from G×n so degradation is visible, not mysterious").
+    Recorded decision: owner priority does NOT adjust client ETAs — the
+    approximation is recomputed on every event; no falsely-precise queueing
+    math (UX-DR14).
     """
-    return queued * settings.send_interval_seconds
+    return queued * n_eff * scheduler.interval(n_eff)
+
+
+async def _n_effective(session: AsyncSession, batch: Batch) -> int:
+    """The ``n`` this batch's ETA should assume.
+
+    A paused batch is excluded from ``count_active_senders`` — for ITS
+    "ETA on resume" it is re-included as if it resumed right now (n + 1).
+    """
+    n = await batches_repo.count_active_senders(session)
+    n_eff = n if batch.state == batches_repo.STATE_SENDING else n + 1
+    return max(1, n_eff)
 
 
 def state_data(batch: Batch, state: str) -> dict:
@@ -56,12 +72,13 @@ def state_data(batch: Batch, state: str) -> dict:
 async def progress_data(session: AsyncSession, batch: Batch) -> dict:
     """``batch.progress`` event payload for a batch."""
     sent, queued = await batches_repo.counts(session, batch.id)
+    n_eff = await _n_effective(session, batch)
     return {
         "batch_id": batch.id,
         "sent": sent,
         "queued": queued,
         "total": sent + queued,
-        "eta_seconds": eta_seconds(queued),
+        "eta_seconds": eta_seconds(queued, n_eff),
     }
 
 
@@ -85,6 +102,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "cc_new": 0,
         }
     sent, queued = await batches_repo.counts(session, batch.id)
+    n_eff = await _n_effective(session, batch)
     return {
         # Passthrough: get_live_batch only returns LIVE_STATES, so this is
         # always one of sending|paused|stopping — a tab opened mid-pause must
@@ -96,6 +114,6 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         "sent": sent,
         "queued": queued,
         "total": sent + queued,
-        "eta_seconds": eta_seconds(queued),
+        "eta_seconds": eta_seconds(queued, n_eff),
         "cc_new": 0,
     }

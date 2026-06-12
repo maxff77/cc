@@ -8,12 +8,13 @@ signature change is fixed in one place.
 """
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from app.core import send_worker
+from app.core.scheduler import scheduler
 from app.core.telegram import gateway
 from app.db.base import async_session_factory
 from app.db.models import Gate, GateCategory, Tenant, User
@@ -136,6 +137,19 @@ async def cleanup_users(emails: set[str]) -> None:
 
 
 # --- Batch fixtures (promoted from test_batches.py for Story 2.3) -----------
+
+
+@pytest.fixture(autouse=True)
+def reset_scheduler() -> Iterator[None]:
+    """Wipe the scheduler singleton's cursor/governor around every test.
+
+    The Story 2.4 scheduler is process memory by design — without this, a
+    FloodWait raised in one test would leave ``g_min`` raised (changing ETA
+    math) and the rotation cursor would leak across modules.
+    """
+    scheduler.reset()
+    yield
+    scheduler.reset()
 
 
 @pytest.fixture(autouse=True)

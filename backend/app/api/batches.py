@@ -94,7 +94,7 @@ async def create_or_append_batch(
     # FOR UPDATE: serialize the append against the worker's
     # complete_if_drained (which locks the same row) — without it, an append
     # racing the last line's drain commits lines onto a just-'completed'
-    # batch and they never send (next_queued_line joins state='sending').
+    # batch and they never send (the worker's selection joins state='sending').
     live = await batches_repo.get_live_batch(session, tenant_id, for_update=True)
 
     if live is None:

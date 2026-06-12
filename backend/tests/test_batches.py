@@ -426,10 +426,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
 async def test_snapshot_live_shape_and_eta_math(
     client_user: tuple[AsyncClient, User],
     gate: dict,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     http, user = client_user
-    monkeypatch.setattr(settings, "send_interval_seconds", 2.0)
     res = await _post_batch(http, "uno\ndos\ntres", gate["id"])
     assert res.status_code == 201
 
@@ -440,7 +438,9 @@ async def test_snapshot_live_shape_and_eta_math(
     assert snap["gate_name"] == gate["name"]
     assert snap["gate_value"] == gate["value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 3, 3)
-    assert snap["eta_seconds"] == 6.0  # queued × interval (UX-DR14)
+    # Honest adaptive ETA (UX-DR14 / Story 2.4): queued × n × G with a single
+    # active sender → 3 × 1 × interval(1)=10.0.
+    assert snap["eta_seconds"] == 30.0
     assert snap["cc_new"] == 0  # hardcoded until Epic 3
 
 

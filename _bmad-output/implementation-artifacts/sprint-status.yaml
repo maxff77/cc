@@ -35,8 +35,10 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-06-11
-last_updated: 2026-06-11
+last_updated: 2026-06-12
 project: cc
+# 2-4 → done 2026-06-12 (multi-tenant scheduler: round-robin + owner priority ≤50% + adaptive interval + FloodWait governor; resolves 2-3 defer #1/#3)
+# 2-4 → ready-for-dev 2026-06-12 (story file created — core/scheduler.py round-robin + alternancia owner ≤50% + G=max(G_min,P(n)/n) + governor FloodWait + ETA G×n; absorbe diferidos 2-3 #1/#3)
 # 2-3 → done 2026-06-12 (pause/resume/stop endpoints + state machine + cancelable sleeps + pill/controls/flood-notice; resolved deferred 2-2 #1/#3/#6)
 # 2-3 → ready-for-dev 2026-06-11 (story file created — pause/resume/stop endpoints + máquina de estados, worker release/abort, pill/controles/flood-notice; absorbe diferidos 2-2 #1/#3/#6)
 # 2-2 → done 2026-06-11 (implementation complete: gate categories + category-filtered selector + batch creation/queuing + send worker + WS broadcaster + full tests)
@@ -71,7 +73,7 @@ development_status:
   2-1-catalogo-global-de-prefijos: done
   2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: done
   2-3-pausar-reanudar-y-detener-con-eta-honesto: done
-  2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: backlog
+  2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: done
   2-5-endurecimiento-del-pipeline-de-envio: backlog
   epic-2-retrospective: optional
 

@@ -1,37 +1,43 @@
-"""Background send worker (Story 2.2; pause/stop-aware since Story 2.3).
+"""Background send worker (Story 2.2; pause/stop-aware 2.3; scheduled 2.4).
 
-A single ``asyncio.Task`` created in the lifespan drains queued batch lines
-at the system-controlled interval. Each step opens its OWN session via
-``async_session_factory`` (NEVER the request-scoped one) and the Telegram
-send happens with no session held (a FloodWait can sleep for minutes — it
-must not pin a pool connection).
+A single ``asyncio.Task`` created in the lifespan drains queued batch lines.
+Selection is NOT FIFO: ``core.scheduler`` rotates round-robin across active
+tenants with bounded owner priority, and the inter-send interval is the
+adaptive ``G = max(g_min, P(n)/n)`` — recomputed every turn, never constant
+(Story 2.4). Each step opens its OWN session via ``async_session_factory``
+(NEVER the request-scoped one) and the Telegram send happens with no session
+held (a FloodWait can sleep for minutes — it must not pin a pool connection).
 
 Retry policy (legacy semantics, kept deliberately):
-- ``FloodWaitError`` → broadcast GLOBAL ``flood.wait``, cancelable-sleep the
-  requested seconds, retry the SAME line in place.
+- ``FloodWaitError`` → note it to the scheduler's governor, broadcast GLOBAL
+  ``flood.wait``, deadline-sleep the requested seconds, retry the SAME line.
 - Any other send error → tenant-scoped ``error`` event, sleep 2s, retry the
   same line FOREVER.  # Story 2.5 replaces retry-forever with cap=3.
 
-Pause/stop (Story 2.3): the batch state is re-read at the top of every retry
-iteration — pause RELEASES the claimed line back to the queue (a single
-worker serving every tenant must not stall on one paused batch) and stop
-ABORTS it (the queue was already cleared by the handler). The release/abort
-pair is the 2.3 design: Story 2.5 introduces ``cancelled`` + send_log and
-Story 2.4 replaces the FIFO selection — none of that is built here.
+Pause/stop (Story 2.3): the batch state is re-read after every interrupted
+sleep — pause RELEASES the claimed line back to the queue (a single worker
+serving every tenant must not stall on one paused batch) and stop ABORTS it
+(the queue was already cleared by the handler). Story 2.5 introduces
+``cancelled`` + send_log — none of that is built here.
 
-Sleeps are cancelable via the module wake event: pause/resume/stop call
-``wake()`` so a mid-interval or mid-FloodWait sleep is interrupted instantly.
+Sleeps are cancelable via the module wake event, but with DEADLINES (2.4,
+absorbing the 2.3 deferred finding): a ``wake()`` belonging to ANOTHER
+tenant's control re-sleeps the remainder instead of retrying early on the
+shared account (``_wait_respecting_state``), and the global pacing sleep is
+immune to wake altogether (``sleep_paced`` — FR12 is never bypassed by a
+control). The own tenant's pause/stop still land instantly (release/abort).
 """
 
 import asyncio
 import logging
+import time
 from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.broadcaster import broadcaster
+from app.core.scheduler import scheduler
 from app.core.telegram import FloodWaitError, gateway
 from app.db.base import async_session_factory
 from app.db.models import Batch, BatchLine
@@ -67,6 +73,51 @@ async def sleep_cancelable(seconds: float) -> None:
         _wake.clear()
 
 
+async def sleep_paced(seconds: float) -> None:
+    """Deadline sleep IMMUNE to ``wake()`` — the global pacing sleep (FR12).
+
+    Re-sleeps the remainder unconditionally: a control's wake must never make
+    the system skip part of the inter-send interval (2.3 deferred #1, part 2).
+    Safe to be uninterruptible: the worker holds no claimed line during this
+    sleep, so no pause/stop needs to cut it — a paused batch simply isn't
+    picked on the next turn, and 'stopping' only exists with a line in flight.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        await sleep_cancelable(remaining)
+
+
+async def _wait_respecting_state(
+    batch_id: int, seconds: float
+) -> Literal["elapsed", "release", "abort"]:
+    """Deadline sleep holding a claimed line — yields only to the OWN batch.
+
+    After every (possibly wake-interrupted) sleep the batch state is re-read:
+    - 'paused'        → ``"release"`` (own pause lands instantly);
+    - not 'sending'   → ``"abort"`` (own stop lands instantly);
+    - still 'sending' → the wake was another tenant's control: re-sleep the
+      REMAINDER — never retry early on the shared account (2.3 deferred #1,
+      part 1: an early retry inside a FloodWait window escalates the next
+      FloodWait for everyone).
+    Returns ``"elapsed"`` once the deadline passes with the batch 'sending'.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "elapsed"
+        await sleep_cancelable(remaining)
+        async with async_session_factory() as session:
+            state = await batches_repo.get_batch_state(session, batch_id)
+        if state == batches_repo.STATE_PAUSED:
+            return "release"
+        if state != batches_repo.STATE_SENDING:
+            return "abort"
+
+
 async def _locked_batch(session: AsyncSession, batch_id: int) -> Batch | None:
     """SELECT … FOR UPDATE on the batch row (fresh session ⇒ fresh attrs).
 
@@ -86,10 +137,19 @@ async def step() -> bool:
     Factored out of the infinite loop so tests can await single steps
     deterministically (no real Telegram, no background task).
     """
-    # 1. Claim the next queued line (short transaction — commit releases it).
+    # 1. Scheduler picks WHOSE line goes next (round-robin + owner priority),
+    #    then claim that tenant's oldest queued line (short transaction —
+    #    commit releases it).
     async with async_session_factory() as session:
-        line = await batches_repo.next_queued_line(session)
+        active = await batches_repo.active_senders(session)
+        pick = scheduler.pick_next(active)
+        if pick is None:
+            return False
+        line = await batches_repo.next_queued_line_for_tenant(session, pick.tenant_id)
         if line is None:
+            # Race: a stop emptied the picked tenant's queue between the
+            # listing and this claim — idle this step; the next loop rotates
+            # (recorded decision: no same-step retry of another tenant).
             return False
         await batches_repo.mark_sending(session, line)
         await session.commit()
@@ -150,9 +210,10 @@ async def _send_with_retries(
 ) -> Literal["sent", "release", "abort"]:
     """Deliver ``text`` — or yield to a pause/stop that landed meanwhile.
 
-    The batch state is re-read at the TOP of every iteration (including the
-    first, and after every ``wake()``-interrupted sleep):
-    - 'sending' → attempt the send (FloodWait / generic-error retries kept);
+    The batch state is re-read at the TOP of every iteration AND inside every
+    retry wait (``_wait_respecting_state`` deadline loop):
+    - 'sending' → attempt the send (FloodWait / generic-error retries kept;
+      a foreign wake re-sleeps the remainder — no early retry);
     - 'paused'  → "release" (give the line back — don't hold it);
     - 'stopping'/'stopped'/gone → "abort".
     """
@@ -167,9 +228,13 @@ async def _send_with_retries(
             await gateway.send(text)
             return "sent"
         except FloodWaitError as e:
-            # Architecture: every FloodWait is explained to everyone (global).
+            # Governor: every FloodWait raises the pacing floor (AC 4) …
+            scheduler.note_flood_wait()
+            # … and is explained to everyone (global event, architecture).
             await broadcaster.emit_global("flood.wait", {"seconds": e.seconds})
-            await sleep_cancelable(float(e.seconds))
+            outcome = await _wait_respecting_state(batch_id, float(e.seconds))
+            if outcome != "elapsed":
+                return outcome
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -177,7 +242,9 @@ async def _send_with_retries(
                 tenant_id, "error", {"code": "send_error", "message": str(e)}
             )
             # Story 2.5 replaces retry-forever with cap=3 + 'failed' state.
-            await sleep_cancelable(_ERROR_RETRY_SECONDS)
+            outcome = await _wait_respecting_state(batch_id, _ERROR_RETRY_SECONDS)
+            if outcome != "elapsed":
+                return outcome
 
 
 async def _release_line(tenant_id: int, batch_id: int, line_id: int) -> None:
@@ -189,7 +256,7 @@ async def _release_line(tenant_id: int, batch_id: int, line_id: int) -> None:
     The batch row is locked FIRST so this serializes with a concurrent stop
     (which holds the same lock while clearing the queue): if the stop already
     committed 'stopping', re-queueing the line would strand the batch in
-    'stopping' forever (its lines are invisible to next_queued_line) — in
+    'stopping' forever (its lines are invisible to the worker's selection) — in
     that case the line is abandoned and the batch finalized instead.
     """
     state_payload: dict | None = None
@@ -275,7 +342,20 @@ async def run_worker() -> None:
             await sleep_cancelable(_ERROR_RETRY_SECONDS)
             continue
         if sent:
-            # System-controlled interval between sends (FR12).
-            await sleep_cancelable(settings.send_interval_seconds)
+            # System-controlled ADAPTIVE interval between sends (FR12):
+            # G = max(g_min, P(n)/n), recomputed every turn. sleep_paced is
+            # wake-immune — a control never makes the system send faster.
+            # The count gets its own try/except: a transient DB failure here
+            # must NOT escape the loop and kill the singleton worker (the
+            # step() except above exists precisely to survive DB blips).
+            try:
+                async with async_session_factory() as session:
+                    n = await batches_repo.count_active_senders(session)
+            except Exception:
+                logger.exception(
+                    "pacing count failed — falling back to n=1 interval"
+                )
+                n = 1
+            await sleep_paced(scheduler.interval(max(1, n)))
         else:
             await sleep_cancelable(_IDLE_SLEEP_SECONDS)

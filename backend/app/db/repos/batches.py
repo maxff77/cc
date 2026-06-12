@@ -9,6 +9,7 @@ Pure ORM, flush not commit — callers own the transaction.
 """
 
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,8 +51,8 @@ async def get_live_batch(
     it so it serializes with the worker's ``complete_if_drained`` (which locks
     the same row): otherwise an append landing as the last pending line drains
     can commit its lines onto a batch that just committed 'completed' —
-    ``next_queued_line`` joins on state='sending', so those lines would never
-    send. Read-only callers (snapshot) keep the default.
+    ``next_queued_line_for_tenant`` joins on state='sending', so those lines
+    would never send. Read-only callers (snapshot) keep the default.
     """
     stmt = (
         select(Batch)
@@ -186,24 +187,93 @@ async def counts(session: AsyncSession, batch_id: int) -> tuple[int, int]:
     return sent, queued
 
 
-# --- Worker queries (Task 7) ------------------------------------------------
+# --- Worker queries ----------------------------------------------------------
 #
 # Used ONLY by core.send_worker, never by request handlers. Deliberately
-# unscoped: the single worker drains every tenant's queue. Naive global FIFO
-# is fine for one client — Story 2.4 replaces this selection with the
-# round-robin scheduler.
+# unscoped: the single worker drains every tenant's queue. Story 2.4 replaced
+# the naive global FIFO with the round-robin scheduler: the worker lists
+# ``active_senders``, lets ``core.scheduler`` pick a tenant, then claims that
+# tenant's oldest queued line via ``next_queued_line_for_tenant``.
 
 
-async def next_queued_line(session: AsyncSession) -> BatchLine | None:
-    """Oldest queued line by ``(batch_id, position)`` across all live batches."""
+class ActiveSender(NamedTuple):
+    """One tenant's claim on the send rotation (Story 2.4 scheduler input).
+
+    The partial unique index ``uq_batches_one_live_per_tenant`` guarantees
+    at most one live batch per tenant, so tenant ≡ batch in the rotation.
+    """
+
+    tenant_id: int
+    batch_id: int
+    is_owner_priority: bool
+
+
+async def active_senders(session: AsyncSession) -> list[ActiveSender]:
+    """Tenants with a 'sending' batch that has ≥1 servable ('queued') line.
+
+    Ordered by ``tenant_id`` so the scheduler's cyclic cursor is stable.
+    Paused batches fall out on their own (``state='paused'`` doesn't match) —
+    the AC 2 paused-tenant exclusion needs no extra code, only the test.
+    """
+    has_queued = (
+        select(BatchLine.id)
+        .where(BatchLine.batch_id == Batch.id, BatchLine.state == LINE_QUEUED)
+        .exists()
+    )
+    stmt = (
+        select(Batch.tenant_id, Batch.id, Batch.is_owner_priority)
+        .where(Batch.state == STATE_SENDING, has_queued)
+        .order_by(Batch.tenant_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        ActiveSender(tenant_id=tenant_id, batch_id=batch_id, is_owner_priority=owner)
+        for tenant_id, batch_id, owner in rows
+    ]
+
+
+async def next_queued_line_for_tenant(
+    session: AsyncSession, tenant_id: int
+) -> BatchLine | None:
+    """Oldest queued line by ``(batch_id, position)`` of ONE tenant's live batch.
+
+    ``None`` means the queue emptied between the scheduler's listing and this
+    claim (a stop raced us) — the caller idles and the next loop rotates.
+    """
     stmt = (
         select(BatchLine)
         .join(Batch, Batch.id == BatchLine.batch_id)
-        .where(BatchLine.state == LINE_QUEUED, Batch.state == STATE_SENDING)
+        .where(
+            BatchLine.state == LINE_QUEUED,
+            Batch.state == STATE_SENDING,
+            Batch.tenant_id == tenant_id,
+        )
         .order_by(BatchLine.batch_id, BatchLine.position)
         .limit(1)
     )
     return (await session.execute(stmt)).scalars().first()
+
+
+async def count_active_senders(session: AsyncSession) -> int:
+    """The ``n`` of the adaptive formula: tenants actively occupying the channel.
+
+    Deliberately broader than ``active_senders``: the selection requires a
+    *servable* ('queued') line, while ``n`` counts pending ('queued' OR
+    'sending') — a tenant whose only line is in flight still occupies the
+    channel and must weigh on everyone's interval/ETA.
+    """
+    has_pending = (
+        select(BatchLine.id)
+        .where(
+            BatchLine.batch_id == Batch.id, BatchLine.state.in_(_PENDING_STATES)
+        )
+        .exists()
+    )
+    stmt = select(func.count(func.distinct(Batch.tenant_id))).where(
+        Batch.state == STATE_SENDING, has_pending
+    )
+    count: int = (await session.execute(stmt)).scalar_one()
+    return count
 
 
 async def mark_sending(session: AsyncSession, line: BatchLine) -> None:
@@ -270,7 +340,7 @@ async def finalize_stuck_stopping(session: AsyncSession) -> int:
     Every 'stopping' → 'stopped' transition lives in the worker's in-process
     paths (step / _release_line / _abort_line), which require it to be holding
     the claimed line. After a restart nobody holds it: ``requeue_stuck_sending``
-    turns the line 'queued', but ``next_queued_line`` joins
+    turns the line 'queued', but ``next_queued_line_for_tenant`` joins
     ``Batch.state == 'sending'`` so a 'stopping' batch's lines are never
     served — and 'stopping' is in ``LIVE_STATES``, so the tenant would be
     409-blocked forever. Discard the still-pending lines (the stop handler

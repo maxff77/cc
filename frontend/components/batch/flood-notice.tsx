@@ -16,8 +16,17 @@ export function FloodNotice() {
 
   useEffect(() => {
     if (live.floodUntil === null) return;
+    const until = live.floodUntil;
+
     setNow(Date.now());
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+      // `flood.wait` is GLOBAL but the signals that clear `floodUntil` are
+      // tenant-scoped to the sender — an idle tenant would otherwise keep
+      // this 1s interval re-rendering forever. Stop it once the countdown
+      // expires (the `seconds <= 0` render guard already hides the strip).
+      if (Date.now() >= until) window.clearInterval(id);
+    }, 1000);
 
     return () => window.clearInterval(id);
   }, [live.floodUntil]);
