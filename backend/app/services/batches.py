@@ -70,14 +70,20 @@ def state_data(batch: Batch, state: str) -> dict:
 
 
 async def progress_data(session: AsyncSession, batch: Batch) -> dict:
-    """``batch.progress`` event payload for a batch."""
-    sent, queued = await batches_repo.counts(session, batch.id)
+    """``batch.progress`` event payload for a batch.
+
+    ``total`` includes ``failed`` (2.5) — the size of the pasted lote must
+    not shrink when a line fails (UX honesty); the ring's % stays truthful
+    because the denominator keeps counting the failed lines.
+    """
+    sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
     return {
         "batch_id": batch.id,
         "sent": sent,
         "queued": queued,
-        "total": sent + queued,
+        "failed": failed,
+        "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
     }
 
@@ -97,11 +103,13 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "gate_value": None,
             "sent": 0,
             "queued": 0,
+            "failed": 0,
+            "failed_lines": [],
             "total": 0,
             "eta_seconds": 0,
             "cc_new": 0,
         }
-    sent, queued = await batches_repo.counts(session, batch.id)
+    sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
     return {
         # Passthrough: get_live_batch only returns LIVE_STATES, so this is
@@ -113,7 +121,14 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         "gate_value": batch.gate_value,
         "sent": sent,
         "queued": queued,
-        "total": sent + queued,
+        "failed": failed,
+        # A tab reconnecting mid-batch rebuilds the failed panel from the
+        # snapshot alone (snapshot-first, 2.2 pattern).
+        "failed_lines": [
+            {"position": line.position, "text": line.text, "code": line.fail_code or ""}
+            for line in await batches_repo.failed_lines(session, batch.id)
+        ],
+        "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
         "cc_new": 0,
     }

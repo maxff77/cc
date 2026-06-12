@@ -1,5 +1,5 @@
 // Singleton auto-reconnecting WebSocket client + live-batch store (Story 2.2;
-// pause/resume/stop + FloodWait state since Story 2.3).
+// pause/resume/stop + FloodWait state since Story 2.3; failed lines since 2.5).
 //
 // WS event payloads are NOT in the generated OpenAPI types — this is the one
 // legitimate hand-typed contract, kept next to the reducer. Envelope:
@@ -14,6 +14,12 @@ import { useSyncExternalStore } from "react";
 // Surface states (architecture state machine): DB terminals travel as "idle".
 export type BatchSurfaceState = "idle" | "sending" | "paused" | "stopping";
 
+export interface FailedLine {
+  position: number;
+  text: string;
+  code: string;
+}
+
 export interface LiveBatchState {
   state: BatchSurfaceState;
   batchId: number | null;
@@ -21,6 +27,11 @@ export interface LiveBatchState {
   gateValue: string | null;
   sent: number;
   queued: number;
+  // Lines the retry cap gave up on (Story 2.5). They live with the LIVE
+  // batch only (recorded decision): a reconnect rebuilds them from the
+  // snapshot; post-batch persistence is Epic 3's history, not invented here.
+  failed: number;
+  failedLines: FailedLine[];
   total: number;
   etaSeconds: number;
   ccNew: number;
@@ -38,6 +49,8 @@ interface SnapshotData {
   gate_value: string | null;
   sent: number;
   queued: number;
+  failed: number;
+  failed_lines: FailedLine[];
   total: number;
   eta_seconds: number;
   cc_new: number;
@@ -47,8 +60,18 @@ interface ProgressData {
   batch_id: number;
   sent: number;
   queued: number;
+  failed: number;
   total: number;
   eta_seconds: number;
+}
+
+// Tenant-scoped `batch.line_failed` (Story 2.5, AC 4): a line the retry cap
+// gave up on — `code` maps to Spanish copy in components/batch/failed-lines.
+interface LineFailedData {
+  batch_id: number;
+  position: number;
+  text: string;
+  code: string;
 }
 
 // Full-context batch.state payload (Story 2.3, Task 5 — fixes the 2.2 finding
@@ -71,6 +94,8 @@ const IDLE: LiveBatchState = {
   gateValue: null,
   sent: 0,
   queued: 0,
+  failed: 0,
+  failedLines: [],
   total: 0,
   etaSeconds: 0,
   ccNew: 0,
@@ -103,6 +128,10 @@ function reduce(event: string, data: unknown) {
         gateValue: d.gate_value,
         sent: d.sent,
         queued: d.queued,
+        // Snapshot REPLACES everything — a tab reconnecting mid-batch
+        // rebuilds the failed panel from here (snapshot-first).
+        failed: d.failed,
+        failedLines: d.failed_lines,
         total: d.total,
         etaSeconds: d.eta_seconds,
         ccNew: d.cc_new,
@@ -123,9 +152,25 @@ function reduce(event: string, data: unknown) {
         batchId: d.batch_id,
         sent: d.sent,
         queued: d.queued,
+        failed: d.failed,
         total: d.total,
         etaSeconds: d.eta_seconds,
         floodUntil: null,
+      });
+      break;
+    }
+    case "batch.line_failed": {
+      const d = data as LineFailedData;
+
+      // Append with dedup by position: a released/re-claimed line that fails
+      // again must not duplicate its panel entry.
+      if (store.failedLines.some((line) => line.position === d.position)) break;
+      setStore({
+        ...store,
+        failedLines: [
+          ...store.failedLines,
+          { position: d.position, text: d.text, code: d.code },
+        ],
       });
       break;
     }
@@ -133,8 +178,17 @@ function reduce(event: string, data: unknown) {
       const d = data as BatchStateData;
 
       if (d.state === "idle") {
-        // Batch drained or stopped → back to the idle surface.
-        setStore(IDLE);
+        // Batch drained or stopped → back to the idle surface — but keep the
+        // failed-lines info (AC 4): when the failing line is the one that
+        // drains the batch, the backend emits line_failed → progress → this
+        // idle in one burst, and a full IDLE reset would wipe the red panel
+        // milliseconds after it appeared. It clears on the next snapshot or
+        // on seedFromBatch for a different batch (both reset it already).
+        setStore({
+          ...IDLE,
+          failed: store.failed,
+          failedLines: store.failedLines,
+        });
       } else {
         setStore({
           ...store,
@@ -241,6 +295,7 @@ export function seedFromBatch(batch: {
   gate_value: string;
   sent: number;
   queued: number;
+  failed: number;
   total: number;
 }) {
   setStore({
@@ -250,6 +305,10 @@ export function seedFromBatch(batch: {
     gateValue: batch.gate_value,
     sent: batch.sent,
     queued: batch.queued,
+    failed: batch.failed,
+    // The POST response carries no line detail — keep the panel for the same
+    // batch, start clean otherwise (the snapshot remains the source of truth).
+    failedLines: store.batchId === batch.id ? store.failedLines : [],
     total: batch.total,
     etaSeconds: store.batchId === batch.id ? store.etaSeconds : 0,
     ccNew: store.batchId === batch.id ? store.ccNew : 0,

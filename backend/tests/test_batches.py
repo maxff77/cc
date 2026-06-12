@@ -378,27 +378,9 @@ async def test_worker_generic_error_retries_line_not_lost(
     assert len(fake_gateway.sent) == 1
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_requeue_stuck_sending_on_boot(
-    client_user: tuple[AsyncClient, User], gate: dict
-) -> None:
-    http, _ = client_user
-    res = await _post_batch(http, "uno", gate["id"])
-    assert res.status_code == 201
-    batch_id = res.json()["id"]
-    async with async_session_factory() as session:
-        lines = await _lines_of(batch_id)
-        row = await session.get(BatchLine, lines[0].id)
-        assert row is not None
-        row.state = "sending"  # simulate a crash mid-send
-        await session.commit()
-
-    async with async_session_factory() as session:
-        requeued = await batches_repo.requeue_stuck_sending(session)
-        await session.commit()
-    assert requeued >= 1
-    lines = await _lines_of(batch_id)
-    assert lines[0].state == "queued"
+# NOTE: Story 2.2's blind `requeue_stuck_sending` (and its test) died in
+# Story 2.5 — boot now RECONCILES stuck 'sending' lines against recent
+# outgoing messages. Coverage lives in tests/test_send_hardening.py.
 
 
 # --- WS snapshot + handshake helper ------------------------------------------
@@ -416,6 +398,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "gate_value": None,
         "sent": 0,
         "queued": 0,
+        "failed": 0,
+        "failed_lines": [],
         "total": 0,
         "eta_seconds": 0,
         "cc_new": 0,
@@ -438,6 +422,7 @@ async def test_snapshot_live_shape_and_eta_math(
     assert snap["gate_name"] == gate["name"]
     assert snap["gate_value"] == gate["value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 3, 3)
+    assert (snap["failed"], snap["failed_lines"]) == (0, [])  # Story 2.5 slots
     # Honest adaptive ETA (UX-DR14 / Story 2.4): queued × n × G with a single
     # active sender → 3 × 1 × interval(1)=10.0.
     assert snap["eta_seconds"] == 30.0

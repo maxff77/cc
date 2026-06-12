@@ -103,20 +103,20 @@ def test_governor_raises_floor_and_caps_at_ceiling() -> None:
     clock = FakeClock()
     sched = Scheduler(now=clock)
     assert sched.g_min == 3.0
-    sched.note_flood_wait()
+    sched.note_flood_wait(0.0)
     assert sched.g_min == 4.5  # ×1.5
     # The raised floor shows through interval(): P(7)/7 ≈ 2.86 < 4.5.
     assert sched.interval(7) == 4.5
     for _ in range(20):
-        sched.note_flood_wait()
+        sched.note_flood_wait(0.0)
     assert sched.g_min == 30.0  # ceiling — never beyond
 
 
 def test_governor_decays_one_step_per_quiet_window() -> None:
     clock = FakeClock()
     sched = Scheduler(now=clock)
-    sched.note_flood_wait()  # 4.5
-    sched.note_flood_wait()  # 6.75
+    sched.note_flood_wait(0.0)  # 4.5
+    sched.note_flood_wait(0.0)  # 6.75
     assert sched.g_min == 6.75
 
     clock.advance(599.0)

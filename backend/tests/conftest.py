@@ -35,6 +35,10 @@ class FakeGateway:
     ids, and is programmable to raise: push exceptions onto ``errors`` and
     each ``send`` pops+raises one before succeeding (e.g. a
     ``FloodWaitError(request=None, capture=0)`` once, then success).
+
+    ``recent_outgoing`` (Story 2.5 boot reconciliation) returns the
+    programmable ``outgoing`` list of ``(message_id, text)`` newest-first, or
+    raises ``recent_outgoing_error`` when one is set.
     """
 
     def __init__(self) -> None:
@@ -42,6 +46,8 @@ class FakeGateway:
         self.target_ok = True
         self.sent: list[str] = []
         self.errors: list[Exception] = []
+        self.outgoing: list[tuple[int, str]] = []
+        self.recent_outgoing_error: Exception | None = None
         self._next_id = 0
 
     @property
@@ -54,6 +60,11 @@ class FakeGateway:
         self.sent.append(text)
         self._next_id += 1
         return self._next_id
+
+    async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
+        if self.recent_outgoing_error is not None:
+            raise self.recent_outgoing_error
+        return list(self.outgoing[:limit])
 
 
 def unique_email(role: str, *, prefix: str = "test") -> str:

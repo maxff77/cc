@@ -55,6 +55,7 @@ class BatchOut(BaseModel):
     state: str
     sent: int
     queued: int
+    failed: int  # lines the retry cap gave up on (Story 2.5; 0 on a new batch)
     total: int
     appended: bool
     added: int
@@ -139,6 +140,7 @@ async def create_or_append_batch(
                 state=batch.state,
                 sent=0,
                 queued=len(lines),
+                failed=0,
                 total=len(lines),
                 appended=False,
                 added=len(lines),
@@ -172,6 +174,7 @@ async def create_or_append_batch(
         state=live.state,
         sent=progress["sent"],
         queued=progress["queued"],
+        failed=progress["failed"],
         total=progress["total"],
         appended=True,
         added=len(new_lines),

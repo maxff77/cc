@@ -11,6 +11,7 @@ import { Alert, Spinner } from "@heroui/react";
 import { api } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
 import { BatchControls } from "@/components/batch/batch-controls";
+import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
 import { ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
@@ -45,6 +46,9 @@ export default function EnvioPage() {
         {/* Mobile order per DESIGN.md: ring → controls → (data panels 3.2). */}
         <BatchControls live={live} />
         <FloodNotice />
+        {/* Failed lines (2.5, AC 4): visibility comes from this panel — the
+            ring keeps EXACTLY three metrics (UX-DR21). */}
+        <FailedLines live={live} />
 
         {gates.isLoading && (
           <div className="flex justify-center py-6">

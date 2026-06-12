@@ -2,12 +2,13 @@
 
 Tables arrive story by story via Alembic migrations (no tables ahead of need):
 tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
-batch_lines (2.2).
+batch_lines (2.2), send_log (2.5).
 """
 
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -183,8 +184,8 @@ class Batch(Base):
     deliberately NOT snapshotted (browsing aid, not send history).
 
     ``state`` is a plain String, NOT a DB enum: ``'sending' | 'completed'``
-    (2.2) + ``'paused' | 'stopping' | 'stopped'`` (2.3); 2.5 adds
-    ``cancelled`` — no ALTER TYPE needed later.
+    (2.2) + ``'paused' | 'stopping' | 'stopped'`` (2.3) + ``'cancelled'``
+    (2.5, plan expiry mid-batch — terminal, NOT live) — no ALTER TYPE needed.
     """
 
     __tablename__ = "batches"
@@ -224,8 +225,10 @@ class BatchLine(Base):
     """One line of a batch — the FULL message with the gate already applied.
 
     ``tenant_id`` is denormalized (the batch already carries it) for isolation
-    queries and Story 2.5's send_log. ``state``: ``'queued' | 'sending' |
-    'sent'`` in this story (2.5 adds ``failed``/``cancelled``).
+    queries and the ``send_log`` write-ahead rows (2.5). ``state``:
+    ``'queued' | 'sending' | 'sent'`` (2.2) + ``'failed'`` (retry cap hit) and
+    ``'cancelled'`` (plan expired mid-batch) since 2.5 — neither is "pending",
+    so a batch with failed/cancelled lines still drains to completion.
     """
 
     __tablename__ = "batch_lines"
@@ -248,9 +251,49 @@ class BatchLine(Base):
     position: Mapped[int] = mapped_column()
     text: Mapped[str] = mapped_column(Text)
     state: Mapped[str] = mapped_column(String(20))
+    # Machine-readable failure code (snake_case of the exception class name,
+    # Story 2.5) — the frontend maps it to Spanish copy; NULL unless 'failed'.
+    fail_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SendLog(Base):
+    """Write-ahead record of one send attempt per line (Story 2.5).
+
+    Written by the send worker (2.5), read by capture/attribution (3.1):
+    ``reply_to_msg_id → send_log → tenant/batch/line``. One row per LINE
+    (``uq_send_log_line_id``) — retries of the same line REUSE the row; the
+    intent is recorded in the SAME transaction as the 'sending' claim (BEFORE
+    calling Telegram) and ``message_id`` is filled in after delivery, so a
+    crash between send and record cannot create orphan replies. A row with
+    ``message_id`` NULL means "attempted, delivery unconfirmed" — boot
+    reconciliation resolves it. ``message_id`` is BigInteger: Telegram ids may
+    outgrow int4 over time.
+    """
+
+    __tablename__ = "send_log"
+    __table_args__ = (
+        UniqueConstraint("line_id", name="uq_send_log_line_id"),
+        # The hot attribution lookup of Story 3.1 (reply_to_msg_id → row).
+        Index("ix_send_log_message_id", "message_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    line_id: Mapped[int] = mapped_column(
+        ForeignKey("batch_lines.id", ondelete="CASCADE")
+    )
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

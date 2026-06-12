@@ -101,6 +101,31 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     await session.flush()
 
 
+async def tenant_plan_expired(session: AsyncSession, tenant_id: int) -> bool:
+    """Does this tenant have a client whose plan already lapsed? (Story 2.5)
+
+    EXISTS over ``role == 'client' AND expires_at IS NOT NULL AND expires_at
+    <= now()`` — expiry decided in SQL (repo convention, see
+    ``get_active_session_with_user``; ``services/plans.is_plan_expired`` is
+    the pure mirror for already-loaded rows). The send worker checks it at
+    claim time to cancel an expired tenant's queued lines mid-batch. The
+    owner's tenant has no 'client' user ⇒ always ``False`` ⇒ owner batches
+    are never cancelled.
+    """
+    stmt = (
+        select(User.id)
+        .where(
+            User.tenant_id == tenant_id,
+            User.role == "client",
+            User.expires_at.is_not(None),
+            User.expires_at <= func.now(),
+        )
+        .exists()
+    )
+    expired: bool = (await session.execute(select(stmt))).scalar_one()
+    return expired
+
+
 async def get_active_session_with_user(
     session: AsyncSession, token: str
 ) -> AuthSession | None:

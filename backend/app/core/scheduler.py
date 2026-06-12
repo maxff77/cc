@@ -58,6 +58,7 @@ class Scheduler:
         """Forget cursor + governor state (tests; equivalent to a restart)."""
         self._g_min: float = settings.scheduler_g_min_seconds
         self._last_flood_at: float | None = None
+        self._flood_until: float = 0.0
         self._last_client_tenant_id: int | None = None
         self._last_owner_tenant_id: int | None = None
         self._last_was_owner: bool = False
@@ -75,10 +76,24 @@ class Scheduler:
         n = max(1, n)
         return max(self._g_min, _target_per_client(n) / n)
 
-    def note_flood_wait(self) -> None:
-        """A FloodWait happened: raise the floor toward the safe band."""
+    def note_flood_wait(self, seconds: float) -> None:
+        """A FloodWait happened: raise the floor AND open the global window.
+
+        Besides the governor (×1.5 toward the safe band), the requested wait
+        becomes a GLOBAL no-send window (Story 2.5, closing the 2.4 deferred
+        release/abort bypass): the worker checks ``flood_remaining()`` before
+        claiming ANY tenant's line — including the window-owning tenant's
+        (recorded decision, no exemption: retrying inside an open window on
+        the shared account escalates everyone's next FloodWait). No default on
+        ``seconds`` on purpose — no caller may forget the window.
+        """
         self._g_min = min(self._g_min * _GOVERNOR_FACTOR, _G_MIN_CEIL)
         self._last_flood_at = self._now()
+        self._flood_until = max(self._flood_until, self._now() + seconds)
+
+    def flood_remaining(self) -> float:
+        """Seconds left of the global FloodWait window (0.0 when closed)."""
+        return max(0.0, self._flood_until - self._now())
 
     def _maybe_decay(self) -> None:
         """Lazy decay: one ÷1.5 step per 600s window without FloodWaits."""

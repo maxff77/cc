@@ -37,6 +37,9 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 2-5 → done 2026-06-11 (endurecimiento de pipeline completo: write-ahead, cap=3 fallidas, panel rojo, FloodWait global, fail-stop, reconciliación, cancelación, logs)
+# 2-5 → review 2026-06-12 (implementado: send_log write-ahead + cap=3/'failed' + panel rojo de fallidas + ventana FloodWait global + fail-stop de registro + reconciliación al boot + 'cancelled' por expiración + logs estructurados; suite 165 verde, diferidos 2-2 #5 y 2-4 #1/#3 resueltos)
+# 2-5 → ready-for-dev 2026-06-12 (story file created — send_log write-ahead + retry cap=3/failed + fail-stop sin DB + reconciliación al boot + cancelled por expiración + logs estructurados; absorbe diferidos 2-2 #5 y 2-4 #1/#3)
 # 2-4 → done 2026-06-12 (multi-tenant scheduler: round-robin + owner priority ≤50% + adaptive interval + FloodWait governor; resolves 2-3 defer #1/#3)
 # 2-4 → ready-for-dev 2026-06-12 (story file created — core/scheduler.py round-robin + alternancia owner ≤50% + G=max(G_min,P(n)/n) + governor FloodWait + ETA G×n; absorbe diferidos 2-3 #1/#3)
 # 2-3 → done 2026-06-12 (pause/resume/stop endpoints + state machine + cancelable sleeps + pill/controls/flood-notice; resolved deferred 2-2 #1/#3/#6)
@@ -69,12 +72,12 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Envío en lote controlado
-  epic-2: in-progress
+  epic-2: done
   2-1-catalogo-global-de-prefijos: done
   2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: done
   2-3-pausar-reanudar-y-detener-con-eta-honesto: done
   2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: done
-  2-5-endurecimiento-del-pipeline-de-envio: backlog
+  2-5-endurecimiento-del-pipeline-de-envio: done
   epic-2-retrospective: optional
 
   # Epic 3: Captura de respuestas, sesiones e historial

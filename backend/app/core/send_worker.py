@@ -1,4 +1,5 @@
-"""Background send worker (Story 2.2; pause/stop-aware 2.3; scheduled 2.4).
+"""Background send worker (Story 2.2; pause/stop 2.3; scheduled 2.4;
+hardened 2.5).
 
 A single ``asyncio.Task`` created in the lifespan drains queued batch lines.
 Selection is NOT FIFO: ``core.scheduler`` rotates round-robin across active
@@ -8,17 +9,31 @@ adaptive ``G = max(g_min, P(n)/n)`` — recomputed every turn, never constant
 (NEVER the request-scoped one) and the Telegram send happens with no session
 held (a FloodWait can sleep for minutes — it must not pin a pool connection).
 
-Retry policy (legacy semantics, kept deliberately):
-- ``FloodWaitError`` → note it to the scheduler's governor, broadcast GLOBAL
-  ``flood.wait``, deadline-sleep the requested seconds, retry the SAME line.
+Retry policy (Story 2.5 hardening over the legacy semantics):
+- ``FloodWaitError`` → note it to the scheduler (governor + GLOBAL no-send
+  window), broadcast GLOBAL ``flood.wait``, deadline-sleep the requested
+  seconds, retry the SAME line. FloodWaits never count toward the cap —
+  they are account pacing, not a bad line.
 - Any other send error → tenant-scoped ``error`` event, sleep 2s, retry the
-  same line FOREVER.  # Story 2.5 replaces retry-forever with cap=3.
+  same line up to ``_MAX_SEND_ATTEMPTS`` total attempts; at the cap the line
+  is marked 'failed' (+ ``fail_code``) and THE QUEUE CONTINUES — one bad
+  line never blocks other tenants (retry-forever died here).
+
+Write-ahead + fail-stop (Story 2.5, AC 2/5): the send intent is recorded in
+``send_log`` in the SAME transaction as the 'sending' claim — BEFORE Telegram
+is called — and ``message_id`` is filled in the record phase after delivery.
+Order of operations IS the fail-stop: DB down before the claim ⇒ step raises
+before any send (run_worker logs and retries); DB down after the send ⇒ the
+record block retries FOREVER and nothing else is sent until it commits ("no
+attribution possible = no sends"). NOTE for Story 3.1: the in-memory buffer
+of incoming replies while the DB is down belongs to the capture pipeline —
+there is no reply handler to feed it yet; ``catch_up=True`` (telegram.py)
+already recovers messages that arrived while disconnected.
 
 Pause/stop (Story 2.3): the batch state is re-read after every interrupted
 sleep — pause RELEASES the claimed line back to the queue (a single worker
 serving every tenant must not stall on one paused batch) and stop ABORTS it
-(the queue was already cleared by the handler). Story 2.5 introduces
-``cancelled`` + send_log — none of that is built here.
+(the queue was already cleared by the handler).
 
 Sleeps are cancelable via the module wake event, but with DEADLINES (2.4,
 absorbing the 2.3 deferred finding): a ``wake()`` belonging to ANOTHER
@@ -26,11 +41,16 @@ tenant's control re-sleeps the remainder instead of retrying early on the
 shared account (``_wait_respecting_state``), and the global pacing sleep is
 immune to wake altogether (``sleep_paced`` — FR12 is never bypassed by a
 control). The own tenant's pause/stop still land instantly (release/abort).
+The global FloodWait window (scheduler.flood_remaining) gates the TOP of
+``step()`` — after a FloodWait nobody sends until it elapses, not even the
+window-owning tenant via pause→resume (2.5 recorded decision).
 """
 
 import asyncio
 import logging
+import re
 import time
+from collections import Counter
 from typing import Literal
 
 from sqlalchemy import select
@@ -42,6 +62,8 @@ from app.core.telegram import FloodWaitError, gateway
 from app.db.base import async_session_factory
 from app.db.models import Batch, BatchLine
 from app.db.repos import batches as batches_repo
+from app.db.repos import send_log as send_log_repo
+from app.db.repos import users as users_repo
 from app.services import batches as batches_service
 
 logger = logging.getLogger(__name__)
@@ -49,8 +71,15 @@ logger = logging.getLogger(__name__)
 # How long to sleep when the queue is empty before polling again.
 _IDLE_SLEEP_SECONDS = 1.0
 # Delay before retrying a line after a non-FloodWait send error.
-# Story 2.5 replaces retry-forever with cap=3 + a 'failed' line state.
 _ERROR_RETRY_SECONDS = 2.0
+# Total generic-error attempts before a line is marked 'failed' (Story 2.5).
+# A PRODUCT rule from architecture's Risk Deep-Dive, NOT configuration.
+# Counted per claim (a release/re-claim resets it); FloodWaits don't count.
+_MAX_SEND_ATTEMPTS = 3
+
+# Per-tenant sent counter — process memory ON PURPOSE (mirror of the legacy
+# "counters never reset"); structured-log observability only, never durable.
+_sent_by_tenant: Counter[int] = Counter()
 
 # Wakes any in-flight sleep (pause/resume/stop interrupt instantly).
 _wake = asyncio.Event()
@@ -132,67 +161,146 @@ async def _locked_batch(session: AsyncSession, batch_id: int) -> Batch | None:
 
 
 async def step() -> bool:
-    """Process at most one line. Returns True iff a line was sent.
+    """Process at most one line. Returns True iff a line was sent OR failed
+    (a failed line burned 3 real attempts against the API — pacing the
+    adaptive interval afterwards protects the account all the same).
 
     Factored out of the infinite loop so tests can await single steps
     deterministically (no real Telegram, no background task).
     """
+    # 0. Global FloodWait window (Story 2.5, closing the 2.4 deferred bypass):
+    #    after a FloodWait NOBODY claims/sends until the window elapses — not
+    #    even the window-owning tenant via pause→resume. Wake-immune is
+    #    correct here: no line is claimed, same justification as the post-send
+    #    pacing sleep.
+    remaining = scheduler.flood_remaining()
+    if remaining > 0:
+        await sleep_paced(remaining)
+
     # 1. Scheduler picks WHOSE line goes next (round-robin + owner priority),
     #    then claim that tenant's oldest queued line (short transaction —
-    #    commit releases it).
+    #    commit releases it). The write-ahead intent is recorded in the SAME
+    #    transaction (AC 2): the claim commit IS "recorded BEFORE Telegram".
+    expired = False
     async with async_session_factory() as session:
         active = await batches_repo.active_senders(session)
         pick = scheduler.pick_next(active)
         if pick is None:
             return False
-        line = await batches_repo.next_queued_line_for_tenant(session, pick.tenant_id)
-        if line is None:
-            # Race: a stop emptied the picked tenant's queue between the
-            # listing and this claim — idle this step; the next loop rotates
-            # (recorded decision: no same-step retry of another tenant).
-            return False
-        await batches_repo.mark_sending(session, line)
-        await session.commit()
-        line_id = line.id
-        batch_id = line.batch_id
-        tenant_id = line.tenant_id
-        position = line.position
-        text = line.text
+        # Plan expiry is checked at claim time on purpose (AC 7): this is the
+        # only point where the pipeline would SPEND a channel slot on the
+        # tenant. A paused batch of an expired tenant is never picked, so it
+        # needs no active cancellation (1.4's lockout already shuts it out).
+        expired = await users_repo.tenant_plan_expired(session, pick.tenant_id)
+        if not expired:
+            line = await batches_repo.next_queued_line_for_tenant(
+                session, pick.tenant_id
+            )
+            if line is None:
+                # Race: a stop emptied the picked tenant's queue between the
+                # listing and this claim — idle this step; the next loop
+                # rotates (recorded decision: no same-step retry of another
+                # tenant).
+                return False
+            await batches_repo.mark_sending(session, line)
+            await send_log_repo.record_intent(session, line)
+            await session.commit()
+            line_id = line.id
+            batch_id = line.batch_id
+            tenant_id = line.tenant_id
+            position = line.position
+            text = line.text
+
+    if expired:
+        # Close the claim session WITHOUT claiming, cancel, and let the next
+        # loop rotate (same pattern as the 2.4 selection↔stop race).
+        await _cancel_expired_batch(pick.tenant_id, pick.batch_id)
+        return False
 
     # 2. Send — in-place retry on the SAME line, no DB session held. The
-    #    state re-check inside may yield to a pause (release) or stop (abort).
+    #    state re-check inside may yield to a pause (release) or stop (abort);
+    #    the retry cap may give up ("failed").
     result = await _send_with_retries(tenant_id, batch_id, text)
-    if result == "release":
-        await _release_line(tenant_id, batch_id, line_id)
+    if isinstance(result, str):
+        if result == "release":
+            await _release_line(tenant_id, batch_id, line_id)
+        else:  # "abort"
+            await _abort_line(tenant_id, batch_id, line_id)
         return False
-    if result == "abort":
-        await _abort_line(tenant_id, batch_id, line_id)
-        return False
+    if isinstance(result, tuple):  # ("failed", code) — the cap was hit
+        await _record_failed(tenant_id, batch_id, line_id, position, text, result[1])
+        return True
 
-    # 3. Record + emit ("sent").
+    # 3. Record + emit ("sent") — retries forever until the DB takes it.
+    await _record_sent(tenant_id, batch_id, line_id, position, text, result)
+    return True
+
+
+async def _record_sent(
+    tenant_id: int,
+    batch_id: int,
+    line_id: int,
+    position: int,
+    text: str,
+    message_id: int,
+) -> None:
+    """Post-send record phase: 'sent' + ``message_id`` on the intent (AC 2/5).
+
+    Retries FOREVER until the transaction commits — this IS the fail-stop of
+    AC 5: a sent-but-unrecorded line blocks any further send ("no attribution
+    possible = no sends"). Safe to re-run after a partially lost commit: the
+    line UPDATE and ``set_message_id`` are idempotent by construction.
+    """
     state_payload: dict | None = None
     progress: dict | None = None
-    async with async_session_factory() as session:
-        recorded = await session.get(BatchLine, line_id)
-        if recorded is None:  # batch deleted mid-send (tenant removed)
-            return True
-        await batches_repo.mark_sent(session, recorded)
-        batch = await _locked_batch(session, batch_id)
-        if batch is not None:
-            if batch.state == batches_repo.STATE_STOPPING:
-                # The stop landed while gateway.send was in flight and the
-                # line DID go out: record it honestly ('sent') and finalize
-                # 'stopped' — NOT complete_if_drained, which would mark the
-                # batch 'completed' (drained ≠ detenido, Epic 3 history).
-                batch.state = batches_repo.STATE_STOPPED
-                state_payload = batches_service.state_data(batch, "idle")
-            else:
-                drained = await batches_repo.complete_if_drained(session, batch)
-                progress = await batches_service.progress_data(session, batch)
-                if drained:
-                    state_payload = batches_service.state_data(batch, "idle")
-        await session.commit()
+    while True:
+        state_payload = None
+        progress = None
+        try:
+            async with async_session_factory() as session:
+                recorded = await session.get(BatchLine, line_id)
+                if recorded is None:  # batch deleted mid-send (tenant removed)
+                    return
+                await batches_repo.mark_sent(session, recorded)
+                await send_log_repo.set_message_id(session, line_id, message_id)
+                batch = await _locked_batch(session, batch_id)
+                if batch is not None:
+                    if batch.state == batches_repo.STATE_STOPPING:
+                        # The stop landed while gateway.send was in flight and
+                        # the line DID go out: record it honestly ('sent') and
+                        # finalize 'stopped' — NOT complete_if_drained, which
+                        # would mark the batch 'completed' (drained ≠ detenido,
+                        # Epic 3 history).
+                        batch.state = batches_repo.STATE_STOPPED
+                        state_payload = batches_service.state_data(batch, "idle")
+                    else:
+                        drained = await batches_repo.complete_if_drained(
+                            session, batch
+                        )
+                        progress = await batches_service.progress_data(session, batch)
+                        if drained:
+                            state_payload = batches_service.state_data(batch, "idle")
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=record line=%s — retrying until "
+                "the DB returns (fail-stop: nothing else sends meanwhile)",
+                line_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
 
+    _sent_by_tenant[tenant_id] += 1
+    logger.info(
+        "event=line_sent tenant=%s batch=%s line=%s message_id=%s tenant_total=%s",
+        tenant_id,
+        batch_id,
+        line_id,
+        message_id,
+        _sent_by_tenant[tenant_id],
+    )
     await broadcaster.emit(
         tenant_id,
         "batch.line_sent",
@@ -202,21 +310,141 @@ async def step() -> bool:
         await broadcaster.emit(tenant_id, "batch.progress", progress)
     if state_payload is not None:
         await broadcaster.emit(tenant_id, "batch.state", state_payload)
-    return True
+
+
+async def _record_failed(
+    tenant_id: int,
+    batch_id: int,
+    line_id: int,
+    position: int,
+    text: str,
+    code: str,
+) -> None:
+    """Record-phase mirror for a line the retry cap gave up on (AC 3/4).
+
+    Same retry-forever fail-stop as ``_record_sent`` (the failure must be
+    durable before anything else sends). A batch whose LAST line fails still
+    completes — 'failed' is not pending, so ``complete_if_drained`` drains.
+    """
+    state_payload: dict | None = None
+    progress: dict | None = None
+    while True:
+        state_payload = None
+        progress = None
+        try:
+            async with async_session_factory() as session:
+                recorded = await session.get(BatchLine, line_id)
+                if recorded is None:  # batch deleted mid-send (tenant removed)
+                    return
+                await batches_repo.mark_failed(session, recorded, code)
+                batch = await _locked_batch(session, batch_id)
+                if batch is not None:
+                    if batch.state == batches_repo.STATE_STOPPING:
+                        batch.state = batches_repo.STATE_STOPPED
+                        state_payload = batches_service.state_data(batch, "idle")
+                    else:
+                        drained = await batches_repo.complete_if_drained(
+                            session, batch
+                        )
+                        progress = await batches_service.progress_data(session, batch)
+                        if drained:
+                            state_payload = batches_service.state_data(batch, "idle")
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=record line=%s — retrying until "
+                "the DB returns (fail-stop: nothing else sends meanwhile)",
+                line_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
+
+    logger.warning(
+        "event=line_failed tenant=%s batch=%s line=%s code=%s",
+        tenant_id,
+        batch_id,
+        line_id,
+        code,
+    )
+    await broadcaster.emit(
+        tenant_id,
+        "batch.line_failed",
+        {"batch_id": batch_id, "position": position, "text": text, "code": code},
+    )
+    if progress is not None:
+        await broadcaster.emit(tenant_id, "batch.progress", progress)
+    if state_payload is not None:
+        await broadcaster.emit(tenant_id, "batch.state", state_payload)
+
+
+async def _cancel_expired_batch(tenant_id: int, batch_id: int) -> None:
+    """Plan expired mid-batch (AC 7): cancel what's queued, keep what's sent.
+
+    Runs BEFORE any claim (single worker), so only 'queued' lines exist to
+    cancel — they are MARKED 'cancelled' (honest history of what the system
+    cut off; the stop's DELETE is the user's choice, this is not). The 'sent'
+    lines and their ``send_log`` rows are untouched: Story 3.1 attributes
+    their replies even on a cancelled batch. 'cancelled' is terminal and not
+    live — controls 409 and a renewed plan starts a fresh batch on their own.
+
+    The emitted ``batch.state`` idle is honest-and-harmless: an expired tenant
+    cannot open new sockets (the /ws handshake rejects it) but an already-open
+    one exists while 2-2 #4 stays deferred.
+    """
+    state_payload: dict | None = None
+    cancelled = 0
+    async with async_session_factory() as session:
+        batch = await _locked_batch(session, batch_id)
+        if batch is None:
+            return
+        cancelled = await batches_repo.cancel_queued_lines(session, batch_id)
+        batch.state = batches_repo.STATE_CANCELLED
+        state_payload = batches_service.state_data(batch, "idle")
+        await session.commit()
+    logger.info(
+        "event=batch_cancelled reason=plan_expired tenant=%s batch=%s cancelled=%s",
+        tenant_id,
+        batch_id,
+        cancelled,
+    )
+    await broadcaster.emit(tenant_id, "batch.state", state_payload)
+
+
+def _fail_code(exc: BaseException) -> str:
+    """Machine-readable failure code: snake_case of the exception class name.
+
+    Recorded decision — stable, machine-legible, no invented taxonomy
+    (``RPCError`` → ``rpc_error``, ``ValueError`` → ``value_error``), truncated
+    to the column's 40 chars; the Spanish copy lives in the frontend with a
+    fallback.
+    """
+    name = type(exc).__name__
+    snake = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake)
+    return snake.lower()[:40]
 
 
 async def _send_with_retries(
     tenant_id: int, batch_id: int, text: str
-) -> Literal["sent", "release", "abort"]:
-    """Deliver ``text`` — or yield to a pause/stop that landed meanwhile.
+) -> int | tuple[Literal["failed"], str] | Literal["release", "abort"]:
+    """Deliver ``text`` (→ its Telegram message id) — or yield/give up.
 
     The batch state is re-read at the TOP of every iteration AND inside every
     retry wait (``_wait_respecting_state`` deadline loop):
-    - 'sending' → attempt the send (FloodWait / generic-error retries kept;
-      a foreign wake re-sleeps the remainder — no early retry);
+    - 'sending' → attempt the send;
     - 'paused'  → "release" (give the line back — don't hold it);
     - 'stopping'/'stopped'/gone → "abort".
+
+    Retry policy (Story 2.5): FloodWait waits + retries the SAME line and
+    NEVER counts toward the cap (account pacing, not a bad line); any other
+    error counts, and at ``_MAX_SEND_ATTEMPTS`` total attempts the line is
+    given up as ``("failed", code)``. The counter is per CLAIM on purpose
+    (recorded decision): a release/re-claim resets it — simple, and the case
+    is rare.
     """
+    attempts = 0
     while True:
         async with async_session_factory() as session:
             state = await batches_repo.get_batch_state(session, batch_id)
@@ -225,11 +453,19 @@ async def _send_with_retries(
         if state != batches_repo.STATE_SENDING:
             return "abort"
         try:
-            await gateway.send(text)
-            return "sent"
+            return await gateway.send(text)
         except FloodWaitError as e:
-            # Governor: every FloodWait raises the pacing floor (AC 4) …
-            scheduler.note_flood_wait()
+            # Governor + GLOBAL no-send window: every FloodWait raises the
+            # pacing floor AND opens the window the worker respects before
+            # claiming ANY tenant's line (Task 5) …
+            scheduler.note_flood_wait(float(e.seconds))
+            logger.warning(
+                "event=flood_wait seconds=%s g_min=%s tenant=%s batch=%s",
+                e.seconds,
+                scheduler.g_min,
+                tenant_id,
+                batch_id,
+            )
             # … and is explained to everyone (global event, architecture).
             await broadcaster.emit_global("flood.wait", {"seconds": e.seconds})
             outcome = await _wait_respecting_state(batch_id, float(e.seconds))
@@ -238,10 +474,13 @@ async def _send_with_retries(
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            attempts += 1
+            # Per-attempt error event kept — never silently dropped.
             await broadcaster.emit(
                 tenant_id, "error", {"code": "send_error", "message": str(e)}
             )
-            # Story 2.5 replaces retry-forever with cap=3 + 'failed' state.
+            if attempts >= _MAX_SEND_ATTEMPTS:
+                return ("failed", _fail_code(e))
             outcome = await _wait_respecting_state(batch_id, _ERROR_RETRY_SECONDS)
             if outcome != "elapsed":
                 return outcome
@@ -294,33 +533,108 @@ async def _abort_line(tenant_id: int, batch_id: int, line_id: int) -> None:
 
 
 async def _boot_recovery() -> None:
-    """Heal state a restart abandoned (NFR6 + 2.3 review). Never raises.
+    """Heal state a restart abandoned (NFR6 + 2.3 review + 2.5 AC 6). Never
+    raises.
 
-    IN THIS ORDER, one transaction:
-    1. Finalize batches stranded in 'stopping': the only 'stopping' →
-       'stopped' transitions are this worker's in-process paths, so a restart
-       (or a step() crash after the claim commit, healed at the next restart)
-       while a stop was in flight would otherwise leave the batch live-but-
-       undrainable forever — its tenant permanently 409-blocked
-       (``get_live_batch`` keeps returning it; the partial unique index
-       blocks any new batch). Pending lines are discarded like the in-process
-       abort; no events (clients reconcile via the connect snapshot).
-    2. Re-queue lines a crash left in 'sending' so draining resumes. Running
-       AFTER step 1 means a stopping batch's abandoned line is deleted, not
-       re-queued. A small double-send window is accepted until Story 2.5's
-       reconciliation.
+    IN THIS ORDER:
+    1. (transaction) Finalize batches stranded in 'stopping': the only
+       'stopping' → 'stopped' transitions are this worker's in-process paths,
+       so a restart while a stop was in flight would otherwise leave the batch
+       live-but-undrainable forever — its tenant permanently 409-blocked.
+       Pending lines (the 'sending' one included) are discarded like the
+       in-process abort; no events (clients reconcile via the connect
+       snapshot, the 2.3 boot-recovery pattern).
+    2. (transaction) List lines a crash left in 'sending'. Invariant: ≤1 —
+       the worker is singular and claims one line at a time (and step 1 ran
+       first); >1 is tolerated for robustness.
+    3. (no transaction) RECONCILE each against recent outgoing chat messages
+       instead of blindly re-queueing (2.2's accepted double-send window dies
+       here): a free candidate (id not already attributed in ``send_log``)
+       with identical text confirms the line ('sent' + real ``message_id``);
+       no match → re-queue (the NULL-message_id intent row is reused on the
+       re-claim). Gateway down / listing fails → re-queue with a warning
+       (recorded fallback: availability over the rare double-send when
+       Telegram itself is down — without the gateway nothing sends anyway).
     """
     try:
         async with async_session_factory() as session:
             finalized = await batches_repo.finalize_stuck_stopping(session)
-            requeued = await batches_repo.requeue_stuck_sending(session)
             await session.commit()
         if finalized:
             logger.info(
                 "boot recovery: finalized %d orphaned stopping batch(es)", finalized
             )
-        if requeued:
-            logger.info("boot recovery: requeued %d stuck line(s)", requeued)
+
+        async with async_session_factory() as session:
+            stuck = await batches_repo.stuck_sending_lines(session)
+            # Capture attributes while the session is open (MissingGreenlet).
+            stuck_data = [
+                (line.id, line.batch_id, line.tenant_id, line.text) for line in stuck
+            ]
+        if not stuck_data:
+            return
+
+        # The lifespan connects the gateway BEFORE run_worker (main.py), so
+        # its readiness is known here.
+        candidates: list[tuple[int, str]] = []
+        verified = False
+        if gateway.ready:
+            try:
+                candidates = await gateway.recent_outgoing()
+                verified = True
+            except Exception:
+                logger.warning(
+                    "event=reconcile_unverified reason=recent_outgoing_failed "
+                    "— re-queueing without verification"
+                )
+        else:
+            logger.warning(
+                "event=reconcile_unverified reason=gateway_not_ready "
+                "— re-queueing without verification"
+            )
+
+        used: set[int] = set()
+        if verified and candidates:
+            async with async_session_factory() as session:
+                used = await send_log_repo.used_message_ids(
+                    session, [message_id for message_id, _ in candidates]
+                )
+
+        for line_id, batch_id, tenant_id, line_text in stuck_data:
+            match_id: int | None = None
+            if verified:
+                # iter_messages lists newest first — the newest match wins.
+                for message_id, message_text in candidates:
+                    if message_id not in used and message_text == line_text:
+                        match_id = message_id
+                        break
+            async with async_session_factory() as session:
+                line = await session.get(BatchLine, line_id)
+                if line is None:
+                    continue
+                if match_id is not None:
+                    await batches_repo.mark_sent(session, line)
+                    await send_log_repo.set_message_id(session, line_id, match_id)
+                    used.add(match_id)
+                    # Same batch finalization as the step's record phase.
+                    batch = await _locked_batch(session, batch_id)
+                    if batch is not None:
+                        if batch.state == batches_repo.STATE_STOPPING:
+                            batch.state = batches_repo.STATE_STOPPED
+                        else:
+                            await batches_repo.complete_if_drained(session, batch)
+                    outcome = "confirmed"
+                else:
+                    await batches_repo.mark_queued(session, line)
+                    outcome = "requeued"
+                await session.commit()
+            logger.info(
+                "event=line_reconciled outcome=%s tenant=%s batch=%s line=%s",
+                outcome,
+                tenant_id,
+                batch_id,
+                line_id,
+            )
     except Exception:
         logger.exception("boot recovery failed — continuing")
 
@@ -335,10 +649,12 @@ async def run_worker() -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            # DB unreachable or any unexpected error: log and retry. The
-            # fail-stop buffering design is Story 2.5 — a plain
-            # log/sleep/retry is enough here.
-            logger.exception("send worker step failed — retrying")
+            # DB unreachable before the claim (or any unexpected error): log
+            # and retry. Order of operations guarantees nothing was sent —
+            # the claim raises BEFORE gateway.send (fail-stop, AC 5).
+            logger.exception(
+                "event=db_unreachable phase=claim — send worker step failed, retrying"
+            )
             await sleep_cancelable(_ERROR_RETRY_SECONDS)
             continue
         if sent:

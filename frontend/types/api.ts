@@ -492,6 +492,8 @@ export interface components {
             sent: number;
             /** Queued */
             queued: number;
+            /** Failed */
+            failed: number;
             /** Total */
             total: number;
             /** Appended */

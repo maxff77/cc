@@ -36,6 +36,8 @@ brute_resultados.txt
 
 # Claude Code
 .claude/
+.agents/
+skills-lock.json
 
 # Otros
 logs/

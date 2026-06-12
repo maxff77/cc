@@ -88,14 +88,31 @@ class TelegramGateway:
     async def send(self, text: str) -> int:
         """Send ``text`` to the resolved target; return the Telegram message id.
 
-        Story 2.5's send_log will consume the id — returned now so the worker
-        signature doesn't change. ``FloodWaitError`` propagates to the worker
-        (the worker owns retry policy).
+        The id feeds ``send_log`` (Story 2.5 write-ahead → Story 3.1
+        attribution). ``FloodWaitError`` propagates to the worker (the worker
+        owns retry policy).
         """
         if self.client is None or self._entity is None:
             raise RuntimeError("telegram gateway not ready")
         message = await self.client.send_message(self._entity, text)
         return int(message.id)
+
+    async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
+        """Recent messages WE sent to the target, newest first: ``(id, text)``.
+
+        Story 2.5 boot reconciliation: a line a crash left in 'sending' is
+        confirmed against these instead of blindly re-queued (never
+        double-sent). Raises when the client isn't ready — the caller owns
+        the fallback (telethon stays confined to this module).
+        """
+        if self.client is None or self._entity is None:
+            raise RuntimeError("telegram gateway not ready")
+        messages: list[tuple[int, str]] = []
+        async for message in self.client.iter_messages(
+            self._entity, from_user="me", limit=limit
+        ):
+            messages.append((int(message.id), message.text or ""))
+        return messages
 
     async def disconnect(self) -> None:
         """Disconnect on shutdown (no-op when never connected)."""

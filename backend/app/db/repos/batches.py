@@ -16,24 +16,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine
 
-# Lifecycle states (2.2 + 2.3). 2.5 adds cancelled — plain strings, no DB
-# enum (see the model docstring).
+# Lifecycle states (2.2 + 2.3 + 2.5) — plain strings, no DB enum (see the
+# model docstring). 'cancelled' (2.5, plan expiry) is terminal and NOT live.
 STATE_SENDING = "sending"
 STATE_COMPLETED = "completed"
 STATE_PAUSED = "paused"
 STATE_STOPPING = "stopping"
 STATE_STOPPED = "stopped"
+STATE_CANCELLED = "cancelled"
 
 # "Live" = the tenant's one in-flight batch (Story 2.3 state machine). This
 # tuple IS the predicate of the partial unique index
 # ``uq_batches_one_live_per_tenant`` and the append notion of POST /api/batches.
+# 'cancelled' is deliberately absent: a renewed plan starts a fresh batch and
+# the controls 409 ``batch_not_live`` on a cancelled one with zero extra code.
 LIVE_STATES = (STATE_SENDING, STATE_PAUSED, STATE_STOPPING)
 
 LINE_QUEUED = "queued"
 LINE_SENDING = "sending"
 LINE_SENT = "sent"
+LINE_FAILED = "failed"
+LINE_CANCELLED = "cancelled"
 
-# Line states that count as "pending" (still in the queue).
+# Line states that count as "pending" (still in the queue). 'failed' and
+# 'cancelled' are EXCLUDED on purpose (2.5): they never block
+# ``complete_if_drained`` nor weigh on ``count_active_senders`` — a batch
+# whose last line fails still completes ("the queue continues", AC 3).
 _PENDING_STATES = (LINE_QUEUED, LINE_SENDING)
 
 
@@ -173,8 +181,8 @@ async def next_position(session: AsyncSession, batch_id: int) -> int:
     return 0 if max_pos is None else max_pos + 1
 
 
-async def counts(session: AsyncSession, batch_id: int) -> tuple[int, int]:
-    """Return ``(sent, queued)`` for a batch (queued includes 'sending')."""
+async def counts(session: AsyncSession, batch_id: int) -> tuple[int, int, int]:
+    """Return ``(sent, queued, failed)`` for a batch (queued includes 'sending')."""
     stmt = (
         select(BatchLine.state, func.count())
         .where(BatchLine.batch_id == batch_id)
@@ -184,7 +192,18 @@ async def counts(session: AsyncSession, batch_id: int) -> tuple[int, int]:
     by_state: dict[str, int] = {state: count for state, count in rows}
     sent = by_state.get(LINE_SENT, 0)
     queued = by_state.get(LINE_QUEUED, 0) + by_state.get(LINE_SENDING, 0)
-    return sent, queued
+    failed = by_state.get(LINE_FAILED, 0)
+    return sent, queued, failed
+
+
+async def failed_lines(session: AsyncSession, batch_id: int) -> list[BatchLine]:
+    """The batch's failed lines in position order — feeds the WS snapshot."""
+    stmt = (
+        select(BatchLine)
+        .where(BatchLine.batch_id == batch_id, BatchLine.state == LINE_FAILED)
+        .order_by(BatchLine.position)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 # --- Worker queries ----------------------------------------------------------
@@ -295,6 +314,34 @@ async def mark_queued(session: AsyncSession, line: BatchLine) -> None:
     await session.flush()
 
 
+async def mark_failed(session: AsyncSession, line: BatchLine, code: str) -> None:
+    """Record a line the retry cap gave up on: state → 'failed' + its code.
+
+    'failed' is not pending, so the batch keeps draining (AC 3) — the line
+    stays as honest history and the frontend maps ``fail_code`` to copy.
+    """
+    line.state = LINE_FAILED
+    line.fail_code = code
+    await session.flush()
+
+
+async def cancel_queued_lines(session: AsyncSession, batch_id: int) -> int:
+    """Plan expiry mid-batch: every still-'queued' line → 'cancelled' (2.5).
+
+    Unlike the stop (which DELETES the queue — the user asked for it), the
+    system's cancellation MARKS the rows: honest history of what was cut off
+    (recorded decision; Epic 3's history can show it). Returns the count.
+    """
+    stmt = (
+        update(BatchLine)
+        .where(BatchLine.batch_id == batch_id, BatchLine.state == LINE_QUEUED)
+        .values(state=LINE_CANCELLED)
+    )
+    result = await session.execute(stmt)
+    rowcount: int = getattr(result, "rowcount", 0) or 0
+    return rowcount
+
+
 async def delete_line(session: AsyncSession, line_id: int) -> None:
     """Discard an in-flight line abandoned by a stop (it never went out)."""
     await session.execute(delete(BatchLine).where(BatchLine.id == line_id))
@@ -339,11 +386,12 @@ async def finalize_stuck_stopping(session: AsyncSession) -> int:
 
     Every 'stopping' → 'stopped' transition lives in the worker's in-process
     paths (step / _release_line / _abort_line), which require it to be holding
-    the claimed line. After a restart nobody holds it: ``requeue_stuck_sending``
-    turns the line 'queued', but ``next_queued_line_for_tenant`` joins
-    ``Batch.state == 'sending'`` so a 'stopping' batch's lines are never
-    served — and 'stopping' is in ``LIVE_STATES``, so the tenant would be
-    409-blocked forever. Discard the still-pending lines (the stop handler
+    the claimed line. After a restart nobody holds it: even a re-queued line
+    is never served because ``next_queued_line_for_tenant`` joins
+    ``Batch.state == 'sending'`` — and 'stopping' is in ``LIVE_STATES``, so
+    the tenant would be 409-blocked forever. Discard the still-pending lines
+    (running BEFORE the 2.5 reconciliation, so a stopping batch's abandoned
+    'sending' line is deleted, never reconciled; the stop handler
     already cleared the queue; 'sent' lines are kept as history, exactly like
     the in-process abort) and land the batch 'stopped'. Returns the number of
     batches finalized. No events — clients reconcile via the connect snapshot.
@@ -362,17 +410,18 @@ async def finalize_stuck_stopping(session: AsyncSession) -> int:
     return rowcount
 
 
-async def requeue_stuck_sending(session: AsyncSession) -> int:
-    """Boot recovery (NFR6): lines a crash left in 'sending' → back to 'queued'.
+async def stuck_sending_lines(session: AsyncSession) -> list[BatchLine]:
+    """Lines a crash left in 'sending' (boot reconciliation input, 2.5).
 
-    A small double-send window is accepted until Story 2.5's reconciliation
-    (the line may have gone out right before the crash).
+    Invariant: ≤1 row — the worker is singular and claims one line at a time
+    (and ``finalize_stuck_stopping`` runs first, deleting the 'sending' lines
+    of stopping batches). The list shape tolerates >1 for robustness. Replaces
+    2.2's blind ``requeue_stuck_sending``: each line is now reconciled against
+    recent outgoing messages — confirmed or re-queued, never double-sent.
     """
     stmt = (
-        update(BatchLine)
+        select(BatchLine)
         .where(BatchLine.state == LINE_SENDING)
-        .values(state=LINE_QUEUED)
+        .order_by(BatchLine.id)
     )
-    result = await session.execute(stmt)
-    rowcount: int = getattr(result, "rowcount", 0) or 0
-    return rowcount
+    return list((await session.execute(stmt)).scalars().all())

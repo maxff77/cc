@@ -41,6 +41,7 @@ interface BatchOut {
   state: string;
   sent: number;
   queued: number;
+  failed: number;
   total: number;
   appended: boolean;
   added: number;
