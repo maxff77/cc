@@ -134,16 +134,27 @@ class Sesion:
         enlace.symlink_to(self.dir.name)
         self._symlink_actualizado = True
 
-    def guardar_respuesta(self, texto):
-        """Guarda la respuesta completa y anexa a filtrada.txt los CC: nuevos.
+    def _preparar(self):
+        """Crea la carpeta (lazy) y fija el symlink _ultima en el primer guardado."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._actualizar_symlink_ultima()
+
+    def guardar_completa(self, texto):
+        """Anexa la respuesta a completa.txt (TODO resultado, ✅ y ❌, sin filtrar)."""
+        self._preparar()
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with (self.dir / "completa.txt").open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {texto}\n\n")
+
+    def guardar_filtrada(self, texto):
+        """Guarda una respuesta ✅: texto completo en filtrada_completa.txt ("con
+        response") y los datos CC: nuevos en filtrada.txt ("sin response").
 
         Devuelve la lista de datos CC: nuevos guardados en esta llamada.
         """
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self._actualizar_symlink_ultima()
+        self._preparar()
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        with (self.dir / "completa.txt").open("a", encoding="utf-8") as f:
+        with (self.dir / "filtrada_completa.txt").open("a", encoding="utf-8") as f:
             f.write(f"[{ts}] {texto}\n\n")
 
         nuevos = []
@@ -155,6 +166,11 @@ class Sesion:
             with (self.dir / "filtrada.txt").open("a", encoding="utf-8") as f:
                 f.write("\n".join(nuevos) + "\n")
         return nuevos
+
+    def guardar_respuesta(self, texto):
+        """Compat (CLI): guarda en Completa y en las filtradas. Devuelve los CC: nuevos."""
+        self.guardar_completa(texto)
+        return self.guardar_filtrada(texto)
 
     def cargar_cc_existentes(self):
         """Precarga _cc_guardadas desde filtrada.txt (una línea = un dato CC).

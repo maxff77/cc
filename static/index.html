@@ -65,7 +65,7 @@
   .resp .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
   .resp pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
   .cc { color: var(--ok); }
-  .split { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+  .split { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
   .split-col { min-width: 0; display: flex; flex-direction: column; }
   .split-head { display: flex; align-items: center; gap: 6px; font-size: 11px;
@@ -178,7 +178,11 @@
           <div id="respuestas" class="lista-resp"></div>
         </div>
         <div class="split-col">
-          <div class="split-head"><span class="ttl">Filtrada</span></div>
+          <div class="split-head"><span class="ttl">Filtrada con response</span></div>
+          <div id="respuestasFiltradaCompleta" class="lista-resp"></div>
+        </div>
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Filtrada sin response</span></div>
           <div id="respuestasFiltrada" class="lista-resp"></div>
         </div>
       </div>
@@ -210,7 +214,14 @@
           <pre class="archivo" id="histCompleta">—</pre>
         </div>
         <div class="split-col">
-          <div class="split-head"><span class="ttl">Filtrada</span>
+          <div class="split-head"><span class="ttl">Filtrada con response</span>
+            <button class="ghost mini" data-copy="filtrada_completa">Copiar</button>
+            <button class="ghost mini" data-export="filtrada_completa">Exportar</button>
+          </div>
+          <pre class="archivo" id="histFiltradaCompleta">—</pre>
+        </div>
+        <div class="split-col">
+          <div class="split-head"><span class="ttl">Filtrada sin response</span>
             <button class="ghost mini" data-copy="filtrada">Copiar</button>
             <button class="ghost mini" data-export="filtrada">Exportar</button>
           </div>
@@ -325,14 +336,26 @@ function setSesionActiva(s) {
 }
 
 // ---------- Respuestas en vivo ----------
-function agregarRespuesta(m) {
+function tarjetaResp(m, esOk) {
   const div = document.createElement("div");
-  div.className = "resp " + (m.estado.startsWith("ok") ? "ok" : "rechazada");
-  const icono = m.estado.startsWith("ok") ? "✅" : "❌";
+  div.className = "resp " + (esOk ? "ok" : "rechazada");
+  const icono = esOk ? "✅" : "❌";
   div.innerHTML = `<div class="meta">${icono} ${m.estado}${m.fuente || ""}</div><pre>${escapeHtml(m.texto).slice(0, 600)}</pre>`;
+  return div;
+}
+function agregarRespuesta(m) {
+  const esOk = m.estado.startsWith("ok");
+  // Completa: TODO resultado (✅ y ❌).
   const cont = $("#respuestas");
-  cont.prepend(div);
+  cont.prepend(tarjetaResp(m, esOk));
   while (cont.children.length > 40) cont.lastChild.remove();
+  // Filtrada con response: solo ✅, texto completo.
+  if (esOk) {
+    const fc = $("#respuestasFiltradaCompleta");
+    fc.prepend(tarjetaResp(m, true));
+    while (fc.children.length > 40) fc.lastChild.remove();
+  }
+  // Filtrada sin response: solo el dato CC:.
   const filt = $("#respuestasFiltrada");
   (m.nuevos_cc || []).forEach(cc => {
     const line = document.createElement("div");
@@ -421,18 +444,24 @@ async function cargarSesiones(target) {
 }
 async function cargarArchivo() {
   const pref = $("#histPrefijo").value, ses = $("#histSesion").value;
-  if (!pref || !ses) { $("#histCompleta").textContent = "—"; $("#histFiltrada").textContent = "—"; actualizarBotonSeguir(); return; }
+  if (!pref || !ses) {
+    $("#histCompleta").textContent = "—"; $("#histFiltradaCompleta").textContent = "—"; $("#histFiltrada").textContent = "—";
+    actualizarBotonSeguir(); return;
+  }
   const url = t => `/api/respuesta/${encodeURIComponent(pref)}/${encodeURIComponent(ses)}?tipo=${t}`;
   const cerca = el => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  const elC = $("#histCompleta"), elF = $("#histFiltrada");
-  const abajoC = cerca(elC), abajoF = cerca(elF);
-  const [c, f] = await Promise.all([
+  const elC = $("#histCompleta"), elFC = $("#histFiltradaCompleta"), elF = $("#histFiltrada");
+  const abajoC = cerca(elC), abajoFC = cerca(elFC), abajoF = cerca(elF);
+  const [c, fc, f] = await Promise.all([
     fetch(url("completa")).then(r => r.text()),
+    fetch(url("filtrada_completa")).then(r => r.text()),
     fetch(url("filtrada")).then(r => r.text()),
   ]);
   elC.textContent = c || "(vacío)";
+  elFC.textContent = fc || "(vacío)";
   elF.textContent = f || "(vacío)";
   if (abajoC) elC.scrollTop = elC.scrollHeight;   // auto-scroll solo si ya estabas al fondo
+  if (abajoFC) elFC.scrollTop = elFC.scrollHeight;
   if (abajoF) elF.scrollTop = elF.scrollHeight;
   actualizarBotonSeguir();
 }
@@ -469,7 +498,8 @@ async function refrescarHistorial() {
 $("#histPrefijo").onchange = async () => { await cargarSesiones(); evaluarSeguimiento(); };
 $("#histSesion").onchange = async () => { await cargarArchivo(); evaluarSeguimiento(); };
 $("#btnSeguirActiva").onclick = () => { if (sesionActiva) { siguiendoActiva = true; seguirActiva(); } };
-const histPane = t => t === "completa" ? $("#histCompleta") : $("#histFiltrada");
+const HIST_PANES = { completa: "#histCompleta", filtrada_completa: "#histFiltradaCompleta", filtrada: "#histFiltrada" };
+const histPane = t => $(HIST_PANES[t] || "#histFiltrada");
 document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
   try {
     await navigator.clipboard.writeText(histPane(b.dataset.copy).textContent);
