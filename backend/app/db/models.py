@@ -1,12 +1,24 @@
-"""ORM models for migration #1.
+"""ORM models.
 
-ONLY tenants, users and auth_sessions — later stories add their own tables
-via new Alembic migrations (no tables ahead of need).
+Tables arrive story by story via Alembic migrations (no tables ahead of need):
+tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
+batch_lines (2.2).
 """
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, false, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -91,6 +103,29 @@ class AuthSession(Base):
     user: Mapped["User"] = relationship(back_populates="auth_sessions")
 
 
+class GateCategory(Base):
+    """Owner-managed category for gates (Story 2.2 owner addition).
+
+    GLOBAL catalog like ``gates`` — no tenant scoping. Plain unique ``name``
+    (NO soft-delete: deleting a category that still has gates is rejected at
+    the API with ``category_in_use``; the FK below is ``RESTRICT`` so the DB
+    enforces it too). Categories are a browsing aid — batches never snapshot
+    them.
+    """
+
+    __tablename__ = "gate_categories"
+    __table_args__ = (UniqueConstraint("name", name="uq_gate_categories_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Gate(Base):
     """Catalog entry for a gate (Story 2.1).
 
@@ -115,9 +150,15 @@ class Gate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     value: Mapped[str] = mapped_column(String(20))
-    # Friendly label shown to clients (the value/prefix stays internal). Required;
-    # not unique — two gates may share a name, ``value`` is the identity.
+    # Friendly label shown to clients. Required; not unique — two gates may
+    # share a name, ``value`` is the identity. (Story 2.2 owner decision:
+    # clients see name + category + value.)
     name: Mapped[str] = mapped_column(String(80))
+    # Every gate belongs to exactly one category (Story 2.2). RESTRICT: a
+    # category cannot be dropped while gates (active OR retired) reference it.
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("gate_categories.id", ondelete="RESTRICT"), index=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -126,4 +167,79 @@ class Gate(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # NO lazy default on purpose: async lazy-loads raise MissingGreenlet.
+    # Loaders eager-load explicitly (``selectinload``) or refresh the attribute.
+    category: Mapped["GateCategory"] = relationship()
+
+
+class Batch(Base):
+    """One send batch (lote) for a tenant (Story 2.2).
+
+    ``gate_value``/``gate_name`` are SNAPSHOTS copied verbatim from the catalog
+    row at creation — denormalized on purpose (Story 2.1 design): retiring or
+    renaming a gate never rewrites history. No FK to ``gates``. The category is
+    deliberately NOT snapshotted (browsing aid, not send history).
+
+    ``state`` is a plain String, NOT a DB enum: this story uses
+    ``'sending' | 'completed'``; 2.3 adds ``paused``/``stopping``/``stopped``,
+    2.5 adds ``cancelled`` — no ALTER TYPE needed later.
+    """
+
+    __tablename__ = "batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    gate_value: Mapped[str] = mapped_column(String(20))
+    gate_name: Mapped[str] = mapped_column(String(80))
+    state: Mapped[str] = mapped_column(String(20))
+    # Set when the creator's role == owner; CONSUMED by Story 2.4's scheduler
+    # (owner priority) — only written here.
+    is_owner_priority: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BatchLine(Base):
+    """One line of a batch — the FULL message with the gate already applied.
+
+    ``tenant_id`` is denormalized (the batch already carries it) for isolation
+    queries and Story 2.5's send_log. ``state``: ``'queued' | 'sending' |
+    'sent'`` in this story (2.5 adds ``failed``/``cancelled``).
+    """
+
+    __tablename__ = "batch_lines"
+    __table_args__ = (
+        # Ordering invariant: positions are unique within a batch.
+        UniqueConstraint(
+            "batch_id", "position", name="uq_batch_lines_batch_id_position"
+        ),
+        # The worker's hot query (next queued line per batch).
+        Index("ix_batch_lines_batch_id_state", "batch_id", "state"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column()
+    text: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(20))
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )

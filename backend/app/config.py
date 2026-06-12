@@ -41,6 +41,23 @@ class Settings(BaseSettings):
     throttle_max_attempts: int = 5
     throttle_window_seconds: int = 900  # 15 minutes
 
+    # --- Telegram (Story 2.2) ---------------------------------------------
+    # Defaults are deliberately PERMISSIVE (unlike database_url): a machine
+    # without Telegram keys must still import the app and run the full test
+    # suite. The gateway treats missing/zero credentials as "not authorized"
+    # and sending stays down (POST /api/batches → 503) — nothing crashes.
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
+    # Outside the repo and the web root on the VPS (Story 1.7 convention).
+    telegram_session_path: str = "/var/lib/cc/anon.session"
+    # Destination username (single target at MVP). Leading ``@`` optional —
+    # the gateway strips it.
+    telegram_target: str = ""
+    # System-controlled interval between sends (FR12). Server config ONLY —
+    # never accepted from any request. 10.0 = architecture P(1); Story 2.4
+    # replaces the constant with the adaptive formula.
+    send_interval_seconds: float = 10.0
+
     @property
     def session_ttl_seconds(self) -> int:
         """Session TTL expressed in seconds (cookie max-age)."""

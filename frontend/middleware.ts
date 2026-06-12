@@ -147,11 +147,13 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // Run on everything EXCEPT /login, /expired (must be reachable WITHOUT a
   // session — a freshly-locked-out client has had theirs revoked), Next
-  // internals, the API (backend owns API auth), and static files — anything
+  // internals, the API (backend owns API auth), /ws (the backend owns WS auth
+  // via the cookie handshake — middleware must not consume a /me round-trip
+  // or interfere with the upgrade, Story 2.2), and static files — anything
   // with a file extension, so /public assets never burn a backend /me call.
   // Exclusions are anchored to a path segment (`login$`/`login/`) so unrelated
   // routes like `/logins` or `/api-keys` are still gated.
   matcher: [
-    "/((?!login(?:/|$)|expired(?:/|$)|api(?:/|$)|_next/|.+\\.\\w+$).*)",
+    "/((?!login(?:/|$)|expired(?:/|$)|api(?:/|$)|ws(?:/|$)|_next/|.+\\.\\w+$).*)",
   ],
 };

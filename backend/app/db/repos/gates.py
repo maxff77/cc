@@ -11,13 +11,24 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import Gate
 
 
 async def list_active(session: AsyncSession) -> list[Gate]:
-    """Return active catalog entries (``deleted_at IS NULL``) ordered by value."""
-    stmt = select(Gate).where(Gate.deleted_at.is_(None)).order_by(Gate.value)
+    """Return active catalog entries (``deleted_at IS NULL``) ordered by value.
+
+    The category relationship is eager-loaded (``selectinload``) — ``GateOut``
+    carries ``category_name`` and an async lazy-load would raise (no N+1
+    either, Story 2.2).
+    """
+    stmt = (
+        select(Gate)
+        .options(selectinload(Gate.category))
+        .where(Gate.deleted_at.is_(None))
+        .order_by(Gate.value)
+    )
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -42,9 +53,11 @@ async def get_active_by_value(session: AsyncSession, value: str) -> Gate | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def create(session: AsyncSession, *, value: str, name: str) -> Gate:
+async def create(
+    session: AsyncSession, *, value: str, name: str, category_id: int
+) -> Gate:
     """Insert and flush a fresh active gate (value verbatim; name is the label)."""
-    gate = Gate(value=value, name=name)
+    gate = Gate(value=value, name=name, category_id=category_id)
     session.add(gate)
     await session.flush()
     return gate

@@ -306,9 +306,61 @@ export interface paths {
         head?: never;
         /**
          * Update Gate
-         * @description Edit a gate's value/name. History is untouched — batches snapshot the string.
+         * @description Edit a gate's value/name/category. History is untouched — batches snapshot the string.
          */
         patch: operations["update_gate_api_admin_gates__gate_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/gate-categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Gate Categories
+         * @description List every category, ordered by name.
+         */
+        get: operations["list_gate_categories_api_admin_gate_categories_get"];
+        put?: never;
+        /**
+         * Create Gate Category
+         * @description Add a category; duplicate name → 409 category_exists.
+         */
+        post: operations["create_gate_category_api_admin_gate_categories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/gate-categories/{category_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Gate Category
+         * @description Delete a category; ACTIVE gates still assigned → 409 category_in_use.
+         *
+         *     Retired gates don't block: they are reassigned to another category first
+         *     (rows kept, 2.1 design). When the catalog has no other category to take
+         *     them, the RESTRICT FK would fire — surfaced as the same 409.
+         */
+        delete: operations["delete_gate_category_api_admin_gate_categories__category_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Gate Category
+         * @description Rename a category (gates keep pointing at it — nothing else moves).
+         */
+        patch: operations["update_gate_category_api_admin_gate_categories__category_id__patch"];
         trace?: never;
     };
     "/api/gates": {
@@ -331,10 +383,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Or Append Batch
+         * @description Start a new batch, or APPEND to the tenant's live one (AC 3, 10).
+         *
+         *     Append semantics (recorded decision): the submitted ``gate_id`` is
+         *     validated for existence but its value IGNORED — new lines take the LIVE
+         *     batch's gate (one lote = one gate; the UI locks the selector during a
+         *     live lote). Dedup is against pending lines only: already-SENT texts may
+         *     be re-queued (legacy ``/api/enviar`` semantics).
+         */
+        post: operations["create_or_append_batch_api_batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BatchOut */
+        BatchOut: {
+            /** Id */
+            id: number;
+            /** Gate Name */
+            gate_name: string;
+            /** Gate Value */
+            gate_value: string;
+            /** State */
+            state: string;
+            /** Sent */
+            sent: number;
+            /** Queued */
+            queued: number;
+            /** Total */
+            total: number;
+            /** Appended */
+            appended: boolean;
+            /** Added */
+            added: number;
+        };
+        /** CategoryListResponse */
+        CategoryListResponse: {
+            /** Items */
+            items: components["schemas"]["CategoryOut"][];
+            /** Total */
+            total: number;
+        };
+        /** CategoryOut */
+        CategoryOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** ChangePasswordRequest */
         ChangePasswordRequest: {
             /** Current Password */
@@ -347,12 +465,26 @@ export interface components {
             /** Home Path */
             home_path: string;
         };
+        /** CreateBatchRequest */
+        CreateBatchRequest: {
+            /** Text */
+            text: string;
+            /** Gate Id */
+            gate_id: number;
+        };
+        /** CreateCategoryRequest */
+        CreateCategoryRequest: {
+            /** Name */
+            name: string;
+        };
         /** CreateGateRequest */
         CreateGateRequest: {
             /** Value */
             value: string;
             /** Name */
             name: string;
+            /** Category Id */
+            category_id: number;
         };
         /** CreateUserRequest */
         CreateUserRequest: {
@@ -383,6 +515,10 @@ export interface components {
             value: string;
             /** Name */
             name: string;
+            /** Category Id */
+            category_id: number;
+            /** Category Name */
+            category_name: string;
             /**
              * Created At
              * Format: date-time
@@ -437,12 +573,19 @@ export interface components {
             /** Temp Password */
             temp_password: string;
         };
+        /** UpdateCategoryRequest */
+        UpdateCategoryRequest: {
+            /** Name */
+            name: string;
+        };
         /** UpdateGateRequest */
         UpdateGateRequest: {
             /** Value */
             value: string;
             /** Name */
             name: string;
+            /** Category Id */
+            category_id: number;
         };
         /** UserListResponse */
         UserListResponse: {
@@ -939,6 +1082,123 @@ export interface operations {
             };
         };
     };
+    list_gate_categories_api_admin_gate_categories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryListResponse"];
+                };
+            };
+        };
+    };
+    create_gate_category_api_admin_gate_categories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_gate_category_api_admin_gate_categories__category_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_gate_category_api_admin_gate_categories__category_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_gates_api_gates_get: {
         parameters: {
             query?: never;
@@ -955,6 +1215,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GateListResponse"];
+                };
+            };
+        };
+    };
+    create_or_append_batch_api_batches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

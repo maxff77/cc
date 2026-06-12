@@ -163,3 +163,46 @@ def gate_not_found() -> AppError:
         code="gate_not_found",
         message="Ese gate no existe.",
     )
+
+
+# --- Codes this story (2.2) defines --------------------------------------
+
+
+def category_exists() -> AppError:
+    return AppError(
+        status_code=409,
+        code="category_exists",
+        message="Ya existe esa categoría.",
+    )
+
+
+def category_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="category_not_found",
+        message="Esa categoría no existe.",
+    )
+
+
+def category_in_use() -> AppError:
+    return AppError(
+        status_code=409,
+        code="category_in_use",
+        message="No puedes eliminar una categoría con gates. Reasigna sus gates primero.",
+    )
+
+
+def empty_batch() -> AppError:
+    return AppError(
+        status_code=400,
+        code="empty_batch",
+        message="No hay líneas para enviar.",
+    )
+
+
+def telegram_unauthorized() -> AppError:
+    return AppError(
+        status_code=503,
+        code="telegram_unauthorized",
+        message="Telegram no está autorizado todavía. Contacta al administrador.",
+    )

@@ -22,6 +22,35 @@ from httpx import ASGITransport, AsyncClient
 PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
 
 
+class FakeGateway:
+    """In-memory stand-in for ``app.core.telegram.gateway`` (Story 2.2).
+
+    The architecture's "fake Telegram client fixture" starts here — Stories
+    2.3/2.4/2.5 reuse it. Records sent texts, returns incrementing message
+    ids, and is programmable to raise: push exceptions onto ``errors`` and
+    each ``send`` pops+raises one before succeeding (e.g. a
+    ``FloodWaitError(request=None, capture=0)`` once, then success).
+    """
+
+    def __init__(self) -> None:
+        self.authorized = True
+        self.target_ok = True
+        self.sent: list[str] = []
+        self.errors: list[Exception] = []
+        self._next_id = 0
+
+    @property
+    def ready(self) -> bool:
+        return self.authorized and self.target_ok
+
+    async def send(self, text: str) -> int:
+        if self.errors:
+            raise self.errors.pop(0)
+        self.sent.append(text)
+        self._next_id += 1
+        return self._next_id
+
+
 def unique_email(role: str, *, prefix: str = "test") -> str:
     """Collision-free throwaway address, prefixed per test module."""
     return f"{prefix}-{role}-{uuid.uuid4().hex[:8]}@cc.test"

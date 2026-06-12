@@ -37,6 +37,8 @@
 generated: 2026-06-11
 last_updated: 2026-06-11
 project: cc
+# 2-2 → done 2026-06-11 (implementation complete: gate categories + category-filtered selector + batch creation/queuing + send worker + WS broadcaster + full tests)
+# 2-2 → ready-for-dev 2026-06-11 (story file created — full context: gate rename, scope fence vs 2.3/2.4/2.5/3.x, legacy port map; owner additions: gate_categories + cliente ve name/categoría/value + selector dos pasos)
 # 2-1 → review 2026-06-11 (gate catalog implemented: migration + CRUD API + /admin/gates page + 16 tests; all gates green)
 # 2-1 → ready-for-dev 2026-06-11 (story file created; epic-2 → in-progress)
 # 1-3 → review 2026-06-11
@@ -65,7 +67,7 @@ development_status:
   # Epic 2: Envío en lote controlado
   epic-2: in-progress
   2-1-catalogo-global-de-prefijos: done
-  2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: backlog
+  2-2-enviar-un-lote-un-cliente-con-progreso-en-vivo: done
   2-3-pausar-reanudar-y-detener-con-eta-honesto: backlog
   2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: backlog
   2-5-endurecimiento-del-pipeline-de-envio: backlog

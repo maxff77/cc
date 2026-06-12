@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from app.db.base import async_session_factory
-from app.db.models import Gate
+from app.db.models import Gate, GateCategory
 from app.main import app
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
@@ -26,6 +26,27 @@ from tests.conftest import cleanup_users, login, seed_user
 def unique_gate_value() -> str:
     """Collision-free gate value, verbatim-with-dot shape (≤20 chars)."""
     return f".t{uuid.uuid4().hex[:6]}"
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def category() -> AsyncIterator[dict[str, object]]:
+    """A category for gate creation (Story 2.2: ``category_id`` is required).
+
+    Seeded directly in the DB; teardown removes any gates still referencing
+    it (soft-deleted included) before the category itself (RESTRICT FK).
+    """
+    async with async_session_factory() as session:
+        row = GateCategory(name=f"Cat {uuid.uuid4().hex[:8]}")
+        session.add(row)
+        await session.commit()
+        cat = {"id": row.id, "name": row.name}
+    yield cat
+    async with async_session_factory() as session:
+        await session.execute(delete(Gate).where(Gate.category_id == cat["id"]))
+        await session.execute(
+            delete(GateCategory).where(GateCategory.id == cat["id"])
+        )
+        await session.commit()
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -63,11 +84,17 @@ async def _create_gate(
     value: str,
     created: set[str],
     name: str | None = None,
+    *,
+    category_id: object,
 ) -> dict[str, object]:
     created.add(value)
     res = await owner_client.post(
         "/api/admin/gates",
-        json={"value": value, "name": name if name is not None else f"Gate {value}"},
+        json={
+            "value": value,
+            "name": name if name is not None else f"Gate {value}",
+            "category_id": category_id,
+        },
     )
     assert res.status_code == 201, res.text
     return res.json()
@@ -75,15 +102,20 @@ async def _create_gate(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_owner_creates_gate_verbatim(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     value = unique_gate_value()
-    body = await _create_gate(owner_client, value, gates_created)
+    body = await _create_gate(
+        owner_client, value, gates_created, category_id=category["id"]
+    )
     assert body["value"] == value  # verbatim, dot included
     assert body["id"] > 0
     assert body["created_at"] is not None
+    # Story 2.2: gates carry their category in both list/detail shapes.
+    assert body["category_id"] == category["id"]
+    assert body["category_name"] == category["name"]
 
     listed = await owner_client.get("/api/admin/gates")
     assert listed.status_code == 200
@@ -94,14 +126,15 @@ async def test_owner_creates_gate_verbatim(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_duplicate_active_value_is_gate_exists(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     value = unique_gate_value()
-    await _create_gate(owner_client, value, gates_created)
+    await _create_gate(owner_client, value, gates_created, category_id=category["id"])
     dup = await owner_client.post(
-        "/api/admin/gates", json={"value": value, "name": "Otro"}
+        "/api/admin/gates",
+        json={"value": value, "name": "Otro", "category_id": category["id"]},
     )
     assert dup.status_code == 409
     assert dup.json()["code"] == "gate_exists"
@@ -109,16 +142,22 @@ async def test_duplicate_active_value_is_gate_exists(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_owner_edits_gate_value(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    body = await _create_gate(owner_client, unique_gate_value(), gates_created)
+    body = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
     new_value = unique_gate_value()
     gates_created.add(new_value)
     res = await owner_client.patch(
         f"/api/admin/gates/{body['id']}",
-        json={"value": new_value, "name": "Nombre nuevo"},
+        json={
+            "value": new_value,
+            "name": "Nombre nuevo",
+            "category_id": category["id"],
+        },
     )
     assert res.status_code == 200, res.text
     assert res.json()["value"] == new_value
@@ -130,15 +169,19 @@ async def test_owner_edits_gate_value(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_edit_to_duplicate_value_is_gate_exists(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    other = await _create_gate(owner_client, unique_gate_value(), gates_created)
-    target = await _create_gate(owner_client, unique_gate_value(), gates_created)
+    other = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
+    target = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
     res = await owner_client.patch(
         f"/api/admin/gates/{target['id']}",
-        json={"value": other["value"], "name": "X"},
+        json={"value": other["value"], "name": "X", "category_id": category["id"]},
     )
     assert res.status_code == 409
     assert res.json()["code"] == "gate_exists"
@@ -146,11 +189,13 @@ async def test_edit_to_duplicate_value_is_gate_exists(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_delete_is_soft_and_hides_from_both_lists(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    body = await _create_gate(owner_client, unique_gate_value(), gates_created)
+    body = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
     res = await owner_client.delete(f"/api/admin/gates/{body['id']}")
     assert res.status_code == 204
 
@@ -174,15 +219,22 @@ async def test_delete_is_soft_and_hides_from_both_lists(
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_retired_value_can_be_recreated(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    body = await _create_gate(owner_client, unique_gate_value(), gates_created)
+    body = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
     res = await owner_client.delete(f"/api/admin/gates/{body['id']}")
     assert res.status_code == 204
     # Partial unique index only covers active rows → re-create succeeds.
-    recreated = await _create_gate(owner_client, body["value"], gates_created)  # type: ignore[arg-type]
+    recreated = await _create_gate(
+        owner_client,
+        body["value"],  # type: ignore[arg-type]
+        gates_created,
+        category_id=category["id"],
+    )
     assert recreated["id"] != body["id"]
 
 
@@ -193,7 +245,8 @@ async def test_edit_or_delete_unknown_gate_is_gate_not_found(
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     res = await owner_client.patch(
-        "/api/admin/gates/999999", json={"value": ".x", "name": "X"}
+        "/api/admin/gates/999999",
+        json={"value": ".x", "name": "X", "category_id": 1},
     )
     assert res.status_code == 404
     assert res.json()["code"] == "gate_not_found"
@@ -210,7 +263,8 @@ async def test_out_of_range_gate_id_is_gate_not_found(
 
     huge = "99999999999999999999"
     res = await owner_client.patch(
-        f"/api/admin/gates/{huge}", json={"value": ".x", "name": "X"}
+        f"/api/admin/gates/{huge}",
+        json={"value": ".x", "name": "X", "category_id": 1},
     )
     assert res.status_code == 404
     assert res.json()["code"] == "gate_not_found"
@@ -230,12 +284,14 @@ async def test_admin_and_client_are_forbidden_on_admin_gates(
         assert (await http_client.get("/api/admin/gates")).status_code == 403
         assert (
             await http_client.post(
-                "/api/admin/gates", json={"value": ".nope", "name": "X"}
+                "/api/admin/gates",
+                json={"value": ".nope", "name": "X", "category_id": 1},
             )
         ).status_code == 403
         assert (
             await http_client.patch(
-                "/api/admin/gates/1", json={"value": ".nope", "name": "X"}
+                "/api/admin/gates/1",
+                json={"value": ".nope", "name": "X", "category_id": 1},
             )
         ).status_code == 403
         assert (await http_client.delete("/api/admin/gates/1")).status_code == 403
@@ -246,11 +302,16 @@ async def test_client_reads_catalog_active_only(
     ctx: dict[str, object],
     client_client: AsyncClient,
     gates_created: set[str],
+    category: dict[str, object],
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
-    active = await _create_gate(owner_client, unique_gate_value(), gates_created)
-    retired = await _create_gate(owner_client, unique_gate_value(), gates_created)
+    active = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
+    retired = await _create_gate(
+        owner_client, unique_gate_value(), gates_created, category_id=category["id"]
+    )
     assert (
         await owner_client.delete(f"/api/admin/gates/{retired['id']}")
     ).status_code == 204
@@ -286,12 +347,13 @@ async def test_unauthenticated_gates_read_is_401(ctx: dict[str, object]) -> None
     ],
 )
 async def test_validation_rejects_bad_values(
-    ctx: dict[str, object], bad_value: str
+    ctx: dict[str, object], bad_value: str, category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     res = await owner_client.post(
-        "/api/admin/gates", json={"value": bad_value, "name": "Válido"}
+        "/api/admin/gates",
+        json={"value": bad_value, "name": "Válido", "category_id": category["id"]},
     )
     assert res.status_code == 422
 
@@ -303,42 +365,54 @@ async def test_validation_rejects_bad_values(
     ids=["empty", "whitespace-only", "too-long", "nul-byte", "zero-width-space"],
 )
 async def test_validation_rejects_bad_names(
-    ctx: dict[str, object], bad_name: str
+    ctx: dict[str, object], bad_name: str, category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     res = await owner_client.post(
-        "/api/admin/gates", json={"value": unique_gate_value(), "name": bad_name}
+        "/api/admin/gates",
+        json={
+            "value": unique_gate_value(),
+            "name": bad_name,
+            "category_id": category["id"],
+        },
     )
     assert res.status_code == 422
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_name_allows_spaces_and_is_required(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     # Friendly name keeps inner spaces (unlike value); returned verbatim trimmed.
     body = await _create_gate(
-        owner_client, unique_gate_value(), gates_created, name="  Visa Oro  "
+        owner_client,
+        unique_gate_value(),
+        gates_created,
+        name="  Visa Oro  ",
+        category_id=category["id"],
     )
     assert body["name"] == "Visa Oro"
 
     # Missing name entirely → 422 (required).
     res = await owner_client.post(
-        "/api/admin/gates", json={"value": unique_gate_value()}
+        "/api/admin/gates",
+        json={"value": unique_gate_value(), "category_id": category["id"]},
     )
     assert res.status_code == 422
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_value_is_trimmed_but_otherwise_verbatim(
-    ctx: dict[str, object], gates_created: set[str]
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
 ) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
 
     raw = unique_gate_value()
-    body = await _create_gate(owner_client, f"  {raw}  ", gates_created)
+    body = await _create_gate(
+        owner_client, f"  {raw}  ", gates_created, category_id=category["id"]
+    )
     gates_created.add(raw)
     assert body["value"] == raw  # trimmed; dot and case untouched

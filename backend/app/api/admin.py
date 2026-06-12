@@ -19,10 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.db.base import get_session
-from app.db.models import Gate, User
+from app.db.models import Gate, GateCategory, User
+from app.db.repos import gate_categories as gate_categories_repo
 from app.db.repos import gates as gates_repo
 from app.db.repos import users as users_repo
 from app.errors import (
+    category_exists,
+    category_in_use,
+    category_not_found,
     forbidden,
     gate_exists,
     gate_not_found,
@@ -365,6 +369,7 @@ def _validate_gate_name(name: str) -> str:
 class CreateGateRequest(BaseModel):
     value: str
     name: str
+    category_id: int
 
     @field_validator("value")
     @classmethod
@@ -380,6 +385,7 @@ class CreateGateRequest(BaseModel):
 class UpdateGateRequest(BaseModel):
     value: str
     name: str
+    category_id: int
 
     @field_validator("value")
     @classmethod
@@ -396,6 +402,8 @@ class GateOut(BaseModel):
     id: int
     value: str
     name: str
+    category_id: int
+    category_name: str
     created_at: datetime
 
 
@@ -405,10 +413,29 @@ class GateListResponse(BaseModel):
 
 
 def gate_to_out(gate: Gate) -> GateOut:
-    """Shared Gate → GateOut mapper (also used by the public gates router)."""
+    """Shared Gate → GateOut mapper (also used by the public gates router).
+
+    Requires ``gate.category`` to be eagerly loaded (``selectinload`` /
+    ``refresh``) — an async lazy-load here would raise.
+    """
     return GateOut(
-        id=gate.id, value=gate.value, name=gate.name, created_at=gate.created_at
+        id=gate.id,
+        value=gate.value,
+        name=gate.name,
+        category_id=gate.category_id,
+        category_name=gate.category.name,
+        created_at=gate.created_at,
     )
+
+
+async def _require_category(session: AsyncSession, category_id: int) -> GateCategory:
+    """Resolve a category or raise 404 (out-of-int4 ids can't exist)."""
+    if not 0 < category_id <= _PG_INT_MAX:
+        raise category_not_found()
+    category = await gate_categories_repo.get_by_id(session, category_id)
+    if category is None:
+        raise category_not_found()
+    return category
 
 
 @router.get("/gates", response_model=GateListResponse)
@@ -428,16 +455,20 @@ async def create_gate(
     session: AsyncSession = Depends(get_session),
 ) -> GateOut:
     """Add a gate to the catalog; duplicate ACTIVE value → 409 gate_exists."""
+    category = await _require_category(session, body.category_id)
     if await gates_repo.get_active_by_value(session, body.value) is not None:
         raise gate_exists()
     try:
-        gate = await gates_repo.create(session, value=body.value, name=body.name)
+        gate = await gates_repo.create(
+            session, value=body.value, name=body.name, category_id=category.id
+        )
         await session.commit()
     except IntegrityError as exc:
         # The pre-check above is racy: a concurrent insert of the same value
         # only trips uq_gates_value_active at flush/commit. Map to the same
         # gate_exists contract instead of a 500.
         raise gate_exists() from exc
+    await session.refresh(gate, ["category"])
     return gate_to_out(gate)
 
 
@@ -464,19 +495,22 @@ async def update_gate(
     actor: User = Depends(require_owner),
     session: AsyncSession = Depends(get_session),
 ) -> GateOut:
-    """Edit a gate's value/name. History is untouched — batches snapshot the string."""
+    """Edit a gate's value/name/category. History is untouched — batches snapshot the string."""
     gate = await _require_active_gate(session, gate_id)
+    category = await _require_category(session, body.category_id)
     duplicate = await gates_repo.get_active_by_value(session, body.value)
     if duplicate is not None and duplicate.id != gate.id:
         raise gate_exists()
     gate.value = body.value
     gate.name = body.name
+    gate.category_id = category.id
     try:
         await session.commit()
     except IntegrityError as exc:
         # Duplicate check is racy (the duplicate row isn't locked); a
         # concurrent create/edit of the same value trips the index at commit.
         raise gate_exists() from exc
+    await session.refresh(gate, ["category"])
     return gate_to_out(gate)
 
 
@@ -490,3 +524,140 @@ async def delete_gate(
     gate = await _require_active_gate(session, gate_id)
     await gates_repo.soft_delete(session, gate)
     await session.commit()
+
+
+# --- Gate category CRUD (Story 2.2, owner addition) --------------------------
+#
+# Owner-only curation of the GLOBAL category list (no tenant scoping — see the
+# ``db.repos.gate_categories`` module note). No soft-delete: deleting a
+# category that still has ACTIVE gates → 409 category_in_use; retired gates
+# never block (they are reassigned away first — see the repo).
+
+CATEGORY_NAME_MAX = 80
+
+
+def _validate_category_name(name: str) -> str:
+    """Category name policy (same shape as ``_validate_gate_name``): trimmed,
+    non-empty, ≤80 chars, no control/invisible chars; spaces allowed."""
+    name = name.strip()
+    if not name:
+        raise ValueError("nombre vacío")
+    if any(not ch.isprintable() for ch in name):
+        raise ValueError("el nombre no puede contener caracteres invisibles")
+    if len(name) > CATEGORY_NAME_MAX:
+        raise ValueError("nombre demasiado largo")
+    return name
+
+
+class CreateCategoryRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        return _validate_category_name(v)
+
+
+class UpdateCategoryRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        return _validate_category_name(v)
+
+
+class CategoryOut(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
+
+
+class CategoryListResponse(BaseModel):
+    items: list[CategoryOut]
+    total: int
+
+
+def _category_to_out(category: GateCategory) -> CategoryOut:
+    return CategoryOut(
+        id=category.id, name=category.name, created_at=category.created_at
+    )
+
+
+@router.get("/gate-categories", response_model=CategoryListResponse)
+async def list_gate_categories(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> CategoryListResponse:
+    """List every category, ordered by name."""
+    categories = await gate_categories_repo.list_all(session)
+    return CategoryListResponse(
+        items=[_category_to_out(c) for c in categories], total=len(categories)
+    )
+
+
+@router.post("/gate-categories", response_model=CategoryOut, status_code=201)
+async def create_gate_category(
+    body: CreateCategoryRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> CategoryOut:
+    """Add a category; duplicate name → 409 category_exists."""
+    if await gate_categories_repo.get_by_name(session, body.name) is not None:
+        raise category_exists()
+    try:
+        category = await gate_categories_repo.create(session, name=body.name)
+        await session.commit()
+    except IntegrityError as exc:
+        # TOCTOU (2.1 review lesson): a concurrent insert of the same name
+        # only trips uq_gate_categories_name at commit — same contract.
+        raise category_exists() from exc
+    return _category_to_out(category)
+
+
+@router.patch("/gate-categories/{category_id}", response_model=CategoryOut)
+async def update_gate_category(
+    category_id: int,
+    body: UpdateCategoryRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> CategoryOut:
+    """Rename a category (gates keep pointing at it — nothing else moves)."""
+    category = await _require_category(session, category_id)
+    duplicate = await gate_categories_repo.get_by_name(session, body.name)
+    if duplicate is not None and duplicate.id != category.id:
+        raise category_exists()
+    category.name = body.name
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        raise category_exists() from exc
+    return _category_to_out(category)
+
+
+@router.delete("/gate-categories/{category_id}", status_code=204)
+async def delete_gate_category(
+    category_id: int,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a category; ACTIVE gates still assigned → 409 category_in_use.
+
+    Retired gates don't block: they are reassigned to another category first
+    (rows kept, 2.1 design). When the catalog has no other category to take
+    them, the RESTRICT FK would fire — surfaced as the same 409.
+    """
+    category = await _require_category(session, category_id)
+    if await gate_categories_repo.has_gates(session, category.id):
+        raise category_in_use()
+    detached = await gate_categories_repo.reassign_retired_gates(
+        session, category.id
+    )
+    if not detached:  # retired gates exist and no other category can take them
+        raise category_in_use()
+    try:
+        await gate_categories_repo.delete(session, category)
+        await session.commit()
+    except IntegrityError as exc:
+        # Race: a gate was (re)assigned to this category after the check.
+        raise category_in_use() from exc
