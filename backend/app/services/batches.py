@@ -126,6 +126,13 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
     if active is None:
         return {
             "session_id": None,
+            # Session identity for the cockpit's "active session" strip — null
+            # when no session is active (the strip stays hidden). DISTINCT keys
+            # (``session_gate_*``) so this spread into ``snapshot`` never
+            # collides with the live batch's top-level ``gate_name``/value.
+            "session_name": None,
+            "session_gate_name": None,
+            "session_gate_value": None,
             "cc_new": 0,
             "responses_total": 0,
             "responses_ok_total": 0,
@@ -134,6 +141,11 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         }
     return {
         "session_id": active.id,
+        # Identity shown by the cockpit strip (name falls back to created_at
+        # client-side, mirroring Historial's `fallbackName`).
+        "session_name": active.name,
+        "session_gate_name": active.gate_name,
+        "session_gate_value": active.gate_value,
         "cc_new": await responses_repo.cc_count(session, active.id),
         "responses_total": await responses_repo.full_count(session, active.id),
         # "Filtrada con response" badge: only the ✅ revisions (full text).

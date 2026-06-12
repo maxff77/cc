@@ -389,6 +389,11 @@ async def test_continue_reactivates_by_replacement_and_emits_session_active(
         "session.active",
         {
             "session_id": session_a,
+            # Identity for the cockpit strip (unnamed session ⇒ name None; the
+            # gate snapshot is gate A's, restored by the continue).
+            "session_name": None,
+            "session_gate_name": gate["name"],
+            "session_gate_value": gate["value"],
             "cc_new": 1,
             "responses_total": 1,
             "responses_ok_total": 1,
@@ -541,6 +546,141 @@ async def test_continue_already_active_session_is_idempotent(
     tenant_id, event, data = events[-1]
     assert (tenant_id, event) == (user.tenant_id, "session.active")
     assert data["session_id"] == session_a
+
+
+# --- Nueva sesión (cockpit session controls) ----------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_new_session_forks_active_gate_and_emits_empty_active(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """``POST /api/sessions/new`` closes the active session and opens a fresh
+    one on the SAME gate (clean dedup). The old data stays in the old session;
+    the emitted ``session.active`` carries the NEW (empty) slice."""
+    http, user = client_user
+    batch_id = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1 — batch completes, session stays active
+    session_old = await _bound_session_id(batch_id)
+    await _capture_ok(7001, 1, "✅ Aprobada CC: 4111 Status a")  # old has data
+
+    res = await http.post("/api/sessions/new")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    session_new = body["id"]
+    assert session_new != session_old
+    assert body["is_active"] is True
+    # Forks the active session's gate (no gate picker).
+    assert (body["gate_value"], body["gate_name"]) == (gate["value"], gate["name"])
+    assert body["name"] is None
+
+    # Activation by replacement — exactly ONE active, the old one is Cerrada
+    # (so Historial now offers it a "Continuar").
+    listed = await http.get("/api/sessions")
+    flags = {s["id"]: s["is_active"] for s in listed.json()["items"]}
+    assert flags == {session_new: True, session_old: False}
+
+    # The emit is the snapshot's session slice VERBATIM — the NEW empty one.
+    assert events[-1] == (
+        user.tenant_id,
+        "session.active",
+        {
+            "session_id": session_new,
+            "session_name": None,
+            "session_gate_name": gate["name"],
+            "session_gate_value": gate["value"],
+            "cc_new": 0,
+            "responses_total": 0,
+            "responses_ok_total": 0,
+            "responses": [],
+            "cc": [],
+        },
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_new_session_has_an_independent_dedup_set(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """THE point of Nueva sesión: the fresh session's CC dedup is its own — a
+    value already captured in the OLD session lands again in the new one (the
+    dedup is per ``capture_session_id``)."""
+    http, _ = client_user
+    first_batch = await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    session_old = await _bound_session_id(first_batch)
+    await _capture_ok(7101, 1, "✅ Aprobada CC: 4111 Status a")
+
+    res = await http.post("/api/sessions/new")
+    assert res.status_code == 200, res.text
+    session_new = res.json()["id"]
+
+    # A new batch of the SAME gate binds the fresh session (resolve_for_batch
+    # reuses the now-active one) …
+    second_batch = await _post_batch(http, "dos", gate["id"])
+    assert await _bound_session_id(second_batch) == session_new
+    await _drain()  # message_id 2
+
+    # … and the SAME "4111" value is captured again — NOT deduped away.
+    await _capture_ok(7102, 2, "✅ Aprobada CC: 4111 Status b")
+    new_body = (await http.get(f"/api/sessions/{session_new}")).json()
+    assert [row["text"] for row in new_body["cc"]] == ["4111"]
+    assert new_body["responses_total"] == 1
+
+    # The old session is untouched: still its own single 4111.
+    old_body = (await http.get(f"/api/sessions/{session_old}")).json()
+    assert [row["text"] for row in old_body["cc"]] == ["4111"]
+    assert old_body["responses_total"] == 1
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_new_session_404_when_no_active_session(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """No active session ⇒ nothing to fork ⇒ 404 (same body as every other
+    missing-session 404; the cockpit hides the button anyway)."""
+    http, _ = client_user  # fresh tenant — never sent a batch
+    res = await http.post("/api/sessions/new")
+    assert (res.status_code, res.json()) == (404, NOT_FOUND_BODY)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_new_session_rejected_while_a_batch_is_live(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """A live (or paused) batch ⇒ 409 ``batch_live`` (same guard as Continuar:
+    reshuffling the active session mid-batch would split capture). Nothing
+    changes and NO ``session.active`` goes out."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno\ndos\ntres", gate["id"])  # stays live
+    session_id = await _bound_session_id(batch_id)
+
+    res = await http.post("/api/sessions/new")
+    assert (res.status_code, res.json()) == (409, LIVE_BODY)
+
+    # Still exactly the one original active session, and no emit.
+    listed = await http.get("/api/sessions")
+    assert {s["id"]: s["is_active"] for s in listed.json()["items"]} == {
+        session_id: True
+    }
+    assert not any(event == "session.active" for _, event, _ in events)
+
+    # Stop the lote ⇒ the SAME call now succeeds (forks the same gate).
+    stop = await http.post(f"/api/batches/{batch_id}/stop")
+    assert stop.status_code == 204, stop.text
+    res = await http.post("/api/sessions/new")
+    assert res.status_code == 200, res.text
+    assert res.json()["gate_value"] == gate["value"]
 
 
 # --- Export (Story 3.5) ---------------------------------------------------------

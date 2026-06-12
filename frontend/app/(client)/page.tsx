@@ -17,6 +17,7 @@ import { IdleRing, ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
 import { WaitingNotice } from "@/components/batch/waiting-notice";
 import { WatchdogNotice } from "@/components/batch/watchdog-notice";
+import { ActiveSessionCard } from "@/components/sessions/active-session-card";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import {
@@ -68,6 +69,11 @@ export default function EnvioPage() {
         ) : (
           <IdleRing />
         )}
+
+        {/* Active capture session (show / rename / nueva) — sits under the
+            ring so the user always knows which session he's filling. Renders
+            nothing when no session is active. */}
+        <ActiveSessionCard />
 
         {/* Mobile order per DESIGN.md: ring → controls → data panels → form. */}
         <BatchControls live={live} />

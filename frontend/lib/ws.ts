@@ -78,6 +78,13 @@ export interface LiveBatchState {
   // batch: they survive the idle reset and seedFromBatch — only a
   // snapshot/batch.state carrying ANOTHER session_id clears them.
   sessionId: number | null;
+  // Active-session identity for the cockpit strip (Nueva/Renombrar/Mostrar).
+  // `sessionName` is null for an unnamed session — the strip shows a generic
+  // label + the gate (the cockpit doesn't carry created_at). Like `sessionId`
+  // these survive the idle reset: capture stays armed between batches.
+  sessionName: string | null;
+  sessionGateName: string | null;
+  sessionGateValue: string | null;
   responses: ResponseRow[];
   cc: CcRow[];
   // Real total of 'full' revisions — honest even when the snapshot list is
@@ -129,6 +136,11 @@ interface SnapshotData {
   // Story 3.2: the active capture session's slice — rows capped server-side,
   // totals real.
   session_id: number | null;
+  // Active-session identity (cockpit strip) — distinct from the live batch's
+  // top-level gate_name/value so the spread never collides server-side.
+  session_name: string | null;
+  session_gate_name: string | null;
+  session_gate_value: string | null;
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
   responses_total: number;
@@ -210,6 +222,9 @@ interface SessionActiveData {
   // null when the just-activated session was deleted before the post-commit
   // payload build (active_session_data's "no active session" shape).
   session_id: number | null;
+  session_name: string | null;
+  session_gate_name: string | null;
+  session_gate_value: string | null;
   cc_new: number;
   responses_total: number;
   responses_ok_total: number;
@@ -230,6 +245,9 @@ const IDLE: LiveBatchState = {
   etaSeconds: 0,
   ccNew: 0,
   sessionId: null,
+  sessionName: null,
+  sessionGateName: null,
+  sessionGateValue: null,
   responses: [],
   cc: [],
   responsesTotal: 0,
@@ -287,6 +305,9 @@ function reduce(event: string, data: unknown) {
         // Rows arrive with `nueva: false` — the highlight marks only what
         // lands live; a snapshot is reconciliation, not novelty.
         sessionId: d.session_id,
+        sessionName: d.session_name,
+        sessionGateName: d.session_gate_name,
+        sessionGateValue: d.session_gate_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
           messageId: row.message_id,
@@ -374,6 +395,9 @@ function reduce(event: string, data: unknown) {
           failed: store.failed,
           failedLines: store.failedLines,
           sessionId: store.sessionId,
+          sessionName: store.sessionName,
+          sessionGateName: store.sessionGateName,
+          sessionGateValue: store.sessionGateValue,
           responses: store.responses,
           cc: store.cc,
           ccNew: store.ccNew,
@@ -386,10 +410,17 @@ function reduce(event: string, data: unknown) {
       } else {
         // A live batch bound to ANOTHER session ⇒ gate change replaced the
         // session — the panels belong to the old one: start clean (3.2).
-        const sessionChanged =
-          d.session_id !== null &&
-          store.sessionId !== null &&
-          d.session_id !== store.sessionId;
+        // `adopting` = this batch binds a session DIFFERENT from the store's
+        // (incl. the null→id case: fresh load or after clearSession). Its gate
+        // IS this batch's gate (the batch is bound to it); its name is unknown
+        // here (batch.state carries no session_name) and a freshly-forked
+        // session is unnamed anyway — null until the next snapshot/
+        // session.active fills it. `sessionChanged` (the STRICTER swap: a known
+        // session replaced by another) still gates the rows/counters reset, so
+        // adopting from null never wipes data that wasn't there.
+        const adopting =
+          d.session_id !== null && d.session_id !== store.sessionId;
+        const sessionChanged = adopting && store.sessionId !== null;
 
         setStore({
           ...store,
@@ -398,6 +429,9 @@ function reduce(event: string, data: unknown) {
           gateName: d.gate_name,
           gateValue: d.gate_value,
           sessionId: d.session_id ?? store.sessionId,
+          sessionName: adopting ? null : store.sessionName,
+          sessionGateName: adopting ? d.gate_name : store.sessionGateName,
+          sessionGateValue: adopting ? d.gate_value : store.sessionGateValue,
           responses: sessionChanged ? [] : store.responses,
           cc: sessionChanged ? [] : store.cc,
           ccNew: sessionChanged ? 0 : store.ccNew,
@@ -504,6 +538,9 @@ function reduce(event: string, data: unknown) {
       setStore({
         ...store,
         sessionId: d.session_id,
+        sessionName: d.session_name,
+        sessionGateName: d.session_gate_name,
+        sessionGateValue: d.session_gate_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
           messageId: row.message_id,
@@ -641,12 +678,26 @@ export function clearSession(sessionId: number) {
   setStore({
     ...store,
     sessionId: null,
+    sessionName: null,
+    sessionGateName: null,
+    sessionGateValue: null,
     responses: [],
     cc: [],
     ccNew: 0,
     responsesTotal: 0,
     responsesOkTotal: 0,
   });
+}
+
+// Local seed confirmed by REST after PATCH /api/sessions/{id} renames the
+// ACTIVE session from the cockpit. `rename_session` emits NO WS event (it
+// serves ANY session in Historial, not just the active one — a session.active
+// emit there would be wrong), so the renaming tab updates its own strip
+// immediately; other tabs reconcile on their next snapshot (same stale-visual
+// tradeoff as `clearSession`). No-op if the renamed session isn't the active.
+export function renameActiveSession(sessionId: number, name: string) {
+  if (store.sessionId !== sessionId) return;
+  setStore({ ...store, sessionName: name });
 }
 
 // Seed the store from a successful POST /api/batches response so the ring
@@ -692,6 +743,9 @@ export function seedFromBatch(batch: {
     // clears — the server decides, the seed never guesses.
     ccNew: store.ccNew,
     sessionId: store.sessionId,
+    sessionName: store.sessionName,
+    sessionGateName: store.sessionGateName,
+    sessionGateValue: store.sessionGateValue,
     responses: store.responses,
     cc: store.cc,
     responsesTotal: store.responsesTotal,

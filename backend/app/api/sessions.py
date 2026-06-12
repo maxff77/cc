@@ -321,6 +321,56 @@ async def continue_session(
     return session_to_out(target)
 
 
+@router.post("/new", response_model=SessionOut)
+async def new_session(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SessionOut:
+    """Nueva sesión: explicitly start a FRESH active capture session on the
+    same gate as the current active one (a clean per-session dedup set).
+
+    The implicit lifecycle (``resolve_for_batch``) only ever *reuses* the
+    active same-gate session, so a client working one gate can never reset
+    dedup or produce a closed (``is_active=False``) row that Historial would
+    offer to "Continuar". This is the explicit opt-out: it forks the active
+    session's gate via ``create_active`` (which deactivates the prior one
+    UPDATE-first, so the partial unique index never trips on the honest path),
+    making the old session closed-and-retomable.
+
+    Gate source: the CURRENTLY active session — there is no gate picker in the
+    cockpit (to start on a new gate, send a batch on it). No active session ⇒
+    404 ``session_not_found`` (nothing to fork; the cockpit hides the button
+    when no session is active anyway).
+
+    Guards mirror ``continue_session`` exactly: ANY live batch
+    (sending|paused|stopping) ⇒ 409 ``batch_live`` (reshuffling the active
+    session mid-batch would split capture); a concurrent new/continue/batch
+    racing into ``uq_capture_sessions_one_active_per_tenant`` ⇒ 409
+    ``session_conflict``, never a raw 500. The post-commit ``session.active``
+    emit (verbatim ``active_session_data``) rebinds every tab — the new
+    session's slice is empty, so the cockpit panels clear.
+    """
+    active = await capture_sessions_repo.get_active(
+        session, user.tenant_id, for_update=True
+    )
+    if active is None:
+        raise session_not_found()
+    live = await batches_repo.get_live_batch(session, user.tenant_id)
+    if live is not None:
+        raise batch_live()
+    try:
+        fresh = await capture_sessions_repo.create_active(
+            session, user.tenant_id, active.gate_value, active.gate_name
+        )
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise session_conflict() from None
+    payload = await batches_service.active_session_data(session, user.tenant_id)
+    await broadcaster.emit(user.tenant_id, "session.active", payload)
+    return session_to_out(fresh)
+
+
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: int,

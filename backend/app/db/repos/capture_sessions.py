@@ -17,17 +17,25 @@ from app.db.models import CaptureSession
 
 
 async def get_active(
-    session: AsyncSession, tenant_id: int
+    session: AsyncSession, tenant_id: int, *, for_update: bool = False
 ) -> CaptureSession | None:
     """The tenant's single ACTIVE capture session, or ``None``.
 
     At most one exists — DB-enforced by the partial unique index
     ``uq_capture_sessions_one_active_per_tenant``.
+
+    ``for_update=True`` locks the active row until commit (same knob as
+    ``get_for_tenant``). ``new_session`` passes it so it serializes against a
+    concurrent Nueva-sesión / Continuar / batch-start the way
+    ``continue_session`` locks its target — instead of leaning only on the
+    partial unique index tripping at commit.
     """
     stmt = select(CaptureSession).where(
         CaptureSession.tenant_id == tenant_id,
         CaptureSession.is_active,
     )
+    if for_update:
+        stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalars().first()
 
 

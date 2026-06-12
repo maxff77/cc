@@ -414,6 +414,10 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         },
         # Story 3.2: session slice — no active session, empty panels.
         "session_id": None,
+        # Cockpit active-session identity — null with no active session.
+        "session_name": None,
+        "session_gate_name": None,
+        "session_gate_value": None,
         "responses_total": 0,
         # "Filtrada con response": total of ✅ revisions.
         "responses_ok_total": 0,
