@@ -93,24 +93,33 @@ sudo -u cc npm ci && sudo -u cc npm run build
 
 ## 9. Caddy
 
-First check nothing else holds the public ports:
+First check what holds the public ports:
 
 ```bash
 ss -tlnp | grep -E ':80|:443'
 ```
 
-If **nginx** is already listening there, skip Caddy and replicate the routes
-in `deploy/Caddyfile` as nginx `location` blocks + certbot. Otherwise:
+**Caddy is ALREADY running on this VPS** (verified 2026-06-11: port 80
+answers `Server: Caddy`, serving other lohari sites). Do **NOT** reinstall
+or overwrite `/etc/caddy/Caddyfile` — APPEND the cc site block to the
+existing config:
 
 ```bash
-sudo apt install caddy
 sudo systemctl edit caddy        # add:  [Service]
                                  #       Environment=CC_DOMAIN=cc.lohari.com.mx
-sudo cp /srv/cc/deploy/Caddyfile /etc/caddy/Caddyfile
+cat /srv/cc/deploy/Caddyfile | sudo tee -a /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Caddy obtains the Let's Encrypt certificate automatically.
+(Alternative to the env var: replace `{$CC_DOMAIN}` with
+`cc.lohari.com.mx` directly in `/etc/caddy/Caddyfile` — that file is
+server-local, not committed.)
+
+Caddy obtains the Let's Encrypt certificate for the new site on reload.
+
+If instead **nginx** held the ports, replicate the routes in
+`deploy/Caddyfile` as nginx `location` blocks + certbot.
 
 ## 10. systemd services
 
