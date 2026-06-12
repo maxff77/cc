@@ -37,7 +37,11 @@ npm install           # first time (Node 22+)
 npm run dev           # dev; next.config.mjs proxies /api and /ws → 127.0.0.1:8000
 npm run build && npm run start   # production build
 
-# --- Deploy (on the VPS, as root) ---
+# --- Deploy ---
+# AUTOMATIC: pushing to main triggers GitHub Actions (.github/workflows/deploy.yml),
+# which SSHes to the VPS, runs deploy/deploy.sh and smoke-tests /api/health.
+git push origin main
+# Manual fallback (on the VPS, as root):
 sudo bash /srv/cc/deploy/deploy.sh   # git pull → pip → alembic → npm build → restart cc-core/cc-web
 ```
 
@@ -77,7 +81,7 @@ Dark-themed, Spanish copy. `middleware.ts` gates by auth/role at the edge (no co
 
 ### Deploy & ops
 
-Single VPS **37.27.12.92**, public domain **cc.lohari.com.mx**. Three systemd units: **`cc-core`** (uvicorn backend :8000), **`cc-web`** (Next.js :3100 — 3000 is taken by another site), **`cc-backup`** (daily `pg_dump` timer). **Caddy v2** reverse-proxies `/api` + `/ws` → :8000 and everything else → :3100, auto-HTTPS via Let's Encrypt; installed as an *imported* `/etc/caddy/cc.caddy` (never overwrite the shared main Caddyfile). **PostgreSQL runs in Docker** (`lohari-postgres`); the backend connects **directly to the container IP** (not pgbouncer — transaction-pool mode breaks asyncpg prepared statements; the IP is unstable across Docker recreates). `deploy/deploy.sh` is the idempotent re-deploy (pull → pip → alembic → npm build → restart); runbooks in `docs/runbooks/`.
+Single VPS **37.27.12.92**, public domain **cc.lohari.com.mx**. Three systemd units: **`cc-core`** (uvicorn backend :8000), **`cc-web`** (Next.js :3100 — 3000 is taken by another site), **`cc-backup`** (daily `pg_dump` timer). **Caddy v2** reverse-proxies `/api` + `/ws` → :8000 and everything else → :3100, auto-HTTPS via Let's Encrypt; installed as an *imported* `/etc/caddy/cc.caddy` (never overwrite the shared main Caddyfile). **PostgreSQL runs in Docker** (`lohari-postgres`); the backend connects **directly to the container IP** (not pgbouncer — transaction-pool mode breaks asyncpg prepared statements; the IP is unstable across Docker recreates). **Deploys are automatic: every push to `main` triggers GitHub Actions (`.github/workflows/deploy.yml`), which SSHes into the VPS, runs the idempotent `deploy/deploy.sh` (pull → pip → alembic → npm build → restart cc-core/cc-web) and smoke-tests `https://cc.lohari.com.mx/api/health`** (concurrency group `deploy-production`, never cancel-in-progress; `workflow_dispatch` allows a manual trigger; secrets `VPS_HOST`/`VPS_SSH_USER`/`VPS_SSH_KEY`). So pushing to `main` *is* deploying — `deploy/deploy.sh` can still be run by hand on the VPS as root as a fallback. Runbooks in `docs/runbooks/`.
 
 ## Critical invariants (do not break)
 
