@@ -890,5 +890,8 @@ async def get_tenant_session_detail(
         ],
         cc=[SessionCcRow(id=row.id, text=row.text) for row in cc],
         responses_total=len(responses),
+        responses_ok_total=await responses_repo.full_count(
+            session, target_session.id, status=responses_repo.STATUS_OK
+        ),
         cc_total=len(cc),
     )

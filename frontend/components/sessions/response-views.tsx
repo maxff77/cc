@@ -23,6 +23,7 @@ import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
 
 // Empty states — copy VERBATIM (EXPERIENCE.md): no fake rows, badges at 0.
 const EMPTY_COMPLETA = "Aún no hay respuestas.";
+const EMPTY_FILTRADA_CON = "Aún no hay respuestas con ✅.";
 const EMPTY_FILTRADA = "Aún no hay datos CC: capturados.";
 
 // A pane counts as "at the bottom" within this many px — generous enough to
@@ -261,6 +262,39 @@ export function CompletaPanel({
   );
 }
 
+// "Filtrada con response" (full text of only the ✅ revisions). SAME row
+// shape as Completa — full text + the ✅ glyph — just the status-filtered
+// subset. Props-driven like its siblings: callers pass the full `responses`
+// list and the authoritative ok total; the panel filters to status === "ok".
+export function FiltradaConResponsePanel({
+  responses,
+  total,
+  header = true,
+  exportPath,
+  listClassName,
+  className,
+}: {
+  responses: ResponseRow[];
+  total: number;
+  header?: boolean;
+  exportPath?: string;
+  listClassName?: string;
+  className?: string;
+}) {
+  return (
+    <ResponsePanel
+      className={className}
+      count={total}
+      countTone="success"
+      emptyText={EMPTY_FILTRADA_CON}
+      exportPath={exportPath}
+      header={header ? "FILTRADA CON RESPONSE" : undefined}
+      listClassName={listClassName}
+      rows={completaRows(responses.filter((row) => row.status === "ok"))}
+    />
+  );
+}
+
 export function FiltradaPanel({
   cc,
   total,
@@ -283,7 +317,7 @@ export function FiltradaPanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA}
       exportPath={exportPath}
-      header={header ? "FILTRADA" : undefined}
+      header={header ? "FILTRADA SIN RESPONSE" : undefined}
       listClassName={listClassName}
       rows={filtradaRows(cc, total)}
     />
@@ -297,16 +331,20 @@ export function ResponseTabs({
   responses,
   cc,
   responsesTotal,
+  responsesOkTotal,
   ccTotal,
   exportPathCompleta,
+  exportPathFiltradaCompleta,
   exportPathFiltrada,
   className,
 }: {
   responses: ResponseRow[];
   cc: CcRow[];
   responsesTotal: number;
+  responsesOkTotal: number;
   ccTotal: number;
   exportPathCompleta?: string;
+  exportPathFiltradaCompleta?: string;
   exportPathFiltrada?: string;
   className?: string;
 }) {
@@ -320,9 +358,16 @@ export function ResponseTabs({
             </span>
             <Tabs.Indicator />
           </Tabs.Tab>
-          <Tabs.Tab id="filtrada">
+          <Tabs.Tab id="con-response">
             <span className="flex items-center gap-2">
-              Filtrada <CountBadge tone="success" value={ccTotal} />
+              Con response{" "}
+              <CountBadge tone="success" value={responsesOkTotal} />
+            </span>
+            <Tabs.Indicator />
+          </Tabs.Tab>
+          <Tabs.Tab id="sin-response">
+            <span className="flex items-center gap-2">
+              Sin response <CountBadge tone="success" value={ccTotal} />
             </span>
             <Tabs.Indicator />
           </Tabs.Tab>
@@ -337,7 +382,16 @@ export function ResponseTabs({
           total={responsesTotal}
         />
       </Tabs.Panel>
-      <Tabs.Panel id="filtrada">
+      <Tabs.Panel id="con-response">
+        <FiltradaConResponsePanel
+          exportPath={exportPathFiltradaCompleta}
+          header={false}
+          listClassName="max-h-72"
+          responses={responses}
+          total={responsesOkTotal}
+        />
+      </Tabs.Panel>
+      <Tabs.Panel id="sin-response">
         <FiltradaPanel
           cc={cc}
           exportPath={exportPathFiltrada}

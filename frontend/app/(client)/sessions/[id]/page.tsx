@@ -18,6 +18,7 @@ import { api, ApiError } from "@/lib/api";
 import { useLiveBatch, type CcRow, type ResponseRow } from "@/lib/ws";
 import {
   CompletaPanel,
+  FiltradaConResponsePanel,
   FiltradaPanel,
   ResponseTabs,
 } from "@/components/sessions/response-views";
@@ -52,6 +53,7 @@ interface SessionDetailOut {
   responses: SessionResponseRow[];
   cc: SessionCcRow[];
   responses_total: number;
+  responses_ok_total: number;
   cc_total: number;
 }
 
@@ -176,8 +178,9 @@ export default function SessionDetailPage() {
 
   if (detail.isLoading) {
     return (
-      <div className="mx-auto grid w-full max-w-[1600px] gap-6 lg:grid-cols-2">
+      <div className="mx-auto grid w-full max-w-[1600px] gap-6 lg:grid-cols-3">
         <PanelSkeleton rows={8} />
+        <PanelSkeleton className="hidden lg:flex" rows={8} />
         <PanelSkeleton className="hidden lg:flex" rows={8} />
       </div>
     );
@@ -210,6 +213,7 @@ export default function SessionDetailPage() {
   // Export `↓ .txt` (Story 3.5) — same paths as Envío, built on `data.id`.
   const exportBase = `/api/sessions/${data.id}/export`;
   const exportCompleta = `${exportBase}?view=completa`;
+  const exportFiltradaCompleta = `${exportBase}?view=filtrada_completa`;
   const exportFiltrada = `${exportBase}?view=filtrada`;
   // REST rows → the 3.2 panel shapes: snapshot-style keys (`s-${id}`),
   // `nueva: false` everywhere — the "nueva" highlight belongs to Envío's
@@ -268,13 +272,20 @@ export default function SessionDetailPage() {
 
       {/* Desktop: the same two side-by-side panels as Envío; internal
           scroll — the detail competes with no cockpit. */}
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
         <CompletaPanel
           className="hidden lg:flex"
           exportPath={exportCompleta}
           listClassName="lg:max-h-[calc(100vh-12rem)]"
           responses={responses}
           total={data.responses_total}
+        />
+        <FiltradaConResponsePanel
+          className="hidden lg:flex"
+          exportPath={exportFiltradaCompleta}
+          listClassName="lg:max-h-[calc(100vh-12rem)]"
+          responses={responses}
+          total={data.responses_ok_total}
         />
         <FiltradaPanel
           cc={cc}
@@ -285,14 +296,16 @@ export default function SessionDetailPage() {
         />
       </div>
 
-      {/* Mobile: the same segmented Completa | Filtrada tabs. */}
+      {/* Mobile: the same segmented Completa | Con response | Sin response. */}
       <ResponseTabs
         cc={cc}
         ccTotal={data.cc_total}
         className="lg:hidden"
         exportPathCompleta={exportCompleta}
         exportPathFiltrada={exportFiltrada}
+        exportPathFiltradaCompleta={exportFiltradaCompleta}
         responses={responses}
+        responsesOkTotal={data.responses_ok_total}
         responsesTotal={data.responses_total}
       />
     </div>

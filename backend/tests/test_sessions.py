@@ -391,6 +391,7 @@ async def test_continue_reactivates_by_replacement_and_emits_session_active(
             "session_id": session_a,
             "cc_new": 1,
             "responses_total": 1,
+            "responses_ok_total": 1,
             "responses": [
                 {
                     "id": full_db.id,
@@ -614,6 +615,46 @@ async def test_export_completa_carries_every_revision_as_timestamped_blocks(
         f"[{r.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {r.text}\n\n"
         for r in full_rows
     )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_filtrada_con_response_counts_and_exports_only_ok(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """"Filtrada con response": ``responses_ok_total`` counts only the ✅
+    revisions, and ``view=filtrada_completa`` exports only their full text —
+    the ❌ stays in Completa alone."""
+    http, _ = client_user
+    batch_id = await _post_batch(http, "uno\ndos", gate["id"])
+    await _drain()  # message_id 1 (uno) and 2 (dos)
+    session_id = await _bound_session_id(batch_id)
+
+    ok_text = "✅ Aprobada CC: 4111 Status a"
+    rejected_text = "❌ Declinada"
+    await _capture_ok(5001, 1, ok_text)
+    await _capture_ok(5002, 2, rejected_text)
+
+    # Detail: Completa has both 'full' revisions; the ok-total counts only ✅.
+    body = (await http.get(f"/api/sessions/{session_id}")).json()
+    assert (body["responses_total"], body["responses_ok_total"]) == (2, 1)
+
+    # Export filtrada_completa: only the ✅ full text, as a timestamped block.
+    res = await http.get(
+        f"/api/sessions/{session_id}/export?view=filtrada_completa"
+    )
+    assert res.status_code == 200, res.text
+    _assert_txt_headers(res, gate["value"], session_id, "filtrada_completa")
+    ok_row = next(
+        r
+        for r in await _response_rows(session_id)
+        if r.kind == "full" and r.status == "ok"
+    )
+    assert res.text == (
+        f"[{ok_row.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {ok_text}\n\n"
+    )
+    assert rejected_text not in res.text
 
 
 @pytest.mark.asyncio(loop_scope="session")

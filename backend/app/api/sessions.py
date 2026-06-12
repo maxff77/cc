@@ -86,6 +86,9 @@ class SessionDetailOut(SessionOut):
     responses: list[SessionResponseRow]
     cc: list[SessionCcRow]
     responses_total: int
+    # "Filtrada con response": count of ✅ 'full' revisions (the same rows the
+    # frontend filters out of ``responses`` by ``status == 'ok'``).
+    responses_ok_total: int
     cc_total: int
 
 
@@ -192,6 +195,9 @@ async def get_session_detail(
         ],
         cc=[SessionCcRow(id=row.id, text=row.text) for row in cc],
         responses_total=len(responses),
+        responses_ok_total=await responses_repo.full_count(
+            session, target.id, status=responses_repo.STATUS_OK
+        ),
         cc_total=len(cc),
     )
 
@@ -199,7 +205,7 @@ async def get_session_detail(
 @router.get("/{session_id}/export", response_class=PlainTextResponse)
 async def export_session(
     session_id: int,
-    view: Literal["completa", "filtrada"],
+    view: Literal["completa", "filtrada", "filtrada_completa"],
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> PlainTextResponse:
@@ -221,6 +227,13 @@ async def export_session(
     target = await _require_session(session, user.tenant_id, session_id)
     if view == "completa":
         rows = await responses_repo.list_full(session, target.id, None)
+        content = exports.completa_txt(rows)
+    elif view == "filtrada_completa":
+        # "Filtrada con response": the full text of only the ✅ revisions —
+        # same builder as Completa, fed the status-filtered rows.
+        rows = await responses_repo.list_full(
+            session, target.id, None, status=responses_repo.STATUS_OK
+        )
         content = exports.completa_txt(rows)
     else:
         rows = await responses_repo.list_cc(session, target.id, None)

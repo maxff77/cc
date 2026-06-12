@@ -21,6 +21,7 @@ import { api, ApiError } from "@/lib/api";
 import { type CcRow, type ResponseRow } from "@/lib/ws";
 import {
   CompletaPanel,
+  FiltradaConResponsePanel,
   FiltradaPanel,
   ResponseTabs,
 } from "@/components/sessions/response-views";
@@ -61,6 +62,7 @@ interface SessionDetailOut extends SessionOut {
   responses: SessionResponseRow[];
   cc: SessionCcRow[];
   responses_total: number;
+  responses_ok_total: number;
   cc_total: number;
 }
 
@@ -313,12 +315,18 @@ function SessionDetail({
 
       {/* Desktop: the same two side-by-side panels; NO exportPath ⇒ no
           footer renders (read-only by construction). */}
-      <div className="lg:grid lg:grid-cols-2 lg:gap-6">
+      <div className="lg:grid lg:grid-cols-3 lg:gap-6">
         <CompletaPanel
           className="hidden lg:flex"
           listClassName="lg:max-h-[calc(100vh-16rem)]"
           responses={responses}
           total={data.responses_total}
+        />
+        <FiltradaConResponsePanel
+          className="hidden lg:flex"
+          listClassName="lg:max-h-[calc(100vh-16rem)]"
+          responses={responses}
+          total={data.responses_ok_total}
         />
         <FiltradaPanel
           cc={cc}
@@ -328,12 +336,13 @@ function SessionDetail({
         />
       </div>
 
-      {/* Mobile: the same segmented Completa | Filtrada tabs. */}
+      {/* Mobile: the same segmented Completa | Con response | Sin response. */}
       <ResponseTabs
         cc={cc}
         ccTotal={data.cc_total}
         className="lg:hidden"
         responses={responses}
+        responsesOkTotal={data.responses_ok_total}
         responsesTotal={data.responses_total}
       />
     </div>

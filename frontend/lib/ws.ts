@@ -83,6 +83,9 @@ export interface LiveBatchState {
   // Real total of 'full' revisions — honest even when the snapshot list is
   // capped server-side (the Completa badge).
   responsesTotal: number;
+  // Real total of ✅ 'full' revisions — the "Filtrada con response" badge
+  // (the rows the panel filters out of `responses` by status === "ok").
+  responsesOkTotal: number;
   // Epoch ms when the FloodWait window ends; null = no active notice. Set by
   // `flood.wait`, cleared by any signal that sending flows again (AC 6).
   floodUntil: number | null;
@@ -129,6 +132,8 @@ interface SnapshotData {
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
   responses_total: number;
+  // "Filtrada con response": total of ✅ 'full' revisions.
+  responses_ok_total: number;
   // Story 4.1: the watchdog latch — a reconnected tab rebuilds the
   // global-pause banner from the snapshot alone (snapshot-first).
   watchdog: {
@@ -207,6 +212,7 @@ interface SessionActiveData {
   session_id: number | null;
   cc_new: number;
   responses_total: number;
+  responses_ok_total: number;
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
 }
@@ -227,6 +233,7 @@ const IDLE: LiveBatchState = {
   responses: [],
   cc: [],
   responsesTotal: 0,
+  responsesOkTotal: 0,
   floodUntil: null,
   watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
   queuePosition: null,
@@ -294,6 +301,7 @@ function reduce(event: string, data: unknown) {
           nueva: false,
         })),
         responsesTotal: d.responses_total,
+        responsesOkTotal: d.responses_ok_total,
         // The snapshot carries no flood info → drop any notice. Honest: after
         // a reconnect the countdown is no longer verifiable.
         floodUntil: null,
@@ -370,6 +378,7 @@ function reduce(event: string, data: unknown) {
           cc: store.cc,
           ccNew: store.ccNew,
           responsesTotal: store.responsesTotal,
+          responsesOkTotal: store.responsesOkTotal,
           // System state, not batch state (4.1): a draining batch never
           // clears the global-pause banner.
           watchdog: store.watchdog,
@@ -393,6 +402,7 @@ function reduce(event: string, data: unknown) {
           cc: sessionChanged ? [] : store.cc,
           ccNew: sessionChanged ? 0 : store.ccNew,
           responsesTotal: sessionChanged ? 0 : store.responsesTotal,
+          responsesOkTotal: sessionChanged ? 0 : store.responsesOkTotal,
           // Resumed sending ⇒ the FloodWait notice self-dismisses (AC 6).
           floodUntil: d.state === "sending" ? null : store.floodUntil,
           // Admission position (4.2): assigned, never guessed — the server
@@ -456,6 +466,13 @@ function reduce(event: string, data: unknown) {
         responsesTotal: isDupRow
           ? store.responsesTotal
           : store.responsesTotal + 1,
+        // "Filtrada con response": one more ✅ revision when this captured row
+        // is ok (a ❌ revision adds to Completa only). Same drift-then-reconcile
+        // contract as responsesTotal — the snapshot/session.active reset it.
+        responsesOkTotal:
+          isDupRow || d.status !== "ok"
+            ? store.responsesOkTotal
+            : store.responsesOkTotal + 1,
         // `new_cc` may be [] (e.g. an edit with nothing session-new).
         cc: [
           ...store.cc,
@@ -502,6 +519,7 @@ function reduce(event: string, data: unknown) {
         })),
         ccNew: d.cc_new,
         responsesTotal: d.responses_total,
+        responsesOkTotal: d.responses_ok_total,
       });
       break;
     }
@@ -627,6 +645,7 @@ export function clearSession(sessionId: number) {
     cc: [],
     ccNew: 0,
     responsesTotal: 0,
+    responsesOkTotal: 0,
   });
 }
 
@@ -676,6 +695,7 @@ export function seedFromBatch(batch: {
     responses: store.responses,
     cc: store.cc,
     responsesTotal: store.responsesTotal,
+    responsesOkTotal: store.responsesOkTotal,
     // A global FloodWait window doesn't end because a batch was posted.
     floodUntil: store.floodUntil,
     // System state (4.1) — a new batch never clears the global-pause banner

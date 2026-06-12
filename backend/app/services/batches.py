@@ -128,6 +128,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
             "session_id": None,
             "cc_new": 0,
             "responses_total": 0,
+            "responses_ok_total": 0,
             "responses": [],
             "cc": [],
         }
@@ -135,6 +136,10 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         "session_id": active.id,
         "cc_new": await responses_repo.cc_count(session, active.id),
         "responses_total": await responses_repo.full_count(session, active.id),
+        # "Filtrada con response" badge: only the ✅ revisions (full text).
+        "responses_ok_total": await responses_repo.full_count(
+            session, active.id, status=responses_repo.STATUS_OK
+        ),
         "responses": [
             {
                 "id": row.id,

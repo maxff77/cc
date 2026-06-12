@@ -151,9 +151,14 @@ async def cc_count(session: AsyncSession, capture_session_id: int) -> int:
     return count
 
 
-async def full_count(session: AsyncSession, capture_session_id: int) -> int:
+async def full_count(
+    session: AsyncSession, capture_session_id: int, status: str | None = None
+) -> int:
     """Total 'full' revisions of one capture session (Story 3.2: the Completa
-    badge — the REAL total, honest even when the snapshot list is capped)."""
+    badge — the REAL total, honest even when the snapshot list is capped).
+
+    ``status`` (e.g. ``STATUS_OK``) restricts the count to that status — the
+    "Filtrada con response" badge: only the ✅ revisions."""
     stmt = (
         select(func.count())
         .select_from(Response)
@@ -162,12 +167,18 @@ async def full_count(session: AsyncSession, capture_session_id: int) -> int:
             Response.kind == KIND_FULL,
         )
     )
+    if status is not None:
+        stmt = stmt.where(Response.status == status)
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 
 
 async def _list_last(
-    session: AsyncSession, capture_session_id: int, kind: str, limit: int | None
+    session: AsyncSession,
+    capture_session_id: int,
+    kind: str,
+    limit: int | None,
+    status: str | None = None,
 ) -> list[Response]:
     """The LAST ``limit`` rows of ``kind``, returned ASCENDING by ``id``.
 
@@ -176,11 +187,16 @@ async def _list_last(
     its scroll at the bottom (Story 3.2). ``limit=None`` ⇒ no LIMIT and no
     reverse-dance — the COMPLETE data, ascending directly (Story 3.3: the
     full data belongs to Historial and export, the cap is snapshot-only).
+
+    ``status`` restricts 'full' rows to that status (the "Filtrada con
+    response" view = only ✅ revisions).
     """
     stmt = select(Response).where(
         Response.capture_session_id == capture_session_id,
         Response.kind == kind,
     )
+    if status is not None:
+        stmt = stmt.where(Response.status == status)
     if limit is None:
         stmt = stmt.order_by(Response.id.asc())
         return list((await session.execute(stmt)).scalars().all())
@@ -191,11 +207,16 @@ async def _list_last(
 
 
 async def list_full(
-    session: AsyncSession, capture_session_id: int, limit: int | None
+    session: AsyncSession,
+    capture_session_id: int,
+    limit: int | None,
+    status: str | None = None,
 ) -> list[Response]:
     """The session's last ``limit`` 'full' revisions (``None`` = all),
-    oldest→newest — the rows that rebuild the Completa view."""
-    return await _list_last(session, capture_session_id, KIND_FULL, limit)
+    oldest→newest — the rows that rebuild the Completa view. ``status`` (e.g.
+    ``STATUS_OK``) yields only that status — the "Filtrada con response"
+    view's full ✅ texts."""
+    return await _list_last(session, capture_session_id, KIND_FULL, limit, status)
 
 
 async def list_cc(

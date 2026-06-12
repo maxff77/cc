@@ -21,6 +21,7 @@ import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   CompletaPanel,
+  FiltradaConResponsePanel,
   FiltradaPanel,
   ResponseTabs,
 } from "@/components/sessions/response-views";
@@ -48,10 +49,13 @@ export default function EnvioPage() {
   const exportBase =
     live.sessionId !== null ? `/api/sessions/${live.sessionId}/export` : null;
   const exportCompleta = exportBase ? `${exportBase}?view=completa` : undefined;
+  const exportFiltradaCompleta = exportBase
+    ? `${exportBase}?view=filtrada_completa`
+    : undefined;
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+    <div className="mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
@@ -85,7 +89,9 @@ export default function EnvioPage() {
           className="lg:hidden"
           exportPathCompleta={exportCompleta}
           exportPathFiltrada={exportFiltrada}
+          exportPathFiltradaCompleta={exportFiltradaCompleta}
           responses={live.responses}
+          responsesOkTotal={live.responsesOkTotal}
           responsesTotal={live.responsesTotal}
         />
 
@@ -112,6 +118,13 @@ export default function EnvioPage() {
         listClassName="lg:max-h-[calc(100vh-8rem)]"
         responses={live.responses}
         total={live.responsesTotal}
+      />
+      <FiltradaConResponsePanel
+        className="hidden lg:flex"
+        exportPath={exportFiltradaCompleta}
+        listClassName="lg:max-h-[calc(100vh-8rem)]"
+        responses={live.responses}
+        total={live.responsesOkTotal}
       />
       <FiltradaPanel
         cc={live.cc}
