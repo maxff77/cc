@@ -37,6 +37,7 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# retros 2/3/4 → done 2026-06-12
 # 1-7 → done 2026-06-12 (re-auth Telegram ejecutado en VPS por el owner+agente — @maxff9778, TELEGRAM_TARGET seteado; browser smoke del owner OK; epic-1 → done)
 # deferred-work → cerrado 2026-06-12 (5 fixes: parse_mode=None + getHistory/m.out, re-auth WS cada 60s, re-check LIVE_STATES en cancel, retry release/abort, FK→category_not_found; resto aceptado con justificación)
 # 4-3 → done 2026-06-12 (observabilidad: alerts.py SlidingAlert flood_wait/unmatched + guardrail.alert + GET /api/observability owner-only; 10 tests, suite 275 verde; epic-4 → done)
@@ -101,7 +102,7 @@ development_status:
   2-3-pausar-reanudar-y-detener-con-eta-honesto: done
   2-4-planificador-multi-tenant-round-robin-prioridad-owner-intervalo-adaptativo: done
   2-5-endurecimiento-del-pipeline-de-envio: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   # Epic 3: Captura de respuestas, sesiones e historial
   epic-3: done
@@ -111,7 +112,7 @@ development_status:
   3-4-continuar-una-sesion-con-dedup-preservado: done
   3-5-exportar-resultados-como-txt: done
   3-6-vista-de-soporte-cross-tenant-para-owner-admins: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 
   # Epic 4: Protección operativa de la cuenta (guardarraíl de baneo)
   epic-4: done
@@ -119,4 +120,4 @@ development_status:
   4-2-admission-control-con-cola-de-espera: done
   4-3-observabilidad-del-guardarrail-de-baneo: done
   4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: done
-  epic-4-retrospective: optional
+  epic-4-retrospective: done
