@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.scheduler import scheduler
 from app.core.watchdog import watchdog
-from app.db.models import Batch
+from app.db.models import Batch, BatchLine
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
@@ -85,6 +85,25 @@ def state_data(
         "gate_value": batch.gate_value,
         "session_id": batch.capture_session_id,
         "queue_position": queue_position,
+    }
+
+
+def lines_queued_data(batch_id: int, lines: list[BatchLine]) -> dict:
+    """``batch.lines_queued`` event payload — the lines just added to the queue.
+
+    Fires on create AND append (``api.batches``) so the cockpit's "Pendientes"
+    list grows live. Draining needs NO new event: the existing per-line
+    ``batch.line_sent`` / ``batch.line_failed`` (both already carry
+    ``position``) remove a line as it leaves the queue. Capped at
+    ``_SNAPSHOT_ROWS`` for parity with the snapshot — the count badge reads the
+    authoritative ``queued`` total, never this (possibly trimmed) list.
+    """
+    return {
+        "batch_id": batch_id,
+        "lines": [
+            {"position": line.position, "text": line.text}
+            for line in lines[:_SNAPSHOT_ROWS]
+        ],
     }
 
 
@@ -194,6 +213,8 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "queued": 0,
             "failed": 0,
             "failed_lines": [],
+            # No live batch → no pending queue (snapshot-first parity).
+            "pending_lines": [],
             "total": 0,
             "eta_seconds": 0,
             # Watchdog slice (Story 4.1) — a reconnected tab rebuilds the
@@ -229,6 +250,15 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         "failed_lines": [
             {"position": line.position, "text": line.text, "code": line.fail_code or ""}
             for line in await batches_repo.failed_lines(session, batch.id)
+        ],
+        # Still-queued line texts so a reconnecting tab rebuilds the
+        # "Pendientes" list from the snapshot alone (survives a page reload;
+        # same precedent as failed_lines). Capped — the badge uses `queued`.
+        "pending_lines": [
+            {"position": line.position, "text": line.text}
+            for line in await batches_repo.queued_lines(
+                session, batch.id, _SNAPSHOT_ROWS
+            )
         ],
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),

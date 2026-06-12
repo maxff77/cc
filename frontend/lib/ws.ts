@@ -28,6 +28,14 @@ export interface FailedLine {
   code: string;
 }
 
+// One still-queued line (Pendientes panel): keyed by `position`, unique within
+// the single live batch. It drains as the backend emits batch.line_sent /
+// batch.line_failed for that position; the snapshot rebuilds it on reconnect.
+export interface PendingLine {
+  position: number;
+  text: string;
+}
+
 // One Completa row (Story 3.2): a captured 'full' revision. `nueva` is true
 // ONLY for rows that landed live via `response.captured` — snapshot rows are
 // reconciliation, not novelty.
@@ -71,6 +79,10 @@ export interface LiveBatchState {
   // snapshot; post-batch persistence is Epic 3's history, not invented here.
   failed: number;
   failedLines: FailedLine[];
+  // Still-queued lines (Pendientes): BATCH-scoped, not session-scoped — they
+  // clear when the batch drains or another batch starts. The count badge uses
+  // `queued` (authoritative); this list may be capped.
+  pending: PendingLine[];
   total: number;
   etaSeconds: number;
   ccNew: number;
@@ -128,6 +140,9 @@ interface SnapshotData {
   queued: number;
   failed: number;
   failed_lines: FailedLine[];
+  // Still-queued line texts (Pendientes) — capped server-side like the other
+  // snapshot lists; rebuilds the panel on reconnect.
+  pending_lines: PendingLine[];
   total: number;
   eta_seconds: number;
   // Story 4.2: admission position — null unless state === "waiting".
@@ -202,6 +217,23 @@ interface ResponseCapturedData {
   captured_at: string;
 }
 
+// `batch.lines_queued` (Pendientes): the lines just added to the queue — on
+// create AND append. Carries `batch_id` so a frame crossing a seedFromBatch of
+// another lote is dropped (same guard as batch.line_failed).
+interface LinesQueuedData {
+  batch_id: number;
+  lines: PendingLine[];
+}
+
+// `batch.line_sent` (backend send_worker `_record_sent`): one line went out.
+// Carries `position` so Pendientes drops exactly that row, and doubles as the
+// "sending flows again" signal that dismisses a FloodWait notice.
+interface LineSentData {
+  batch_id: number;
+  position: number;
+  text: string;
+}
+
 interface FloodWaitData {
   seconds: number;
 }
@@ -241,6 +273,7 @@ const IDLE: LiveBatchState = {
   queued: 0,
   failed: 0,
   failedLines: [],
+  pending: [],
   total: 0,
   etaSeconds: 0,
   ccNew: 0,
@@ -298,6 +331,8 @@ function reduce(event: string, data: unknown) {
         // rebuilds the failed panel from here (snapshot-first).
         failed: d.failed,
         failedLines: d.failed_lines,
+        // Pendientes rebuilt from the snapshot alone (survives reload).
+        pending: d.pending_lines,
         total: d.total,
         etaSeconds: d.eta_seconds,
         ccNew: d.cc_new,
@@ -374,6 +409,9 @@ function reduce(event: string, data: unknown) {
           ...store.failedLines,
           { position: d.position, text: d.text, code: d.code },
         ],
+        // A failed line leaves the queue → drop it from Pendientes (it now
+        // lives in the red Fallidas strip instead).
+        pending: store.pending.filter((line) => line.position !== d.position),
       });
       break;
     }
@@ -428,6 +466,13 @@ function reduce(event: string, data: unknown) {
           batchId: d.batch_id,
           gateName: d.gate_name,
           gateValue: d.gate_value,
+          // Pendientes is batch-scoped: a different batch id ⇒ start clean
+          // (the create's batch.lines_queued — fanned to every tenant tab —
+          // refills it). batch.state carries no line texts itself.
+          pending:
+            d.batch_id !== null && d.batch_id !== store.batchId
+              ? []
+              : store.pending,
           sessionId: d.session_id ?? store.sessionId,
           sessionName: adopting ? null : store.sessionName,
           sessionGateName: adopting ? d.gate_name : store.sessionGateName,
@@ -588,12 +633,45 @@ function reduce(event: string, data: unknown) {
         watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
       });
       break;
-    case "batch.line_sent":
-      // A line went out ⇒ sending flows again — clear any FloodWait notice.
-      if (store.floodUntil !== null) {
-        setStore({ ...store, floodUntil: null });
+    case "batch.line_sent": {
+      const d = data as LineSentData;
+
+      // Scope to the live batch (same guard as line_failed): a stale frame
+      // crossing a seedFromBatch of another lote must not drain a foreign row.
+      if (store.batchId !== null && store.batchId !== d.batch_id) break;
+      // A line went out ⇒ drop it from Pendientes AND clear any FloodWait
+      // notice (sending flows again). Skip the write only when neither changes.
+      const remaining = store.pending.filter(
+        (line) => line.position !== d.position,
+      );
+      const drained = remaining.length !== store.pending.length;
+
+      if (drained || store.floodUntil !== null) {
+        setStore({ ...store, pending: remaining, floodUntil: null });
       }
       break;
+    }
+    case "batch.lines_queued": {
+      const d = data as LinesQueuedData;
+
+      // Guard + dedup by position (an at-least-once frame must not double a
+      // row); cap mirrors the response/cc lists so a long-lived tab is bounded.
+      if (store.batchId !== null && store.batchId !== d.batch_id) break;
+      const known = new Set(store.pending.map((line) => line.position));
+      const fresh = d.lines.filter((line) => !known.has(line.position));
+
+      if (fresh.length === 0) break;
+      setStore({
+        ...store,
+        // Keep the LOWEST positions (next-to-send): pending is ascending by
+        // construction (snapshot ordered, line_sent drains the front), so
+        // slice(0, cap) preserves the "top row = next to send" contract — a
+        // tail slice would drop the very rows about to go out. The badge stays
+        // honest via `queued` when the window is capped.
+        pending: [...store.pending, ...fresh].slice(0, _LIVE_ROWS),
+      });
+      break;
+    }
     default:
       break; // forward-compat: ignore anything unknown
   }
@@ -731,9 +809,11 @@ export function seedFromBatch(batch: {
     sent: batch.sent,
     queued: batch.queued,
     failed: batch.failed,
-    // The POST response carries no line detail — start the panel clean for
-    // the new batch (the snapshot remains the source of truth).
+    // The POST response carries no line detail — start the panels clean for
+    // the new batch. Pendientes refills from the batch.lines_queued the POST
+    // triggers right after (the snapshot remains the source of truth).
     failedLines: [],
+    pending: [],
     total: batch.total,
     etaSeconds: 0,
     queuePosition: waiting ? (batch.queue_position ?? null) : null,

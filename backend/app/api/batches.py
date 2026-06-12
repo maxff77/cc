@@ -149,7 +149,7 @@ async def create_or_append_batch(
                 priority=priority,
                 state=state,
             )
-            await batches_repo.add_lines(
+            created_lines = await batches_repo.add_lines(
                 session, batch=batch, texts=lines, start_position=0
             )
             # Capture-session binding (Story 3.1, AC 3) in the SAME
@@ -198,6 +198,13 @@ async def create_or_append_batch(
             )
             progress = await batches_service.progress_data(session, batch)
             await broadcaster.emit(tenant_id, "batch.progress", progress)
+            # Seed the cockpit's "Pendientes" list with this batch's lines —
+            # it then drains via batch.line_sent/line_failed (Pendientes UX).
+            await broadcaster.emit(
+                tenant_id,
+                "batch.lines_queued",
+                batches_service.lines_queued_data(batch.id, created_lines),
+            )
             return BatchOut(
                 id=batch.id,
                 gate_name=batch.gate_name,
@@ -225,14 +232,23 @@ async def create_or_append_batch(
     pending = await batches_repo.pending_texts(session, live.id)
     new_lines = [line for line in lines if line not in pending]
     # … but zero NEW lines after dedup is NOT an error (added: 0).
+    appended_lines: list = []
     if new_lines:
         start = await batches_repo.next_position(session, live.id)
-        await batches_repo.add_lines(
+        appended_lines = await batches_repo.add_lines(
             session, batch=live, texts=new_lines, start_position=start
         )
     await session.commit()
     progress = await batches_service.progress_data(session, live)
     await broadcaster.emit(tenant_id, "batch.progress", progress)
+    # Append grows the live "Pendientes" list (zero NEW lines after dedup
+    # emits nothing — keeps the event honest).
+    if appended_lines:
+        await broadcaster.emit(
+            tenant_id,
+            "batch.lines_queued",
+            batches_service.lines_queued_data(live.id, appended_lines),
+        )
     # A WAITING batch accepts appends (the lines queue up and wait with it);
     # the response keeps reporting its admission position (Story 4.2).
     position = (

@@ -13,6 +13,7 @@ import { useLiveBatch } from "@/lib/ws";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
+import { PendingLines } from "@/components/batch/pending-lines";
 import { IdleRing, ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
 import { WaitingNotice } from "@/components/batch/waiting-notice";
@@ -84,6 +85,9 @@ export default function EnvioPage() {
         {/* Failed lines (2.5, AC 4): visibility comes from this panel — the
             ring keeps EXACTLY three metrics (UX-DR21). */}
         <FailedLines live={live} />
+        {/* Pendientes: the still-queued lines, draining one-by-one as they
+            send (replaces the "textarea clears all at once" feel). */}
+        <PendingLines live={live} />
 
         {/* Mobile dual views (3.2): segmented tabs, capped height with
             internal scroll — the form below stays reachable. Always rendered

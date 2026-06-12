@@ -419,6 +419,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "queued": 0,
         "failed": 0,
         "failed_lines": [],
+        # Pendientes slice — empty with no live batch.
+        "pending_lines": [],
         "total": 0,
         "eta_seconds": 0,
         # Story 4.2: admission position — None outside 'waiting'.
@@ -462,6 +464,15 @@ async def test_snapshot_live_shape_and_eta_math(
     assert snap["gate_value"] == gate["value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 3, 3)
     assert (snap["failed"], snap["failed_lines"]) == (0, [])  # Story 2.5 slots
+    # Pendientes: the snapshot rebuilds the still-queued lines in position
+    # order so a reconnecting tab restores the panel (survives reload).
+    pending = snap["pending_lines"]
+    assert [p["position"] for p in pending] == [0, 1, 2]
+    assert [p["text"] for p in pending] == [
+        f"{gate['value']} uno",
+        f"{gate['value']} dos",
+        f"{gate['value']} tres",
+    ]
     # Honest adaptive ETA (UX-DR14 / Story 2.4): queued × n × G with a single
     # active sender → 3 × 1 × interval(1)=10.0.
     assert snap["eta_seconds"] == 30.0
@@ -471,6 +482,25 @@ async def test_snapshot_live_shape_and_eta_math(
     assert snap["session_id"] is not None
     assert (snap["responses"], snap["cc"]) == ([], [])
     assert snap["responses_total"] == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_queued_lines_orders_by_position_and_caps(
+    client_user: tuple[AsyncClient, User], gate: dict
+) -> None:
+    """queued_lines feeds the Pendientes snapshot: position order, honoring
+    the cap (the count badge stays authoritative when the list is trimmed)."""
+    http, _ = client_user
+    res = await _post_batch(http, "uno\ndos\ntres\ncuatro", gate["id"])
+    assert res.status_code == 201
+    batch_id = res.json()["id"]
+
+    async with async_session_factory() as session:
+        full = await batches_repo.queued_lines(session, batch_id, 100)
+        assert [line.position for line in full] == [0, 1, 2, 3]
+        # Cap honored, and it keeps the LOWEST positions (next to send).
+        capped = await batches_repo.queued_lines(session, batch_id, 2)
+        assert [line.position for line in capped] == [0, 1]
 
 
 @pytest.mark.asyncio(loop_scope="session")

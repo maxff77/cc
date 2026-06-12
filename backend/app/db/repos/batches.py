@@ -223,6 +223,27 @@ async def failed_lines(session: AsyncSession, batch_id: int) -> list[BatchLine]:
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def queued_lines(
+    session: AsyncSession, batch_id: int, limit: int
+) -> list[BatchLine]:
+    """The batch's still-pending (queued/sending) lines in position order.
+
+    Feeds the WS snapshot's "Pendientes" list — the precedent is ``failed_lines``
+    (2.5), added so a reconnecting tab rebuilds a per-line panel from the
+    snapshot alone. ``limit`` mirrors ``_SNAPSHOT_ROWS``: the list is capped,
+    the ``queued`` count stays the authoritative total (badges never lie).
+    """
+    stmt = (
+        select(BatchLine)
+        .where(
+            BatchLine.batch_id == batch_id, BatchLine.state.in_(_PENDING_STATES)
+        )
+        .order_by(BatchLine.position)
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 # --- Worker queries ----------------------------------------------------------
 #
 # Used ONLY by core.send_worker, never by request handlers. Deliberately
