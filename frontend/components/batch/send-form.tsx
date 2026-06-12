@@ -45,6 +45,8 @@ interface BatchOut {
   total: number;
   appended: boolean;
   added: number;
+  // FIFO admission position (Story 4.2) — null unless state === "waiting".
+  queue_position: number | null;
 }
 
 const GATES_KEY = ["gates"] as const;

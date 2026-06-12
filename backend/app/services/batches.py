@@ -62,16 +62,21 @@ async def _n_effective(session: AsyncSession, batch: Batch) -> int:
     return max(1, n_eff)
 
 
-def state_data(batch: Batch, state: str) -> dict:
+def state_data(
+    batch: Batch, state: str, *, queue_position: int | None = None
+) -> dict:
     """``batch.state`` event payload — full context, single source of truth.
 
-    ``state`` is the SURFACE state (``idle | sending | paused | stopping``):
-    DB terminals ``completed``/``stopped`` both travel as ``"idle"`` (2.2
-    pattern). Carrying the gate fields fixes the 2.2 review finding where a
-    second tab never learned the gate of a batch started elsewhere.
-    ``session_id`` (Story 3.2) propagates the capture-session binding to every
-    tab the moment the batch starts — the UI reducer needs it to tell "new
-    session → clear the panels" from "late reply of an old session → ignore".
+    ``state`` is the SURFACE state (``idle | sending | paused | stopping |
+    waiting``): DB terminals ``completed``/``stopped`` both travel as
+    ``"idle"`` (2.2 pattern). Carrying the gate fields fixes the 2.2 review
+    finding where a second tab never learned the gate of a batch started
+    elsewhere. ``session_id`` (Story 3.2) propagates the capture-session
+    binding to every tab the moment the batch starts — the UI reducer needs
+    it to tell "new session → clear the panels" from "late reply of an old
+    session → ignore". ``queue_position`` (Story 4.2) travels in EVERY
+    ``batch.state`` — ``None`` unless the surface state is ``waiting`` — so
+    the reducer assigns instead of guessing.
     """
     return {
         "batch_id": batch.id,
@@ -79,6 +84,7 @@ def state_data(batch: Batch, state: str) -> dict:
         "gate_name": batch.gate_name,
         "gate_value": batch.gate_value,
         "session_id": batch.capture_session_id,
+        "queue_position": queue_position,
     }
 
 
@@ -176,14 +182,24 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             # Watchdog slice (Story 4.1) — a reconnected tab rebuilds the
             # global-pause banner from the snapshot alone (snapshot-first).
             "watchdog": watchdog.status(),
+            "queue_position": None,
             **await active_session_data(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
     n_eff = await _n_effective(session, batch)
+    # Admission queue position (Story 4.2): a tab connecting mid-wait renders
+    # its place from the snapshot alone (snapshot-first, 2.2 pattern). None
+    # in every other state.
+    position = (
+        await batches_repo.queue_position(session, batch.id)
+        if batch.state == batches_repo.STATE_WAITING
+        else None
+    )
     return {
         # Passthrough: get_live_batch only returns LIVE_STATES, so this is
-        # always one of sending|paused|stopping — a tab opened mid-pause must
-        # render "En pausa" from the snapshot alone (Story 2.3 AC 1/2).
+        # always one of sending|paused|stopping|waiting — a tab opened
+        # mid-pause/mid-wait must render the right surface from the snapshot
+        # alone (Story 2.3 AC 1/2; Story 4.2 AC 2).
         "state": batch.state,
         "batch_id": batch.id,
         "gate_name": batch.gate_name,
@@ -201,5 +217,6 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         "eta_seconds": eta_seconds(queued, n_eff),
         # Watchdog slice (Story 4.1) — same rationale as the idle branch.
         "watchdog": watchdog.status(),
+        "queue_position": position,
         **await active_session_data(session, tenant_id),
     }

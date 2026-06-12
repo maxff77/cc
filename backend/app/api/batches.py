@@ -1,8 +1,14 @@
-"""Batches router (Stories 2.2 + 2.3): create/append a batch + its controls.
+"""Batches router (Stories 2.2 + 2.3 + 4.2): create/append a batch + controls.
 
 ``POST /api/batches`` creates or appends; ``POST /api/batches/{id}/pause|
 resume|stop`` (2.3) are the non-CRUD verb-suffix actions (architecture:
 POST + 204, no body). The WS snapshot remains the only read path.
+
+Admission control (Story 4.2): when the owner-configured cap is full, a new
+batch is created ``'waiting'`` (FIFO queue, durable in Postgres) instead of
+``'sending'`` — the POST response and the ``batch.state`` event carry its
+``queue_position``. The decision happens under the cap row's FOR UPDATE lock
+so it serializes with the worker's promotion sweep.
 
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
 — never from the body (architecture mandate). Any authenticated role may send
@@ -30,11 +36,13 @@ from app.errors import (
     batch_not_found,
     batch_not_live,
     batch_stopping,
+    batch_waiting,
     empty_batch,
     gate_not_found,
     sending_paused,
     telegram_unauthorized,
 )
+from app.services import admission as admission_service
 from app.services import batches as batches_service
 
 router = APIRouter(prefix="/api/batches", tags=["batches"])
@@ -62,6 +70,9 @@ class BatchOut(BaseModel):
     total: int
     appended: bool
     added: int
+    # FIFO admission position (Story 4.2): the POST response IS the first
+    # position report — None unless state == 'waiting'.
+    queue_position: int | None
 
 
 @router.post("", response_model=BatchOut, status_code=201)
@@ -112,12 +123,25 @@ async def create_or_append_batch(
         if not lines:
             raise empty_batch()
         try:
+            # Admission decision (Story 4.2, AC 1/4) under the cap row's FOR
+            # UPDATE lock — serialized against concurrent POSTs and the
+            # worker's promotion sweep, so the cap is never overshot. A
+            # disabled cap (0/missing row) admits directly: pure Epic 2
+            # adaptive-interval semantics.
+            cap = await admission_service.get_cap_locked(session)
+            admitted = await batches_repo.count_admitted(session)
+            state = (
+                batches_repo.STATE_SENDING
+                if admission_service.has_capacity(cap, admitted)
+                else batches_repo.STATE_WAITING
+            )
             batch = await batches_repo.create_batch(
                 session,
                 tenant_id=tenant_id,
                 gate_value=gate_value,
                 gate_name=gate_name,
                 is_owner_priority=is_owner,
+                state=state,
             )
             await batches_repo.add_lines(
                 session, batch=batch, texts=lines, start_position=0
@@ -125,11 +149,21 @@ async def create_or_append_batch(
             # Capture-session binding (Story 3.1, AC 3) in the SAME
             # transaction: reuse the tenant's active session when its gate
             # matches, otherwise activate a fresh one — the batch commit IS
-            # the "bound automatically at batch start".
+            # the "bound automatically at batch start". A WAITING batch binds
+            # at creation too (recorded decision): the panels flip right
+            # away, and old replies attribute via send_log → line → batch,
+            # never via the active session.
             capture_session = await capture_sessions_repo.resolve_for_batch(
                 session, tenant_id, gate_value, gate_name
             )
             batch.capture_session_id = capture_session.id
+            # Computed inside the transaction (post-flush id) so the POST
+            # response and the event report the same position.
+            position = (
+                await batches_repo.queue_position(session, batch.id)
+                if state == batches_repo.STATE_WAITING
+                else None
+            )
             await session.commit()
         except IntegrityError:
             # Two tabs raced past the live check (TOCTOU): the partial unique
@@ -147,10 +181,14 @@ async def create_or_append_batch(
             if live is None:  # not the one-live-batch conflict — surface it
                 raise
         else:
+            # Surface state mirrors the admission outcome: 'waiting' carries
+            # its queue position (AC 2), 'sending' keeps the 2.2 shape.
             await broadcaster.emit(
                 tenant_id,
                 "batch.state",
-                batches_service.state_data(batch, "sending"),
+                batches_service.state_data(
+                    batch, state, queue_position=position
+                ),
             )
             progress = await batches_service.progress_data(session, batch)
             await broadcaster.emit(tenant_id, "batch.progress", progress)
@@ -165,6 +203,7 @@ async def create_or_append_batch(
                 total=len(lines),
                 appended=False,
                 added=len(lines),
+                queue_position=position,
             )
 
     # --- Append to the live batch (AC 10) ----------------------------------
@@ -188,6 +227,13 @@ async def create_or_append_batch(
     await session.commit()
     progress = await batches_service.progress_data(session, live)
     await broadcaster.emit(tenant_id, "batch.progress", progress)
+    # A WAITING batch accepts appends (the lines queue up and wait with it);
+    # the response keeps reporting its admission position (Story 4.2).
+    position = (
+        await batches_repo.queue_position(session, live.id)
+        if live.state == batches_repo.STATE_WAITING
+        else None
+    )
     return BatchOut(
         id=live.id,
         gate_name=live.gate_name,
@@ -199,6 +245,7 @@ async def create_or_append_batch(
         total=progress["total"],
         appended=True,
         added=len(new_lines),
+        queue_position=position,
     )
 
 
@@ -236,6 +283,9 @@ async def pause_batch(
         return  # no-op — no duplicate event
     if batch.state == batches_repo.STATE_STOPPING:
         raise batch_stopping()
+    if batch.state == batches_repo.STATE_WAITING:
+        # Nothing to pause yet (Story 4.2) — batch_not_live would lie.
+        raise batch_waiting()
     if batch.state != batches_repo.STATE_SENDING:
         raise batch_not_live()
     batch.state = batches_repo.STATE_PAUSED
@@ -258,6 +308,9 @@ async def resume_batch(
         return  # no-op — no duplicate event
     if batch.state == batches_repo.STATE_STOPPING:
         raise batch_stopping()
+    if batch.state == batches_repo.STATE_WAITING:
+        # Resuming a queued batch would bypass admission (Story 4.2).
+        raise batch_waiting()
     if batch.state != batches_repo.STATE_PAUSED:
         raise batch_not_live()
     batch.state = batches_repo.STATE_SENDING
@@ -276,12 +329,18 @@ async def stop_batch(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """sending|paused → stopped (or stopping while a line is in flight).
+    """sending|paused|waiting → stopped (or stopping while a line is in flight).
 
     Detener acts instantly — no confirmation anywhere (AC 4). Inside ONE
     transaction and IN THIS ORDER: clear the queue first (a DELETE racing the
     worker's claim blocks on the disputed row and skips it if it landed in
     'sending'), THEN check for an in-flight line.
+
+    A WAITING batch (Story 4.2) stops through the direct branch (it never has
+    a line in flight) — the client leaves the admission queue, and everyone
+    behind shifts one place forward: no slot was freed, no promotion happens,
+    so the handler reports the new positions itself (the worker's sweep only
+    emits when it promotes).
     """
     batch = await _controlled_batch(session, user.tenant_id, batch_id)
     if batch.state == batches_repo.STATE_STOPPING:
@@ -289,8 +348,10 @@ async def stop_batch(
     if batch.state not in (
         batches_repo.STATE_SENDING,
         batches_repo.STATE_PAUSED,
+        batches_repo.STATE_WAITING,
     ):
         raise batch_not_live()
+    was_waiting = batch.state == batches_repo.STATE_WAITING
     await batches_repo.delete_queued_lines(session, batch.id)
     if await batches_repo.has_sending_line(session, batch.id):
         batch.state = batches_repo.STATE_STOPPING
@@ -303,7 +364,30 @@ async def stop_batch(
         send_worker.wake()  # the worker abandons the line and finalizes
     else:
         batch.state = batches_repo.STATE_STOPPED
+        repositioned: list[tuple[int, dict]] = []
+        if was_waiting:
+            # Only the waiters BEHIND the leaver shifted (smaller ids keep
+            # their place). Payloads built inside the session (MissingGreenlet
+            # lesson); the autoflushed UPDATE drops the leaver from the list.
+            for i, waiter in enumerate(
+                await batches_repo.waiting_batches(session), start=1
+            ):
+                if waiter.id > batch.id:
+                    repositioned.append(
+                        (
+                            waiter.tenant_id,
+                            batches_service.state_data(
+                                waiter, "waiting", queue_position=i
+                            ),
+                        )
+                    )
         await session.commit()
         await broadcaster.emit(
             user.tenant_id, "batch.state", batches_service.state_data(batch, "idle")
         )
+        for waiter_tenant_id, payload in repositioned:
+            await broadcaster.emit(waiter_tenant_id, "batch.state", payload)
+        # A direct stop of an ADMITTED batch frees a slot right now — cut the
+        # worker's idle sleep so the promotion sweep runs immediately (AC 3).
+        # Harmless after a waiting-batch stop (the sweep finds nothing new).
+        send_worker.wake()

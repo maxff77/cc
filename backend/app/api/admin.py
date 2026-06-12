@@ -28,6 +28,7 @@ from app.api.sessions import (
     SessionResponseRow,
     session_to_out,
 )
+from app.core import send_worker
 from app.db.base import get_session
 from app.db.models import Gate, GateCategory, User
 from app.db.repos import audit as audit_repo
@@ -43,6 +44,7 @@ from app.errors import (
     forbidden,
     gate_exists,
     gate_not_found,
+    invalid_admission_cap,
     invalid_plan_days,
     invalid_renewal,
     renewal_would_shorten,
@@ -50,6 +52,7 @@ from app.errors import (
     tenant_not_found,
     user_not_found,
 )
+from app.services import admission as admission_service
 from app.services import auth as auth_service
 from app.services import plans as plans_service
 from app.services import users as users_service
@@ -541,6 +544,52 @@ async def delete_gate(
     gate = await _require_active_gate(session, gate_id)
     await gates_repo.soft_delete(session, gate)
     await session.commit()
+
+
+# --- Admission control (Story 4.2) -------------------------------------------
+#
+# Owner-only knob: the cap on concurrent active senders. Lives in
+# ``system_settings`` (hot-configurable, durable) — 0 disables admission
+# control entirely (pure Epic 2 adaptive-interval semantics).
+
+
+class AdmissionOut(BaseModel):
+    max_active_senders: int  # 0 = disabled
+
+
+class UpdateAdmissionRequest(BaseModel):
+    max_active_senders: int
+
+
+@router.get("/admission", response_model=AdmissionOut)
+async def get_admission(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> AdmissionOut:
+    """Current admission cap (0 = disabled)."""
+    return AdmissionOut(max_active_senders=await admission_service.get_cap(session))
+
+
+@router.put("/admission", response_model=AdmissionOut)
+async def update_admission(
+    body: UpdateAdmissionRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> AdmissionOut:
+    """Set the admission cap; 0 disables it.
+
+    Bounds checked in the route (invalid_plan_days idiom — the error code
+    surfaces instead of a raw 422). Raising or disabling the cap must promote
+    waiting batches NOW, not within the worker's next idle second — hence the
+    ``wake()`` after commit. Lowering it never expels anyone: active senders
+    keep their slot; only new admissions wait (recorded decision).
+    """
+    if not 0 <= body.max_active_senders <= admission_service.CAP_MAX:
+        raise invalid_admission_cap()
+    await admission_service.set_cap(session, body.max_active_senders)
+    await session.commit()
+    send_worker.wake()
+    return AdmissionOut(max_active_senders=body.max_active_senders)
 
 
 # --- Gate category CRUD (Story 2.2, owner addition) --------------------------

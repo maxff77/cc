@@ -6,7 +6,9 @@
 // acts instantly, no confirmation modal (AC 4 — confirm is reserved for
 // Eliminar, Epic 3). Visible set follows the state machine verbatim:
 // sending → Pausar+Detener · paused → Reanudar+Detener · stopping → the
-// frozen pair, disabled · idle → nothing.
+// frozen pair, disabled · waiting → Detener only (Story 4.2: nothing to
+// pause yet — Detener leaves the admission queue; mirrors the backend's
+// 409 batch_waiting) · idle → nothing.
 import type { LiveBatchState } from "@/lib/ws";
 
 import { useState } from "react";
@@ -54,7 +56,7 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
           >
             Reanudar
           </Button>
-        ) : (
+        ) : live.state === "waiting" ? null : ( // waiting: Detener only (4.2)
           <Button
             className="flex-1 bg-surface-secondary text-warning"
             isDisabled={isDisabled}

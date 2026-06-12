@@ -3,7 +3,7 @@
 Tables arrive story by story via Alembic migrations (no tables ahead of need):
 tenants/users/auth_sessions (1.2+), gates (2.1), gate_categories + batches +
 batch_lines (2.2), send_log (2.5), capture_sessions + responses (3.1),
-audit_log (3.6), watchdog_state (4.1).
+audit_log (3.6), watchdog_state (4.1), system_settings (4.2).
 """
 
 from datetime import datetime
@@ -186,19 +186,25 @@ class Batch(Base):
 
     ``state`` is a plain String, NOT a DB enum: ``'sending' | 'completed'``
     (2.2) + ``'paused' | 'stopping' | 'stopped'`` (2.3) + ``'cancelled'``
-    (2.5, plan expiry mid-batch — terminal, NOT live) — no ALTER TYPE needed.
+    (2.5, plan expiry mid-batch — terminal, NOT live) + ``'waiting'`` (4.2,
+    admission control: created over the cap, FIFO-queued until a slot frees)
+    — no ALTER TYPE needed.
     """
 
     __tablename__ = "batches"
     __table_args__ = (
         # DB enforcement of "one live batch per tenant" (Story 2.3, absorbing
         # the 2.2 review finding). Predicate = LIVE_STATES in repos/batches.py;
-        # widen BOTH together if a live state is ever added.
+        # widen BOTH together if a live state is ever added ('waiting' joined
+        # in Story 4.2 — a queued-for-admission batch IS the tenant's one
+        # live batch).
         Index(
             "uq_batches_one_live_per_tenant",
             "tenant_id",
             unique=True,
-            postgresql_where=text("state IN ('sending', 'paused', 'stopping')"),
+            postgresql_where=text(
+                "state IN ('sending', 'paused', 'stopping', 'waiting')"
+            ),
         ),
     )
 
@@ -478,6 +484,26 @@ class WatchdogState(Base):
     resumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SystemSetting(Base):
+    """Owner-tunable runtime configuration as a key/value row (Story 4.2).
+
+    GLOBAL — no tenant scoping: these are knobs of the shared system, curated
+    by the owner alone. Deliberately NOT in ``app.config.Settings`` (env):
+    "owner-configurable" means hot, from the UI, surviving restarts and
+    needing no redeploy. First key: ``max_active_senders`` (the admission-
+    control cap; ``"0"``/missing row = disabled). Values are short strings
+    parsed defensively by the owning service.
+    """
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

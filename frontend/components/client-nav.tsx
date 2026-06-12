@@ -24,11 +24,14 @@ const PILL_COPY: Record<Exclude<BatchSurfaceState, "idle">, string> = {
   sending: "Enviando",
   paused: "En pausa",
   stopping: "Deteniendo",
+  // Story 4.2: queued for admission — live but not sending yet.
+  waiting: "En espera",
 };
 
 // Tints per DESIGN.md state-pill tokens: accent .22 / warning .18; 'stopping'
 // has no token — recorded decision: danger tint at the same ~18% (Detener
-// wears danger; the state lasts sub-seconds in practice).
+// wears danger; the state lasts sub-seconds in practice). 'waiting' wears
+// warning like paused: same "vivo pero no enviando" family (Story 4.2).
 const PILL_CLASS: Record<Exclude<BatchSurfaceState, "idle">, string> = {
   sending: "bg-accent/22 text-accent",
   // text-warning (not -foreground): the app is fixed dark-mode and
@@ -36,6 +39,7 @@ const PILL_CLASS: Record<Exclude<BatchSurfaceState, "idle">, string> = {
   // fills — on a tint it was unreadable (deferred 2-3 #2, absorbed here).
   paused: "bg-warning/18 text-warning",
   stopping: "bg-danger/18 text-danger",
+  waiting: "bg-warning/18 text-warning",
 };
 
 function StatePill({ state }: { state: BatchSurfaceState }) {
@@ -104,12 +108,14 @@ export function ClientNav() {
     }
   }
 
-  // Live dot (UX-DR10 / AC 6): success while sending, warning while paused
-  // or stopping ("vivo pero no enviando"), none at idle.
+  // Live dot (UX-DR10 / AC 6): success while sending, warning while paused,
+  // stopping or waiting ("vivo pero no enviando"), none at idle.
   const dot: "success" | "warning" | null =
     live.state === "sending"
       ? "success"
-      : live.state === "paused" || live.state === "stopping"
+      : live.state === "paused" ||
+          live.state === "stopping" ||
+          live.state === "waiting"
         ? "warning"
         : null;
 

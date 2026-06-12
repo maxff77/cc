@@ -16,21 +16,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine
 
-# Lifecycle states (2.2 + 2.3 + 2.5) — plain strings, no DB enum (see the
-# model docstring). 'cancelled' (2.5, plan expiry) is terminal and NOT live.
+# Lifecycle states (2.2 + 2.3 + 2.5 + 4.2) — plain strings, no DB enum (see
+# the model docstring). 'cancelled' (2.5, plan expiry) is terminal and NOT
+# live. 'waiting' (4.2, admission control) IS live: created over the cap,
+# FIFO-queued until the worker's sweep promotes it to 'sending'.
 STATE_SENDING = "sending"
 STATE_COMPLETED = "completed"
 STATE_PAUSED = "paused"
 STATE_STOPPING = "stopping"
 STATE_STOPPED = "stopped"
 STATE_CANCELLED = "cancelled"
+STATE_WAITING = "waiting"
 
 # "Live" = the tenant's one in-flight batch (Story 2.3 state machine). This
 # tuple IS the predicate of the partial unique index
 # ``uq_batches_one_live_per_tenant`` and the append notion of POST /api/batches.
 # 'cancelled' is deliberately absent: a renewed plan starts a fresh batch and
 # the controls 409 ``batch_not_live`` on a cancelled one with zero extra code.
-LIVE_STATES = (STATE_SENDING, STATE_PAUSED, STATE_STOPPING)
+LIVE_STATES = (STATE_SENDING, STATE_PAUSED, STATE_STOPPING, STATE_WAITING)
+
+# "Admitted" = live states that OCCUPY an admission slot (Story 4.2). A
+# PAUSED batch keeps its slot on purpose (recorded decision): releasing it on
+# pause would force resume through re-admission (resume → wait again) or
+# overshoot the cap; the adaptive interval already excludes paused tenants
+# from ``n`` (2.4), so a held slot degrades nobody — it only limits new
+# admissions. Finishing, stopping or cancelling frees the slot (AC 3).
+ADMITTED_STATES = (STATE_SENDING, STATE_PAUSED, STATE_STOPPING)
 
 LINE_QUEUED = "queued"
 LINE_SENDING = "sending"
@@ -125,13 +136,18 @@ async def create_batch(
     gate_value: str,
     gate_name: str,
     is_owner_priority: bool,
+    state: str = STATE_SENDING,
 ) -> Batch:
-    """Insert and flush a fresh live batch (gate strings snapshotted verbatim)."""
+    """Insert and flush a fresh live batch (gate strings snapshotted verbatim).
+
+    ``state`` defaults to 'sending'; the admission-controlled POST passes
+    'waiting' when the cap is full (Story 4.2).
+    """
     batch = Batch(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
-        state=STATE_SENDING,
+        state=state,
         is_owner_priority=is_owner_priority,
     )
     session.add(batch)
@@ -293,6 +309,49 @@ async def count_active_senders(session: AsyncSession) -> int:
     )
     count: int = (await session.execute(stmt)).scalar_one()
     return count
+
+
+# --- Admission control (Story 4.2) -------------------------------------------
+#
+# The FIFO waiting queue is DURABLE: rows with state='waiting' ordered by id
+# (creation order — the id IS the arrival order). The partial unique index
+# guarantees ≤1 live batch per tenant, so queue ≡ waiting tenants. Positions
+# are COMPUTED, never stored — nothing to rebalance.
+
+
+async def count_admitted(session: AsyncSession) -> int:
+    """Batches currently occupying an admission slot (``ADMITTED_STATES``).
+
+    ≤1 per tenant (partial unique index), so counting rows ≡ counting
+    tenants. Callers hold the cap row's FOR UPDATE lock while deciding.
+    """
+    stmt = select(func.count()).where(Batch.state.in_(ADMITTED_STATES))
+    count: int = (await session.execute(stmt)).scalar_one()
+    return count
+
+
+async def waiting_batches(
+    session: AsyncSession, *, for_update: bool = False
+) -> list[Batch]:
+    """The FIFO waiting queue, oldest first (``ORDER BY id``).
+
+    ``for_update=True`` (the worker's promotion sweep) locks the rows so a
+    concurrent stop on a waiting batch serializes with the promotion — the
+    re-evaluated predicate drops a just-stopped row after the lock waits.
+    """
+    stmt = select(Batch).where(Batch.state == STATE_WAITING).order_by(Batch.id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def queue_position(session: AsyncSession, batch_id: int) -> int:
+    """1-based FIFO position of a waiting batch (1 + older waiting rows)."""
+    stmt = select(func.count()).where(
+        Batch.state == STATE_WAITING, Batch.id < batch_id
+    )
+    ahead: int = (await session.execute(stmt)).scalar_one()
+    return ahead + 1
 
 
 async def mark_sending(session: AsyncSession, line: BatchLine) -> None:

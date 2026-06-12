@@ -118,6 +118,8 @@ export default function AdminUsersPage() {
         />
       )}
 
+      {isOwner && <AdmissionControlCard />}
+
       <section className="mt-8">
         {users.isLoading && (
           <div className="flex justify-center py-10">
@@ -337,6 +339,126 @@ function CreateUserForm({
           {mutation.isPending ? "Creando…" : "Crear"}
         </Button>
       </Form>
+    </section>
+  );
+}
+
+// --- Admission control (Story 4.2, owner only) -----------------------------
+
+interface AdmissionOut {
+  max_active_senders: number;
+}
+
+const ADMISSION_KEY = ["admin-admission"] as const;
+const ADMISSION_CAP_MAX = 1000;
+
+// Digits-only gate (the isPositiveInt idiom) that ALSO admits 0 — 0 disables
+// admission control entirely (backend bounds: 0..1000).
+function isValidCap(value: string): boolean {
+  return /^\d+$/.test(value.trim()) && Number(value) <= ADMISSION_CAP_MAX;
+}
+
+function AdmissionControlCard() {
+  const queryClient = useQueryClient();
+  // null = untouched → render the server value; editing overrides it.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  const admission = useQuery({
+    queryKey: ADMISSION_KEY,
+    queryFn: () => api.get<AdmissionOut>("/api/admin/admission"),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (cap: number) =>
+      api.put<AdmissionOut>("/api/admin/admission", {
+        max_active_senders: cap,
+      }),
+    onSuccess: (data) => {
+      setDraft(null);
+      setBanner(null);
+      queryClient.setQueryData(ADMISSION_KEY, data);
+    },
+    onError: (err) => {
+      // invalid_admission_cap (and anything else) carries the server's
+      // Spanish message — render it verbatim ({code, message} contract).
+      setBanner(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  const value = draft ?? String(admission.data?.max_active_senders ?? "");
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (mutation.isPending) return;
+    setError(null);
+    setBanner(null);
+
+    if (!isValidCap(value)) {
+      setError(`Indica un número entero entre 0 y ${ADMISSION_CAP_MAX}.`);
+
+      return;
+    }
+    mutation.mutate(Number(value));
+  }
+
+  return (
+    <section className="mb-6 rounded-lg border border-default/30 p-4">
+      <h2 className="mb-1 text-lg font-medium">Control de admisión</h2>
+      <p className="mb-3 text-sm text-default-500">
+        Máximo de envíos activos a la vez; los lotes que excedan el límite
+        esperan en cola. 0 desactiva el límite: todos los lotes entran de
+        inmediato (degradación adaptativa pura).
+      </p>
+
+      {banner && (
+        <Alert className="mb-3" status="danger">
+          {banner}
+        </Alert>
+      )}
+
+      {admission.isError ? (
+        <Alert status="danger">
+          No pudimos cargar el límite. Recarga la página.
+        </Alert>
+      ) : (
+        <Form
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={onSubmit}
+        >
+          <TextField
+            isRequired
+            className="flex flex-col gap-1 sm:w-40"
+            isDisabled={admission.isLoading}
+            isInvalid={error !== null}
+            name="max_active_senders"
+            type="number"
+            value={value}
+            onChange={(v) => {
+              setDraft(v);
+              if (error) setError(null);
+            }}
+          >
+            <Label>Envíos activos máx.</Label>
+            <Input placeholder="0" />
+            {error && <FieldError>{error}</FieldError>}
+          </TextField>
+
+          <Button
+            className="sm:mb-1"
+            isDisabled={mutation.isPending || admission.isLoading}
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Guardando…" : "Guardar"}
+          </Button>
+        </Form>
+      )}
     </section>
   );
 }

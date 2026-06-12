@@ -1,5 +1,5 @@
 """Background send worker (Story 2.2; pause/stop 2.3; scheduled 2.4;
-hardened 2.5).
+hardened 2.5; admission control 4.2).
 
 A single ``asyncio.Task`` created in the lifespan drains queued batch lines.
 Selection is NOT FIFO: ``core.scheduler`` rotates round-robin across active
@@ -8,6 +8,12 @@ adaptive ``G = max(g_min, P(n)/n)`` — recomputed every turn, never constant
 (Story 2.4). Each step opens its OWN session via ``async_session_factory``
 (NEVER the request-scoped one) and the Telegram send happens with no session
 held (a FloodWait can sleep for minutes — it must not pin a pool connection).
+
+Admission control (Story 4.2): every step begins with ``_admit_waiting`` —
+batches queued over the owner-configured cap (``state='waiting'``, durable
+FIFO by id) are promoted into freed slots before selection runs. Waiting
+batches never appear in ``active_senders`` nor weigh on ``n``: the queue
+protects the active senders' cadence instead of degrading it.
 
 Retry policy (Story 2.5 hardening over the legacy semantics):
 - ``FloodWaitError`` → note it to the scheduler (governor + GLOBAL no-send
@@ -74,6 +80,7 @@ from app.db.models import Batch, BatchLine
 from app.db.repos import batches as batches_repo
 from app.db.repos import send_log as send_log_repo
 from app.db.repos import users as users_repo
+from app.services import admission as admission_service
 from app.services import batches as batches_service
 
 logger = logging.getLogger(__name__)
@@ -170,6 +177,74 @@ async def _locked_batch(session: AsyncSession, batch_id: int) -> Batch | None:
     ).scalar_one_or_none()
 
 
+async def _admit_waiting() -> None:
+    """Admission sweep (Story 4.2): promote waiting batches into freed slots.
+
+    Runs at the top of every ``step()`` — self-healing by construction (a
+    missed wake costs at most one loop turn). Under the cap row's FOR UPDATE
+    lock (the same one POST /api/batches takes) the oldest waiting batches
+    are promoted FIFO while slots are free; a DISABLED cap promotes them ALL
+    (AC 4: the fallback to pure Epic 2 semantics also rescues batches that
+    queued while the cap was on). The remaining waiters get re-numbered
+    ``batch.state waiting`` events — emitted only when something was actually
+    promoted, so an idle queue never spams positions.
+
+    Lives HERE and not in ``core.scheduler`` (recorded decision): the queue
+    is DURABLE (Postgres rows, NFR6 — not process memory like the rotation
+    cursor), the payload builders (``services.batches``) import the scheduler
+    at module level (an inverse import would be circular), and the worker is
+    the scheduler's only consumer — its loop is the sweep's natural home.
+    ``scheduler.py`` needs no change at all: 'waiting' never matches
+    ``active_senders``/``count_active_senders``, so pick/pace already ignore
+    queued batches (that exclusion IS the point of admission control).
+    """
+    promoted: list[tuple[int, dict, dict]] = []
+    repositioned: list[tuple[int, dict]] = []
+    async with async_session_factory() as session:
+        cap = await admission_service.get_cap_locked(session)
+        waiting = await batches_repo.waiting_batches(session, for_update=True)
+        if not waiting:
+            return  # common case — zero extra cost per step
+        if cap == admission_service.CAP_DISABLED:
+            to_promote = waiting
+        else:
+            admitted = await batches_repo.count_admitted(session)
+            to_promote = waiting[: max(0, cap - admitted)]
+        if not to_promote:
+            return  # queue full and no slot free — positions unchanged
+        for batch in to_promote:
+            batch.state = batches_repo.STATE_SENDING
+            # Payloads built INSIDE the session (MissingGreenlet lesson).
+            promoted.append(
+                (
+                    batch.tenant_id,
+                    batches_service.state_data(batch, "sending"),
+                    await batches_service.progress_data(session, batch),
+                )
+            )
+        for i, batch in enumerate(waiting[len(to_promote) :], start=1):
+            repositioned.append(
+                (
+                    batch.tenant_id,
+                    batches_service.state_data(
+                        batch, "waiting", queue_position=i
+                    ),
+                )
+            )
+        await session.commit()
+
+    for tenant_id, state_payload, progress in promoted:
+        logger.info(
+            "event=batch_admitted tenant=%s batch=%s",
+            tenant_id,
+            state_payload["batch_id"],
+        )
+        await broadcaster.emit(tenant_id, "batch.state", state_payload)
+        await broadcaster.emit(tenant_id, "batch.progress", progress)
+    for tenant_id, state_payload in repositioned:
+        await broadcaster.emit(tenant_id, "batch.state", state_payload)
+
+
 async def step() -> bool:
     """Process at most one line. Returns True iff a line was sent OR failed
     (a failed line burned 3 real attempts against the API — pacing the
@@ -181,8 +256,16 @@ async def step() -> bool:
     # 0a. Watchdog latch (Story 4.1): a watchdog-triggered GLOBAL pause blocks
     #     every claim/send until the owner explicitly resumes — never
     #     automatic. Memory gate (zero queries); run_worker idles and rotates.
+    #     Checked BEFORE the admission sweep: while the account is protected,
+    #     nothing changes state automatically — not even promotions.
     if watchdog.is_paused:
         return False
+
+    # -1. Admission sweep (Story 4.2): freed slots pull waiting batches in
+    #     FIFO BEFORE anything else — even during an open FloodWait window
+    #     (promotion sends nothing; the client sees "Enviando" as soon as a
+    #     slot exists, the actual send still respects the window below).
+    await _admit_waiting()
 
     # 0. Global FloodWait window (Story 2.5, closing the 2.4 deferred bypass):
     #    after a FloodWait NOBODY claims/sends until the window elapses — not

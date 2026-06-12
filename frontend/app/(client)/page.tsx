@@ -15,6 +15,7 @@ import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
 import { ProgressRing } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
+import { WaitingNotice } from "@/components/batch/waiting-notice";
 import { WatchdogNotice } from "@/components/batch/watchdog-notice";
 import {
   CompletaPanel,
@@ -51,7 +52,11 @@ export default function EnvioPage() {
     <div className="lg:grid lg:grid-cols-[300px_1fr_1fr] lg:gap-6">
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
-        {isLive ? (
+        {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
+            would read as a silent stall (AC 2). */}
+        {live.state === "waiting" ? (
+          <WaitingNotice live={live} />
+        ) : isLive ? (
           <ProgressRing live={live} />
         ) : (
           <p className="py-4 text-center text-muted">

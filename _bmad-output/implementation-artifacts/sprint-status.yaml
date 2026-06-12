@@ -37,6 +37,7 @@
 generated: 2026-06-11
 last_updated: 2026-06-12
 project: cc
+# 4-2 → done 2026-06-12 (merged from story/4-2: cap owner en system_settings + cola FIFO waiting + queue_position e2e; migración re-encadenada f3a9c1d4e8b7→d7f4b2a91c63; watchdog gate antes del admission sweep en step())
 # 4-1 → done 2026-06-12 (merged from story/4-1 onto main tras epic 3; conflictos resueltos en models.py/errors.py/sprint-status)
 # 3-6 → done 2026-06-12 (cross-tenant support view: audit_log modelo+migración+repo con fail-closed, GET /api/admin/tenants/{id}/sessions con trío 404, página /admin/tenants/[id] Table+duales sin export, smoke manual verificado)
 # 3-6 → review 2026-06-12 (implementado: audit_log (modelo+migración+repo) con commit fail-closed ANTES de servir datos, GET /api/admin/tenants/{id}/sessions[/{sid}] admin+owner con trío 404 tenant_not_found/session_not_found + 403 forbidden para clientes + guard Sec-Fetch-Site anti-CSRF, página /admin/tenants/[id] read-only con Table + paneles duales 3.2 sin export, link "Sesiones" en /admin/users; suite verde, ruff/lint/build limpios; pendiente smoke manual del owner)
@@ -110,7 +111,7 @@ development_status:
   # Epic 4: Protección operativa de la cuenta (guardarraíl de baneo)
   epic-4: in-progress
   4-1-watchdog-de-respuestas-y-deteccion-de-perdida-de-sesion: done
-  4-2-admission-control-con-cola-de-espera: backlog
+  4-2-admission-control-con-cola-de-espera: done
   4-3-observabilidad-del-guardarrail-de-baneo: backlog
   4-4-preparacion-de-lanzamiento-gates-backups-y-runbooks: backlog
   epic-4-retrospective: optional

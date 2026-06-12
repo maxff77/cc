@@ -402,6 +402,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "failed_lines": [],
         "total": 0,
         "eta_seconds": 0,
+        # Story 4.2: admission position — None outside 'waiting'.
+        "queue_position": None,
         "cc_new": 0,
         # Story 4.1: watchdog slice — unpaused by default (autouse reset).
         "watchdog": {

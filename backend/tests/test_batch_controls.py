@@ -380,6 +380,8 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "gate_name": gate["name"],
             "gate_value": gate["value"],
             "session_id": session_id,
+            # Story 4.2: admission position — None outside 'waiting'.
+            "queue_position": None,
         }
     ]
 
@@ -392,6 +394,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "gate_name": gate["name"],
             "gate_value": gate["value"],
             "session_id": session_id,
+            "queue_position": None,
         }
     ]
 
@@ -405,6 +408,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "gate_name": gate["name"],
             "gate_value": gate["value"],
             "session_id": session_id,
+            "queue_position": None,
         }
     ]
 

@@ -14,7 +14,13 @@
 import { useSyncExternalStore } from "react";
 
 // Surface states (architecture state machine): DB terminals travel as "idle".
-export type BatchSurfaceState = "idle" | "sending" | "paused" | "stopping";
+// "waiting" (Story 4.2): queued for admission — live but not yet sending.
+export type BatchSurfaceState =
+  | "idle"
+  | "sending"
+  | "paused"
+  | "stopping"
+  | "waiting";
 
 export interface FailedLine {
   position: number;
@@ -83,6 +89,9 @@ export interface LiveBatchState {
   // Watchdog global pause (Story 4.1) — system-wide, role-agnostic state;
   // the banner renders for everyone, the resume button only for the owner.
   watchdog: WatchdogInfo;
+  // FIFO admission position (Story 4.2) — non-null only while `state` is
+  // "waiting"; the server assigns it (snapshot + every batch.state).
+  queuePosition: number | null;
 }
 
 // --- Hand-typed WS payload shapes (mirror backend services/batches.py) ------
@@ -111,6 +120,8 @@ interface SnapshotData {
   failed_lines: FailedLine[];
   total: number;
   eta_seconds: number;
+  // Story 4.2: admission position — null unless state === "waiting".
+  queue_position: number | null;
   cc_new: number;
   // Story 3.2: the active capture session's slice — rows capped server-side,
   // totals real.
@@ -156,6 +167,8 @@ interface BatchStateData {
   gate_name: string | null;
   gate_value: string | null;
   session_id: number | null;
+  // Story 4.2: travels in EVERY batch.state — null outside "waiting".
+  queue_position: number | null;
 }
 
 // VERBATIM mirror of the `response.captured` emit (backend core/capture.py).
@@ -216,6 +229,7 @@ const IDLE: LiveBatchState = {
   responsesTotal: 0,
   floodUntil: null,
   watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
+  queuePosition: null,
 };
 
 let store: LiveBatchState = IDLE;
@@ -291,6 +305,9 @@ function reduce(event: string, data: unknown) {
           detail: d.watchdog.detail,
           pausedAt: d.watchdog.paused_at,
         },
+        // Admission position (4.2): a tab connecting mid-wait renders its
+        // place from the snapshot alone.
+        queuePosition: d.queue_position ?? null,
       });
       break;
     }
@@ -378,6 +395,9 @@ function reduce(event: string, data: unknown) {
           responsesTotal: sessionChanged ? 0 : store.responsesTotal,
           // Resumed sending ⇒ the FloodWait notice self-dismisses (AC 6).
           floodUntil: d.state === "sending" ? null : store.floodUntil,
+          // Admission position (4.2): assigned, never guessed — the server
+          // sends null on every non-waiting state.
+          queuePosition: d.queue_position ?? null,
         });
       }
       break;
@@ -613,22 +633,28 @@ export function clearSession(sessionId: number) {
 // Seed the store from a successful POST /api/batches response so the ring
 // appears without waiting for the next WS event. `snapshot`/`batch.state`
 // remain the source of truth thereafter (UX-DR12 — no optimistic jumps
-// beyond this server-confirmed shape).
+// beyond this server-confirmed shape). Since Story 4.2 the POST may answer
+// `state: "waiting"` (admission queue) — the seed mirrors the REAL state
+// instead of hardcoding "sending".
 export function seedFromBatch(batch: {
   id: number;
   gate_name: string;
   gate_value: string;
+  state: string;
   sent: number;
   queued: number;
   failed: number;
   total: number;
+  queue_position?: number | null;
 }) {
   // Same batch already in the store ⇒ WS got there first (the backend emits
   // progress — even line 1 — before the POST returns): seeding would REGRESS
   // fresher state, rolling the ring back up to a full interval (deferred 2-2).
   if (store.batchId === batch.id) return;
+  const waiting = batch.state === "waiting";
+
   setStore({
-    state: "sending",
+    state: waiting ? "waiting" : "sending",
     batchId: batch.id,
     gateName: batch.gate_name,
     gateValue: batch.gate_value,
@@ -640,6 +666,7 @@ export function seedFromBatch(batch: {
     failedLines: [],
     total: batch.total,
     etaSeconds: 0,
+    queuePosition: waiting ? (batch.queue_position ?? null) : null,
     // The session fields belong to the SESSION, not the batch — never seeded
     // away (3.2). If this batch activated ANOTHER session, the batch.state
     // the POST emits right after carries the new session_id and the reducer

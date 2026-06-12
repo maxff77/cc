@@ -316,3 +316,24 @@ def sending_paused() -> AppError:
             "Intenta más tarde."
         ),
     )
+
+
+# --- Codes this story (4.2) defines --------------------------------------
+
+
+def batch_waiting() -> AppError:
+    # pause/resume on a batch still queued for admission — batch_not_live
+    # ("Ese lote ya terminó.") would lie; there is nothing to pause yet.
+    return AppError(
+        status_code=409,
+        code="batch_waiting",
+        message="El lote está en cola de espera. Puedes detenerlo si no quieres esperar.",
+    )
+
+
+def invalid_admission_cap() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_admission_cap",
+        message="Indica un límite entre 0 y 1000 (0 desactiva el control de admisión).",
+    )
