@@ -56,7 +56,16 @@ export async function middleware(request: NextRequest) {
       ? NextResponse.redirect(new URL("/login", request.url))
       : NextResponse.next();
 
-  const meUrl = new URL("/api/auth/me", request.nextUrl.origin);
+  // Talk to uvicorn directly over loopback. Using the request's public origin
+  // would hairpin through Caddy/TLS, which the Next middleware fetch fails on
+  // (observed: every /admin/* bounced to /login, no /me ever hit the backend).
+  // The backend lives on 127.0.0.1:8000 in BOTH environments (next.config dev
+  // rewrites and the prod Caddy route both target it); override only if that
+  // ever changes. NOTE: middleware runs in the edge runtime, so this env is
+  // inlined at BUILD time — set it before `next build`, not just at start.
+  const backendBase =
+    process.env.BACKEND_INTERNAL_URL ?? "http://127.0.0.1:8000";
+  const meUrl = new URL("/api/auth/me", backendBase);
 
   let res: Response;
 
