@@ -43,7 +43,12 @@ export function StatePill({
         <span
           aria-hidden
           className={clsx(
-            "size-1.5 rounded-full bg-current",
+            "size-1.5 rounded-full",
+            // The LIVE/sending dot (accent + pulse) wears the brand gradient;
+            // every other state keeps its semantic tone via bg-current.
+            tone === "accent" && dot === "pulse"
+              ? "gradient-moment"
+              : "bg-current",
             dot === "pulse" && "motion-safe:animate-pulse",
           )}
         />

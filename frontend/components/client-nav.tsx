@@ -157,11 +157,20 @@ export function ClientNav() {
     <>
       <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:px-6">
         <div className="flex items-center gap-6">
+          {/* Brand mark: gradient-filled badge (the .gradient-moment source)
+              beside a SOLID-foreground wordmark — never clip the gradient onto
+              the letters (hard ban). */}
           <Link
-            className="font-mono text-lg font-bold tracking-[-0.03em] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="flex items-center gap-2 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             href="/"
           >
-            CC
+            <span
+              aria-hidden
+              className="gradient-moment size-6 shrink-0 rounded"
+            />
+            <span className="font-mono text-lg font-bold tracking-[-0.03em] text-foreground">
+              Ranger-X
+            </span>
           </Link>
           {/* Desktop: the two items inline in the header strip. */}
           <nav className="hidden items-center gap-1 lg:flex">{items()}</nav>

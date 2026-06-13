@@ -24,7 +24,7 @@ export function PendingLines({ live }: { live: LiveBatchState }) {
 
   return (
     <div
-      className="rounded border border-default-200 bg-default-100/50 px-3 py-2 text-xs"
+      className="rounded border border-border bg-surface-secondary/50 px-3 py-2 text-xs"
       role="status"
     >
       <p className="font-semibold text-muted">

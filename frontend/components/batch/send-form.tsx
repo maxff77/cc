@@ -158,11 +158,11 @@ export function SendForm({
   }
 
   return (
-    // Rack instrument (ui-polish-spec §4.1): the form is the NUEVO LOTE
+    // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote
     // plate of the cockpit; legendAs="h2" keeps a heading in the outline.
     <SectionCard
       className="flex flex-col gap-4"
-      legend="NUEVO LOTE"
+      legend="Nuevo lote"
       legendAs="h2"
     >
       {banner && <Alert status="danger">{banner}</Alert>}
@@ -275,7 +275,12 @@ export function SendForm({
         </TextField>
 
         {/* Appending while 'stopping' is rejected server-side (409
-            batch_stopping) — disable here too, defense in both layers. */}
+            batch_stopping) — disable here too, defense in both layers.
+            The commit action uses SOLID violet (--accent, white text ~4.6:1,
+            WCAG AA). The brand gradient is reserved for the two TEXT-FREE
+            moments — the nav mark badge and the live pulse dot — because white
+            label text over the bright cyan gradient terminus fails AA (~1.85:1).
+            HeroUI variant="primary" resolves to the retoned violet --accent. */}
         <Button
           isDisabled={mutation.isPending || live.state === "stopping"}
           type="submit"

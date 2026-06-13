@@ -19,8 +19,11 @@
 [data-theme="light"],
 [data-theme="default"] {
   /* Theme Colors (Light Mode) */
-  --accent: oklch(55.00% 0.1200 243.00);
+  --accent: oklch(60% 0.19 292);
   --accent-foreground: oklch(99.11% 0 0);
+  /* Ranger-X brand gradient stops (violet → cyan) — shared by .gradient-moment. */
+  --accent-from: oklch(58% 0.22 295);
+  --accent-to: oklch(78% 0.13 195);
   --background: oklch(97.02% 0.0026 243.00);
   --border: oklch(90.00% 0.0026 243.00);
   --danger: oklch(65.32% 0.2340 24.44);
@@ -28,10 +31,14 @@
   --default: oklch(94.00% 0.0026 243.00);
   --default-foreground: oklch(21.03% 0.0059 243.00);
   --field-background: oklch(100.00% 0.0013 243.00);
-  --field-border: transparent;
+  /* Light theme only: surface and field-background are both pure white, so a
+     transparent field-border made inputs vanish into plates. Borrow the
+     --border token for a visible edge (dark theme keeps transparent — its
+     field-background already sits below surface). */
+  --field-border: oklch(90.00% 0.0026 243.00);
   --field-foreground: oklch(21.03% 0.0026 243.00);
   --field-placeholder: oklch(55.17% 0.0051 243.00);
-  --focus: oklch(55.00% 0.1200 243.00);
+  --focus: oklch(60% 0.19 292);
   --foreground: oklch(21.03% 0.0026 243.00);
   --muted: oklch(55.17% 0.0051 243.00);
   --overlay: oklch(100.00% 0.0008 243.00);
@@ -64,8 +71,11 @@
 [data-theme="dark"] {
   color-scheme: dark;
   /* Theme Colors (Dark Mode) */
-  --accent: oklch(55.00% 0.1200 243.00);
+  --accent: oklch(60% 0.19 292);
   --accent-foreground: oklch(99.11% 0 0);
+  /* Ranger-X brand gradient stops (violet → cyan) — shared by .gradient-moment. */
+  --accent-from: oklch(58% 0.22 295);
+  --accent-to: oklch(78% 0.13 195);
   --background: oklch(12.00% 0.0026 243.00);
   --border: oklch(28.00% 0.0026 243.00);
   --danger: oklch(59.40% 0.1977 23.33);
@@ -76,7 +86,7 @@
   --field-border: transparent;
   --field-foreground: oklch(99.11% 0.0026 243.00);
   --field-placeholder: oklch(70.50% 0.0051 243.00);
-  --focus: oklch(55.00% 0.1200 243.00);
+  --focus: oklch(60% 0.19 292);
   --foreground: oklch(99.11% 0.0026 243.00);
   --muted: oklch(70.50% 0.0051 243.00);
   --overlay: oklch(21.03% 0.0051 243.00);
@@ -103,4 +113,11 @@
 @theme {
 	--font-sans: var(--font-public-sans), sans-serif;
 	--font-mono: var(--font-fira-code), monospace;
+}
+
+/* Ranger-X brand gradient (violet → cyan). The ONE source for every gradient
+   moment (mark badge, Enviar fill, live pulse) so they stay in lockstep — DRY.
+   FILLS only; never background-clip:text on letters (hard ban). */
+.gradient-moment {
+	background-image: linear-gradient(135deg, var(--accent-from), var(--accent-to));
 }

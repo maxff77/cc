@@ -26,7 +26,7 @@ export function DataRow({ left, text, status, nueva }: DataRowProps) {
       <span className="shrink-0 text-muted tabular-nums">{left}</span>
       <span className="min-w-0 flex-1 break-words">{text}</span>
       {nueva && (
-        <span className="shrink-0 rounded-md bg-success/20 px-1 text-[9px] font-medium uppercase tracking-[0.08em] text-success">
+        <span className="shrink-0 rounded-md bg-success/20 px-1 text-[10px] font-medium uppercase tracking-[0.1em] text-success">
           nueva
         </span>
       )}
@@ -37,7 +37,13 @@ export function DataRow({ left, text, status, nueva }: DataRowProps) {
             status === "ok" ? "text-success" : "text-danger",
           )}
         >
-          {status === "ok" ? "✅" : "❌"}
+          {/* The ✅/❌ glyph carries the state visually; the sr-only word
+              carries it as TEXT so screen readers announce the verdict
+              (the emoji alone is silent/ambiguous to assistive tech). */}
+          <span aria-hidden>{status === "ok" ? "✅" : "❌"}</span>
+          <span className="sr-only">
+            {status === "ok" ? "Aprobada" : "Rechazada"}
+          </span>
         </span>
       )}
     </div>

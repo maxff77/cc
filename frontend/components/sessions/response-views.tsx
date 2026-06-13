@@ -19,6 +19,8 @@ import { Card, Tabs } from "@heroui/react";
 import clsx from "clsx";
 
 import { ApiError, downloadFile } from "@/lib/api";
+import { CountBadge } from "@/components/ui/count-badge";
+import { LabelCaps } from "@/components/ui/label-caps";
 import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
 
 // Empty states — copy VERBATIM (EXPERIENCE.md): no fake rows, badges at 0.
@@ -64,21 +66,6 @@ function filtradaRows(cc: CcRow[], total: number): RowData[] {
     text: row.text,
     nueva: row.nueva,
   }));
-}
-
-// Live mono count badge — Filtrada's travels in success green
-// (DESIGN.md `dual-view-tabs.count-badge-filtrada`). Visible at 0 too (AC 5).
-function CountBadge({ value, tone }: { value: number; tone?: "success" }) {
-  return (
-    <span
-      className={clsx(
-        "rounded-md bg-surface-secondary px-1.5 font-mono text-[11px] leading-5 tabular-nums",
-        tone === "success" && "text-success",
-      )}
-    >
-      {value}
-    </span>
-  );
 }
 
 // Scrollable row list with auto-scroll pinning (AC 4): follow new rows ONLY
@@ -170,9 +157,25 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
-// THE panel — HeroUI Card (elevated surface: bg-surface + shadow), optional
-// label-caps header (the mobile tabs carry the label/badge instead) and
-// optional `↓ .txt` export footer (Story 3.5; no path ⇒ no footer).
+// One-line set-relationship legend so the three panels don't read as a memory
+// tax: "Aprobadas" and "Datos CC" are both subsets of "Todas las respuestas"
+// (the first is the ✅-only replies; the second is the CC: data extracted from
+// them). text-muted, body-sized — context, not a control.
+export function ResponseViewsLegend({ className }: { className?: string }) {
+  return (
+    <p className={clsx("text-xs text-muted", className)}>
+      <span className="text-foreground">Todas las respuestas</span> incluye ✅ y
+      ❌; <span className="text-foreground">Aprobadas</span> son solo las ✅; y{" "}
+      <span className="text-foreground">Datos CC</span> son los datos extraídos
+      de esas respuestas.
+    </p>
+  );
+}
+
+// THE panel — HeroUI Card forced FLAT (Flat-Plate doctrine: bg-surface +
+// 1px border, zero elevation in BOTH themes), optional LabelCaps header (the
+// mobile tabs carry the label/badge instead) and optional `↓ .txt` export
+// footer (Story 3.5; no path ⇒ no footer).
 function ResponsePanel({
   header,
   count,
@@ -196,25 +199,23 @@ function ResponsePanel({
   // "default" gives the bg-surface body. We neutralize the card's own
   // p-4/gap-3/overflow-visible/32px-radius to console density (utilities
   // layer wins over the .card component layer) and re-add the header/footer
-  // separators per slot. The outer `border border-border` is explicit on
-  // purpose: .card relies on shadow-surface for its edge, but the dark theme
-  // (app default) nulls --surface-shadow to transparent, so without the
-  // border the panel would lose all containment against bg-background.
+  // separators per slot. `shadow-none` forces the Flat-Plate look in BOTH
+  // themes: .card relies on shadow-surface for its edge, which only happens
+  // to read flat in dark (--surface-shadow nulled to transparent) but LIFTS
+  // in light — the explicit `border border-border` is the sole edge.
   // `min-w-0` on the root is the actual fix for the grid overflow — without
   // it the long mono rows blow the 1fr track wide and `truncate` never bites.
   return (
     <Card
       className={clsx(
-        "flex min-w-0 flex-col gap-0 overflow-hidden rounded-lg border border-border p-0",
+        "flex min-w-0 flex-col gap-0 overflow-hidden rounded-lg border border-border p-0 shadow-none",
         className,
       )}
       variant="default"
     >
       {header && (
         <Card.Header className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <Card.Title className="text-[10px] font-medium uppercase leading-4 tracking-[0.12em] text-muted">
-            {header}
-          </Card.Title>
+          <LabelCaps className="leading-4">{header}</LabelCaps>
           <CountBadge tone={countTone} value={count} />
         </Card.Header>
       )}
@@ -255,7 +256,7 @@ export function CompletaPanel({
       count={total}
       emptyText={EMPTY_COMPLETA}
       exportPath={exportPath}
-      header={header ? "COMPLETA" : undefined}
+      header={header ? "Todas las respuestas" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses)}
     />
@@ -288,7 +289,7 @@ export function FiltradaConResponsePanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA_CON}
       exportPath={exportPath}
-      header={header ? "FILTRADA CON RESPONSE" : undefined}
+      header={header ? "Aprobadas (✅)" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses.filter((row) => row.status === "ok"))}
     />
@@ -317,7 +318,7 @@ export function FiltradaPanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA}
       exportPath={exportPath}
-      header={header ? "FILTRADA SIN RESPONSE" : undefined}
+      header={header ? "Datos CC extraídos" : undefined}
       listClassName={listClassName}
       rows={filtradaRows(cc, total)}
     />
@@ -354,20 +355,19 @@ export function ResponseTabs({
         <Tabs.List aria-label="Respuestas capturadas">
           <Tabs.Tab id="completa">
             <span className="flex items-center gap-2">
-              Completa <CountBadge value={responsesTotal} />
+              Todas <CountBadge value={responsesTotal} />
             </span>
             <Tabs.Indicator />
           </Tabs.Tab>
           <Tabs.Tab id="con-response">
             <span className="flex items-center gap-2">
-              Con response{" "}
-              <CountBadge tone="success" value={responsesOkTotal} />
+              Aprobadas <CountBadge tone="success" value={responsesOkTotal} />
             </span>
             <Tabs.Indicator />
           </Tabs.Tab>
           <Tabs.Tab id="sin-response">
             <span className="flex items-center gap-2">
-              Sin response <CountBadge tone="success" value={ccTotal} />
+              Datos CC <CountBadge tone="success" value={ccTotal} />
             </span>
             <Tabs.Indicator />
           </Tabs.Tab>

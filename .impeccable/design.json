@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-12T00:00:00Z",
+  "title": "Design System: Ranger-X Check",
+  "extensions": {
+    "colorMeta": {
+      "accent-from": {
+        "role": "primary",
+        "displayName": "Brand Violet",
+        "canonical": "oklch(58% 0.22 295)",
+        "tonalRamp": [
+          "oklch(20% 0.10 295)",
+          "oklch(30% 0.14 295)",
+          "oklch(40% 0.18 295)",
+          "oklch(50% 0.21 295)",
+          "oklch(58% 0.22 295)",
+          "oklch(68% 0.18 295)",
+          "oklch(80% 0.12 295)",
+          "oklch(92% 0.05 295)"
+        ]
+      },
+      "accent-to": {
+        "role": "primary",
+        "displayName": "Brand Cyan",
+        "canonical": "oklch(78% 0.13 195)",
+        "tonalRamp": [
+          "oklch(25% 0.06 195)",
+          "oklch(35% 0.08 195)",
+          "oklch(45% 0.10 195)",
+          "oklch(55% 0.12 195)",
+          "oklch(65% 0.13 195)",
+          "oklch(78% 0.13 195)",
+          "oklch(88% 0.09 195)",
+          "oklch(95% 0.04 195)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Solid Violet",
+        "canonical": "oklch(60% 0.19 292)",
+        "tonalRamp": [
+          "oklch(20% 0.09 292)",
+          "oklch(30% 0.13 292)",
+          "oklch(40% 0.16 292)",
+          "oklch(50% 0.18 292)",
+          "oklch(60% 0.19 292)",
+          "oklch(70% 0.15 292)",
+          "oklch(82% 0.10 292)",
+          "oklch(93% 0.04 292)"
+        ]
+      },
+      "legacy-blue": {
+        "role": "primary",
+        "displayName": "Legacy Blue (deprecated)",
+        "canonical": "oklch(55% 0.12 243)",
+        "tonalRamp": [
+          "oklch(20% 0.06 243)",
+          "oklch(30% 0.08 243)",
+          "oklch(40% 0.10 243)",
+          "oklch(48% 0.11 243)",
+          "oklch(55% 0.12 243)",
+          "oklch(66% 0.10 243)",
+          "oklch(80% 0.06 243)",
+          "oklch(92% 0.03 243)"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Field Black",
+        "canonical": "oklch(12% 0.0026 243)",
+        "tonalRamp": [
+          "oklch(12% 0.0026 243)",
+          "oklch(21.03% 0.0051 243)",
+          "oklch(25.7% 0.0038 243)",
+          "oklch(27.21% 0.0038 243)",
+          "oklch(40% 0.004 243)",
+          "oklch(55% 0.005 243)",
+          "oklch(70.5% 0.0051 243)",
+          "oklch(99.11% 0.0026 243)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Plate Gray",
+        "canonical": "oklch(21.03% 0.0051 243)",
+        "tonalRamp": [
+          "oklch(12% 0.0026 243)",
+          "oklch(21.03% 0.0051 243)",
+          "oklch(25.7% 0.0038 243)",
+          "oklch(27.21% 0.0038 243)",
+          "oklch(45% 0.004 243)",
+          "oklch(70.5% 0.0051 243)",
+          "oklch(90% 0.0026 243)",
+          "oklch(100% 0.0013 243)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Engraved Gray",
+        "canonical": "oklch(70.5% 0.0051 243)",
+        "tonalRamp": [
+          "oklch(21.03% 0.005 243)",
+          "oklch(35% 0.005 243)",
+          "oklch(45% 0.005 243)",
+          "oklch(55.17% 0.0051 243)",
+          "oklch(70.5% 0.0051 243)",
+          "oklch(82% 0.004 243)",
+          "oklch(90% 0.003 243)",
+          "oklch(97% 0.0026 243)"
+        ]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Capture Green",
+        "canonical": "oklch(73.29% 0.1945 149.51)",
+        "tonalRamp": [
+          "oklch(25% 0.08 149.51)",
+          "oklch(35% 0.11 149.51)",
+          "oklch(45% 0.14 149.51)",
+          "oklch(55% 0.17 149.51)",
+          "oklch(65% 0.19 149.51)",
+          "oklch(73.29% 0.1945 149.51)",
+          "oklch(85% 0.13 149.51)",
+          "oklch(94% 0.06 149.51)"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Reject Red",
+        "canonical": "oklch(59.4% 0.1977 23.33)",
+        "tonalRamp": [
+          "oklch(25% 0.10 23.33)",
+          "oklch(35% 0.14 23.33)",
+          "oklch(45% 0.17 23.33)",
+          "oklch(52% 0.19 23.33)",
+          "oklch(59.4% 0.1977 23.33)",
+          "oklch(70% 0.17 23.33)",
+          "oklch(83% 0.11 23.33)",
+          "oklch(93% 0.05 23.33)"
+        ]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Hold Amber",
+        "canonical": "oklch(82.03% 0.1395 75.04)",
+        "tonalRamp": [
+          "oklch(30% 0.07 75.04)",
+          "oklch(42% 0.10 75.04)",
+          "oklch(54% 0.12 75.04)",
+          "oklch(66% 0.14 75.04)",
+          "oklch(78.19% 0.1593 71.03)",
+          "oklch(82.03% 0.1395 75.04)",
+          "oklch(90% 0.09 75.04)",
+          "oklch(96% 0.04 75.04)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "readout": { "displayName": "Readout", "purpose": "The single oversized number — progress-ring center. Fira Code 800, tabular." },
+      "title": { "displayName": "Title", "purpose": "Page titles. Fixed rem, top of the document outline." },
+      "body": { "displayName": "Body", "purpose": "Prose, helper text. Public Sans, cap at 65–75ch." },
+      "data": { "displayName": "Data", "purpose": "Console rows, gate values, captured text. Fira Code 11px tabular." },
+      "label": { "displayName": "Engraved Legend", "purpose": "The one caps style — section legends, pill text, metric labels. 10px/700/uppercase/0.1em/muted." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "state-transition", "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default for hover/focus/state changes — fast, no choreography." },
+      { "name": "live-pulse", "value": "animate-pulse (motion-safe only)", "purpose": "The sanctioned brand moment — live-send dot and live-state accents pulse; suppressed under prefers-reduced-motion." }
+    ],
+    "breakpoints": [
+      { "name": "cockpit-col", "value": "300px", "purpose": "The client cockpit send column — type must not fluidly shrink below this." },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Commit actions (Enviar). Wears the brand violet→cyan gradient — one of the ≤3 sanctioned moments per screen.",
+      "html": "<button class=\"ds-btn-primary\">Enviar</button>",
+      "css": ".ds-btn-primary { background: linear-gradient(105deg, oklch(58% 0.22 295), oklch(78% 0.13 195)); color: oklch(99.11% 0 0); font-family: 'Public Sans', system-ui, sans-serif; font-weight: 600; font-size: 0.875rem; padding: 8px 16px; border: none; border-radius: 0.25rem; cursor: pointer; transition: filter 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { filter: brightness(1.08); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(60% 0.19 292); outline-offset: 2px; } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:disabled { background: oklch(27.21% 0.0038 243); color: oklch(70.5% 0.0051 243); cursor: not-allowed; filter: none; }"
+    },
+    {
+      "name": "Section Card (Rack Plate)",
+      "kind": "card",
+      "refersTo": "section-card",
+      "description": "Signature plate: flat surface, 1px edge, caps legend engraved over the top border, optional 2px live-state left rail.",
+      "html": "<section class=\"ds-plate ds-plate--sending\"><span class=\"ds-plate__legend\">NUEVO LOTE</span><p class=\"ds-plate__body\">Pega tus líneas y elige un gate.</p></section>",
+      "css": ".ds-plate { position: relative; background: oklch(21.03% 0.0051 243); border: 1px solid oklch(28% 0.0026 243); border-radius: 0.25rem; padding: 12px; color: oklch(99.11% 0.0026 243); } .ds-plate--sending { border-left: 2px solid oklch(60% 0.19 292); } .ds-plate__legend { position: absolute; top: -8px; left: 12px; height: 16px; display: flex; align-items: center; padding: 0 6px; font-family: 'Public Sans', system-ui, sans-serif; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: oklch(70.5% 0.0051 243); background: linear-gradient(to bottom, oklch(12% 0.0026 243) 50%, oklch(21.03% 0.0051 243) 50%); } .ds-plate__body { margin: 8px 0 0; font-family: 'Public Sans', system-ui, sans-serif; font-size: 0.875rem; color: oklch(70.5% 0.0051 243); }"
+    },
+    {
+      "name": "State Pill",
+      "kind": "chip",
+      "refersTo": "state-pill",
+      "description": "The only full-round shape. Alpha tint over its own semantic text color; optional pulsing dot for live state.",
+      "html": "<span class=\"ds-pill ds-pill--accent\"><span class=\"ds-pill__dot\"></span>Enviando</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 2px 8px; font-family: 'Public Sans', system-ui, sans-serif; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; } .ds-pill--accent { background: color-mix(in oklch, oklch(60% 0.19 292) 22%, transparent); color: oklch(60% 0.19 292); } .ds-pill--warning { background: color-mix(in oklch, oklch(82.03% 0.1395 75.04) 18%, transparent); color: oklch(82.03% 0.1395 75.04); } .ds-pill--danger { background: color-mix(in oklch, oklch(59.4% 0.1977 23.33) 18%, transparent); color: oklch(59.4% 0.1977 23.33); } .ds-pill__dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; } @media (prefers-reduced-motion: no-preference) { .ds-pill--accent .ds-pill__dot { animation: ds-pulse 1.6s ease-in-out infinite; } } @keyframes ds-pulse { 50% { opacity: 0.4; } }"
+    },
+    {
+      "name": "Data Row",
+      "kind": "custom",
+      "refersTo": "data-row",
+      "description": "Console-density captured-reply row: muted index, wrapping mono content, status glyph; success highlight when newly captured.",
+      "html": "<div class=\"ds-row ds-row--new\"><span class=\"ds-row__idx\">14:32</span><span class=\"ds-row__text\">CC: 4242•••• Status: Live</span><span class=\"ds-row__tag\">nueva</span><span class=\"ds-row__glyph\">✅</span></div>",
+      "css": ".ds-row { display: flex; align-items: flex-start; gap: 8px; padding: 4px 12px; border-bottom: 1px solid oklch(25% 0.0026 243); font-family: 'Fira Code', ui-monospace, monospace; font-size: 11px; line-height: 1.4; color: oklch(99.11% 0.0026 243); } .ds-row--new { background: color-mix(in oklch, oklch(73.29% 0.1945 149.51) 12%, transparent); color: oklch(73.29% 0.1945 149.51); } .ds-row__idx { flex-shrink: 0; color: oklch(70.5% 0.0051 243); font-variant-numeric: tabular-nums; } .ds-row__text { min-width: 0; flex: 1; overflow-wrap: break-word; } .ds-row__tag { flex-shrink: 0; border-radius: 0.375rem; padding: 0 4px; font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; background: color-mix(in oklch, oklch(73.29% 0.1945 149.51) 20%, transparent); color: oklch(73.29% 0.1945 149.51); } .ds-row__glyph { flex-shrink: 0; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Text/textarea field: flat field face, transparent border at rest, 2px Solid Violet focus ring, placeholder at body contrast.",
+      "html": "<input class=\"ds-input\" placeholder=\"Pega tus líneas\" />",
+      "css": ".ds-input { width: 100%; background: oklch(21.03% 0.0051 243); color: oklch(99.11% 0.0026 243); border: 1px solid transparent; border-radius: 0.25rem; padding: 8px 12px; font-family: 'Public Sans', system-ui, sans-serif; font-size: 0.875rem; transition: outline 150ms cubic-bezier(0.4,0,0.2,1); } .ds-input::placeholder { color: oklch(70.5% 0.0051 243); } .ds-input:focus-visible { outline: 2px solid oklch(60% 0.19 292); outline-offset: 0; }"
+    },
+    {
+      "name": "Mono Chip",
+      "kind": "chip",
+      "refersTo": "mono-chip",
+      "description": "Short machine identifier (gate value, name·value) in tabular mono on a secondary surface.",
+      "html": "<span class=\"ds-chip\">VISA-NA · 412</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; background: oklch(25.7% 0.0038 243); border: 1px solid oklch(28% 0.0026 243); border-radius: 0.25rem; padding: 2px 6px; font-family: 'Fira Code', ui-monospace, monospace; font-size: 11px; font-variant-numeric: tabular-nums; color: oklch(99.11% 0.0026 243); }"
+    },
+    {
+      "name": "Notice — Failure (Watchdog)",
+      "kind": "custom",
+      "refersTo": "notice-danger",
+      "description": "Account-wide failure strip (session lost / reply-rate collapse). Danger tone = a real stop. Action scoped to the owner; clears on the inbound WS event, never optimistically.",
+      "html": "<div class=\"ds-notice ds-notice--danger\" role=\"alert\"><p class=\"ds-notice__msg\">El bot dejó de responder y pausamos todos los envíos para proteger la cuenta.</p><button class=\"ds-notice__action\">Reanudar envíos</button></div>",
+      "css": ".ds-notice { border-radius: 0.25rem; padding: 8px 12px; font-family: 'Public Sans', system-ui, sans-serif; font-size: 12px; } .ds-notice--danger { border: 1px solid color-mix(in oklch, oklch(59.4% 0.1977 23.33) 50%, transparent); background: color-mix(in oklch, oklch(59.4% 0.1977 23.33) 10%, transparent); } .ds-notice__msg { margin: 0; font-weight: 600; color: oklch(59.4% 0.1977 23.33); } .ds-notice__action { margin-top: 8px; background: transparent; border: 1px solid color-mix(in oklch, oklch(59.4% 0.1977 23.33) 50%, transparent); border-radius: 0.25rem; padding: 4px 10px; font-size: 12px; font-weight: 600; color: oklch(59.4% 0.1977 23.33); cursor: pointer; } .ds-notice__action:focus-visible { outline: 2px solid oklch(60% 0.19 292); outline-offset: 2px; }"
+    },
+    {
+      "name": "Notice — Waiting (Flood)",
+      "kind": "custom",
+      "refersTo": "notice-warning",
+      "description": "Account-wide wait strip (flood-wait, admission queue). Warning tone = waiting, NOT broken — the account is fine. No action; clears when the wait expires.",
+      "html": "<div class=\"ds-notice ds-notice--warning\" role=\"status\"><p class=\"ds-notice__msg\">Telegram pidió esperar. Reanudamos solos en ~30s.</p></div>",
+      "css": ".ds-notice--warning { border: 1px solid color-mix(in oklch, oklch(82.03% 0.1395 75.04) 50%, transparent); background: color-mix(in oklch, oklch(82.03% 0.1395 75.04) 10%, transparent); } .ds-notice--warning .ds-notice__msg { color: oklch(82.03% 0.1395 75.04); }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "empty-state",
+      "description": "Invitation inside the panel it belongs to: caps eyebrow + one plain sentence + an optional REAL action. Never 'nothing here', never a dead button.",
+      "html": "<div class=\"ds-empty\"><span class=\"ds-empty__eyebrow\">SIN LOTE</span><p class=\"ds-empty__msg\">Pega tus líneas y elige un gate.</p></div>",
+      "css": ".ds-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 12px; text-align: center; } .ds-empty__eyebrow { font-family: 'Public Sans', system-ui, sans-serif; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: oklch(70.5% 0.0051 243); } .ds-empty__msg { margin: 0; font-family: 'Public Sans', system-ui, sans-serif; font-size: 0.875rem; color: oklch(70.5% 0.0051 243); }"
+    },
+    {
+      "name": "Panel Skeleton",
+      "kind": "custom",
+      "refersTo": "panel-skeleton",
+      "description": "Shape-faithful loading: row-height bars in the panel's own gutter, never a floating spinner. Shape predicts the content so the layout doesn't jump.",
+      "html": "<div class=\"ds-skel\"><span class=\"ds-skel__bar\"></span><span class=\"ds-skel__bar\"></span><span class=\"ds-skel__bar\"></span><span class=\"ds-skel__bar\"></span></div>",
+      "css": ".ds-skel { display: flex; flex-direction: column; gap: 8px; padding: 12px; } .ds-skel__bar { height: 16px; border-radius: 0.25rem; background: oklch(25.7% 0.0038 243); } @media (prefers-reduced-motion: no-preference) { .ds-skel__bar { animation: ds-shimmer 1.4s ease-in-out infinite; } } @keyframes ds-shimmer { 50% { opacity: 0.5; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Room",
+    "overview": "Ranger-X Check is an operator's console for a live system, not a brochure and not a toy. Both surfaces — client cockpit and admin panel — are designed to the same bar: calm dark plates that recede, legible state that never lies, and a single charge of brand color reserved for the moments that matter. The system is built like rack-mounted equipment: flat machined plates with a 1px hairline edge and a legend engraved over the top border, LED-style state pills, monospace readouts with tabular figures. Depth is tonal, never lifted — there are no shadows. Energy is punctuation: the Ranger-X violet→cyan gradient appears on the mark, the primary action, and a live pulse, surrounded by restraint everywhere else.",
+    "keyCharacteristics": [
+      "Control-room calm by default; brand energy only in live moments.",
+      "Flat plates, tonal depth, zero elevation.",
+      "Monospace + tabular figures for every number and identifier.",
+      "Engraved caps legends over plate edges as the signature affordance.",
+      "One meaning per semantic tone; state never conveyed by color alone.",
+      "Dark-first, but both themes are first-class and pass contrast independently."
+    ],
+    "rules": [
+      { "name": "The Moments Rule", "body": "The brand gradient lives on ≤3 surfaces of any screen: the mark, the primary action, a live pulse. A fourth element gets Solid Violet or nothing. The rarity is the identity.", "section": "colors" },
+      { "name": "The True-Gray Rule", "body": "Neutrals carry hue but ~zero chroma. Don't warm or cool the grays toward the brand to feel branded — branding is the accent and the gradient, never a tinted field.", "section": "colors" },
+      { "name": "The One-Tracking Rule", "body": "There is exactly one tracked-caps style: 10px / 700 / uppercase / 0.1em / muted. Every divergent 0.08em/0.12em copy collapses into it. Caps are CSS-only — never ship an all-caps string.", "section": "typography" },
+      { "name": "The Tabular Rule", "body": "Any digit that updates live is tabular-nums in Fira Code. Proportional figures jitter as values change; in a real-time tool that reads as instability.", "section": "typography" },
+      { "name": "The Flat-Plate Rule", "body": "Surfaces are machined plates, not raised cards. To separate two regions, step the tonal surface or add a 1px hairline — never a shadow. A drop shadow is the tell that this stopped being a control room.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve the violet→cyan gradient for ≤3 moments per screen — the mark, the primary action, a live pulse.",
+      "Do set every live-updating number in Fira Code tabular-nums so digits don't jitter.",
+      "Do build depth with tonal surface steps and the 1px hairline, never a shadow.",
+      "Do pair every semantic color with a glyph, icon, or label — state must survive color-blindness and grayscale.",
+      "Do route new accent usage to Solid Violet; treat any legacy hue-243 blue as debt to migrate.",
+      "Do keep both themes passing contrast independently, placeholders at body contrast, and a visible 2px Solid-Violet focus ring on every control.",
+      "Do use the engraved caps legend as the single section-label voice."
+    ],
+    "donts": [
+      "Don't clip the gradient to text (background-clip: text). The gradient lives on fills, the mark, and the pulse — never on letters.",
+      "Don't reintroduce the generic blue-SaaS accent (hue-243). It is the exact anti-reference the rebrand escapes.",
+      "Don't import crypto/pump aesthetics — exchange neons, moon glow, garish glowing dashboards.",
+      "Don't add gamer/esports chrome — bevels, 3D extrude, circuit-trace overlays. Keep the gradient concept, drop the chrome.",
+      "Don't go childish — pastels, emoji confetti, bubbly kid-app rounding.",
+      "Don't add a drop shadow anywhere. Separate regions with tonal steps or a hairline.",
+      "Don't use a colored border-left as a decorative stripe. The only sanctioned 2px left rail is the rack-plate's live-state indicator.",
+      "Don't wallpaper the gradient across panels or per-card. Rarity is the point.",
+      "Don't introduce a display font or oversized fluid headings. Type is functional, scale is fixed-rem."
+    ]
+  }
+}

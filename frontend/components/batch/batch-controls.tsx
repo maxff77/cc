@@ -51,7 +51,7 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
     // solid success fill on Reanudar is the system's ONE recorded exception.
     <SectionCard
       className="flex flex-col gap-2"
-      legend="CONTROLES"
+      legend="Controles"
       rail={
         live.state === "sending"
           ? "accent"
