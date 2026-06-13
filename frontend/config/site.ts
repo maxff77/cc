@@ -1,7 +1,7 @@
 export type SiteConfig = typeof siteConfig;
 
 export const siteConfig = {
-  name: "cc",
+  name: "Ranger-X Check",
   description: "Plataforma de envíos por Telegram.",
   // External reactivation channels shown on the blocked-account notice (AC4)
   // and, later, the /expired page (Story 1.4). PLACEHOLDERS — Richard swaps

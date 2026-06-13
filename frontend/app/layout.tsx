@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { Providers } from "./providers";
 
 import { siteConfig } from "@/config/site";
-import { fontMono, fontSans } from "@/config/fonts";
+import { fontDisplay, fontMono, fontSans } from "@/config/fonts";
 
 export const metadata: Metadata = {
   title: {
@@ -19,10 +19,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Hex approximations of the real --background tokens (globals.css).
+  // Hex approximations of the real --background tokens (globals.css). A meta tag
+  // cannot read a CSS var — keep these in sync if --background is retuned.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f6f8" }, // ≈ oklch(97.02% 0.0026 243)
-    { media: "(prefers-color-scheme: dark)", color: "#15181b" }, // ≈ oklch(12% 0.0026 243)
+    { media: "(prefers-color-scheme: light)", color: "#f6f5fa" }, // ≈ oklch(97.6% 0.006 280)
+    { media: "(prefers-color-scheme: dark)", color: "#16141d" }, // ≈ oklch(14% 0.022 280)
   ],
 };
 
@@ -42,6 +43,7 @@ export default function RootLayout({
           "min-h-screen text-foreground bg-background font-sans antialiased",
           fontSans.variable,
           fontMono.variable,
+          fontDisplay.variable,
         )}
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>

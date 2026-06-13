@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark" data-accent="violet">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ranger-X · Guía de theme HeroUI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Saira:ital,wght@0,500;0,600;0,700;0,800;1,800&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="theme.css" />
+<style>
+  body { padding: 0; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 56px 28px 90px; position: relative; z-index: 1; }
+  h2 { font-size: 22px; font-weight: 800; letter-spacing: -.01em; margin: 52px 0 6px; }
+  h3 { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 26px 0 12px; font-family: "Saira", sans-serif; }
+  p  { color: var(--muted); line-height: 1.6; font-size: 15px; margin: 0 0 14px; max-width: 64ch; }
+  code.inl { font-family: "JetBrains Mono", monospace; font-size: .86em; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; color: var(--foreground); }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; overflow-x: auto; font-family: "JetBrains Mono", monospace; font-size: 12.5px; line-height: 1.6; color: var(--foreground); }
+  pre .c { color: var(--muted); }
+  pre .v { color: var(--cyan); }
+  pre .p { color: var(--magenta); }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 12px; }
+  .sw { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .sw .chip { height: 64px; }
+  .sw .meta { padding: 9px 11px; }
+  .sw .name { font: 700 12px/1.2 "Saira", sans-serif; }
+  .sw .val { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--separator); }
+  th { font: 700 10px/1 "Saira", sans-serif; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  td code { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--accent); }
+  .pillrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  @media (max-width: 640px){ .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="rx-backdrop"></div>
+<div class="wrap">
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:8px">
+    <span class="font-display gradient-text" style="font-size:34px;font-weight:800;font-style:italic;padding-right:.18em;white-space:nowrap">RANGER-X</span>
+  </div>
+  <h1 style="font-size:30px;font-weight:800;letter-spacing:-.02em;margin:0 0 10px">Guía de theme · HeroUI</h1>
+  <p style="font-size:16px;max-width:62ch">Identidad neón cyan → violeta → magenta sobre el sistema "rack-plate" existente. Reemplaza el bloque de tokens canónicos en <code class="inl">styles/globals.css</code> por el de abajo — los nombres de variables son los mismos que ya usas en HeroUI, solo cambian los valores. Conserva tus semánticos (success/danger/warning) y la densidad de consola.</p>
+
+  <button onclick="const r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark')"
+    style="margin-top:6px;display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--radius-field);border:1px solid var(--border);background:var(--surface-secondary);color:var(--foreground);font:600 13px/1 'Saira',sans-serif;cursor:pointer">
+    ◐ Alternar claro / oscuro
+  </button>
+
+  <!-- PALETTE -->
+  <h2>Paleta</h2>
+  <h3>Espectro de marca</h3>
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:var(--cyan)"></div><div class="meta"><div class="name">Cyan</div><div class="val">--cyan</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue)"></div><div class="meta"><div class="name">Blue</div><div class="val">--blue</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--accent)"></div><div class="meta"><div class="name">Violet · acento</div><div class="val">--accent</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--magenta)"></div><div class="meta"><div class="name">Magenta</div><div class="val">--magenta</div></div></div>
+    <div class="sw"><div class="chip brand-fill"></div><div class="meta"><div class="name">Gradiente</div><div class="val">--brand-gradient</div></div></div>
+  </div>
+
+  <h3>Superficies &amp; semánticos</h3>
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:var(--background)"></div><div class="meta"><div class="name">Background</div><div class="val">--background</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface)"></div><div class="meta"><div class="name">Surface</div><div class="val">--surface</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface-secondary)"></div><div class="meta"><div class="name">Surface 2</div><div class="val">--surface-secondary</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--border)"></div><div class="meta"><div class="name">Border</div><div class="val">--border</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--success)"></div><div class="meta"><div class="name">Success</div><div class="val">--success</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--danger)"></div><div class="meta"><div class="name">Danger</div><div class="val">--danger</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--warning)"></div><div class="meta"><div class="name">Warning</div><div class="val">--warning</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--muted)"></div><div class="meta"><div class="name">Muted</div><div class="val">--muted</div></div></div>
+  </div>
+
+  <!-- TOKENS -->
+  <h2>Tokens — pega en <code class="inl">globals.css</code></h2>
+  <p>Sustituye tu bloque <code class="inl">/* canonical theme tokens */</code> por este. Mantiene tus nombres HeroUI y añade el espectro de marca (<code class="inl">--cyan</code>, <code class="inl">--blue</code>, <code class="inl">--magenta</code>, <code class="inl">--brand-gradient</code>).</p>
+  <pre><span class="c">/* === RANGER-X theme tokens (HeroUI) === */</span>
+:root, .light, [data-theme="light"] {
+  <span class="c">/* surfaces */</span>
+  --background: <span class="v">oklch(97.6% .006 280)</span>;
+  --surface: <span class="v">oklch(100% 0 0)</span>;
+  --surface-secondary: <span class="v">oklch(97.2% .008 282)</span>;
+  --surface-tertiary: <span class="v">oklch(94.4% .012 284)</span>;
+  --border: <span class="v">oklch(90.5% .012 286)</span>;
+  --separator: <span class="v">oklch(93% .010 286)</span>;
+  --foreground: <span class="v">oklch(23% .022 285)</span>;
+  --muted: <span class="v">oklch(50% .024 286)</span>;
+  --overlay: <span class="v">oklch(100% 0 0)</span>;  --overlay-foreground: <span class="v">oklch(23% .022 285)</span>;
+  --scrollbar: <span class="v">oklch(88% .012 286)</span>;
+  --segment: <span class="v">oklch(100% 0 0)</span>;  --segment-foreground: <span class="v">oklch(23% .022 285)</span>;
+  <span class="c">/* fields */</span>
+  --field-background: <span class="v">oklch(99% .004 280)</span>;
+  --field-border: <span class="v">oklch(88% .016 286)</span>;
+  --field-foreground: <span class="v">oklch(23% .022 285)</span>;
+  --field-placeholder: <span class="v">oklch(60% .022 286)</span>;
+  <span class="c">/* brand spectrum */</span>
+  --cyan: <span class="v">oklch(60% .150 222)</span>;
+  --blue: <span class="v">oklch(55% .190 252)</span>;
+  --accent: <span class="p">oklch(54% .230 295)</span>;  --accent-foreground: <span class="v">oklch(99% 0 0)</span>;
+  --magenta: <span class="p">oklch(56% .260 332)</span>;
+  --focus: <span class="p">oklch(54% .230 295)</span>;
+  <span class="c">/* semantics (de tu sistema) */</span>
+  --default: <span class="v">oklch(94% .003 243)</span>;  --default-foreground: <span class="v">oklch(21% .006 243)</span>;
+  --success: <span class="v">oklch(58% .150 150)</span>;  --success-foreground: <span class="v">oklch(99% 0 0)</span>;
+  --danger: <span class="v">oklch(56% .215 25)</span>;   --danger-foreground: <span class="v">oklch(99% 0 0)</span>;
+  --warning: <span class="v">oklch(70% .150 70)</span>;   --warning-foreground: <span class="v">oklch(21% .060 78)</span>;
+  --brand-gradient: <span class="p">linear-gradient(102deg, var(--cyan), var(--blue) 34%, var(--accent) 62%, var(--magenta))</span>;
+  <span class="c">/* shape + type */</span>
+  --radius: <span class="v">12px</span>;  --field-radius: <span class="v">9px</span>;
+  --font-sans: var(--font-public-sans);
+}
+
+.dark, [data-theme="dark"] {
+  color-scheme: dark;
+  --background: <span class="v">oklch(14% .022 280)</span>;
+  --surface: <span class="v">oklch(18.5% .026 282)</span>;
+  --surface-secondary: <span class="v">oklch(22.5% .030 284)</span>;
+  --surface-tertiary: <span class="v">oklch(27% .032 286)</span>;
+  --border: <span class="v">oklch(31% .035 288)</span>;
+  --separator: <span class="v">oklch(25.5% .030 286)</span>;
+  --foreground: <span class="v">oklch(96% .010 280)</span>;
+  --muted: <span class="v">oklch(68% .030 286)</span>;
+  --overlay: <span class="v">oklch(21% .005 282)</span>;  --overlay-foreground: <span class="v">oklch(99% .003 280)</span>;
+  --field-background: <span class="v">oklch(16.5% .024 282)</span>;
+  --field-border: <span class="v">oklch(33% .038 288)</span>;
+  --field-foreground: <span class="v">oklch(97% .010 280)</span>;
+  --field-placeholder: <span class="v">oklch(60% .030 286)</span>;
+  --cyan: <span class="v">oklch(80% .135 216)</span>;
+  --blue: <span class="v">oklch(66% .180 250)</span>;
+  --accent: <span class="p">oklch(64% .210 295)</span>;  --accent-foreground: <span class="v">oklch(99% 0 0)</span>;
+  --magenta: <span class="p">oklch(67% .255 332)</span>;
+  --focus: <span class="p">oklch(70% .190 295)</span>;
+  --success: <span class="v">oklch(76% .190 150)</span>;
+  --danger: <span class="v">oklch(64% .215 25)</span>;
+  --warning: <span class="v">oklch(82% .150 78)</span>;
+}</pre>
+
+  <p><strong style="color:var(--foreground)">Acento conmutable:</strong> el cliente puede preferir cyan o magenta como primario. Añade un atributo y dos reglas:</p>
+  <pre><span class="c">/* &lt;html data-accent="cyan"&gt; o "magenta" */</span>
+[data-accent="cyan"]    { --accent: var(--cyan);    --focus: var(--cyan); }
+[data-accent="magenta"] { --accent: var(--magenta); --focus: var(--magenta); }</pre>
+
+  <!-- TYPE -->
+  <h2>Tipografía</h2>
+  <div class="grid2">
+    <div class="card">
+      <div style="font:italic 800 30px/1 'Saira',sans-serif" class="gradient-text">Saira</div>
+      <p style="margin:10px 0 0">Display — títulos, legends, nav, logo. Cargar pesos 500–800 (+ italic 800 para la marca).</p>
+      <code class="inl">--font-display: "Saira"</code>
+    </div>
+    <div class="card">
+      <div style="font:600 30px/1 'Public Sans',sans-serif">Public Sans</div>
+      <p style="margin:10px 0 0">Cuerpo y formularios. Es tu <code class="inl">--font-sans</code> actual — se conserva.</p>
+      <code class="inl">--font-sans</code>
+    </div>
+    <div class="card">
+      <div style="font:500 28px/1 'JetBrains Mono',monospace">0O / l1 · 4453</div>
+      <p style="margin:10px 0 0">Datos — filas de respuestas, chips mono, métricas. Cifras tabulares, 0/O distinguibles.</p>
+      <code class="inl">--font-mono</code>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 10px">@theme</h3>
+      <pre style="margin:0;font-size:11.5px">@theme {
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-jetbrains);
+  --font-display: var(--font-saira);
+}</pre>
+    </div>
+  </div>
+
+  <!-- SHAPE / GLOW -->
+  <h2>Forma, glow y reglas de uso</h2>
+  <table>
+    <thead><tr><th>Decisión</th><th>Valor</th><th>Nota</th></tr></thead>
+    <tbody>
+      <tr><td>Radio de tarjeta</td><td><code>--radius: 12px</code></td><td>Antes 4px — más suave, sigue siendo técnico.</td></tr>
+      <tr><td>Radio de campo</td><td><code>--field-radius: 9px</code></td><td>Inputs, selects, botones.</td></tr>
+      <tr><td>Gradiente de marca</td><td><code>--brand-gradient</code></td><td>Solo en: botón primario, anillo de progreso, logo, indicador de nav activo. <strong style="color:var(--foreground)">Nunca</strong> como fondo de página.</td></tr>
+      <tr><td>Glow / neón</td><td><code>box-shadow</code> del acento a baja alfa</td><td>Nivel medio: botón primario, anillo activo, pills de estado, foco. No en superficies de datos.</td></tr>
+      <tr><td>Acento = significado</td><td>1 tono por estado</td><td>accent=envío vivo · warning=pausa/espera · danger=detener · success=entrada capturada.</td></tr>
+      <tr><td>Densidad de datos</td><td>11.5px mono, divisores 1px</td><td>Se conserva tu fila-consola; el neón vive en el chrome, no en las filas.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Pills de estado</h3>
+  <div class="pillrow">
+    <span style="display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--accent);border-radius:99px;padding:4px 10px;font:700 10px/1 'Saira',sans-serif;text-transform:uppercase;letter-spacing:.12em"><span style="width:6px;height:6px;border-radius:99px;background:currentColor"></span>Enviando</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;background:oklch(82% .15 78 / .16);color:var(--warning);border-radius:99px;padding:4px 10px;font:700 10px/1 'Saira',sans-serif;text-transform:uppercase;letter-spacing:.12em">En pausa</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;background:oklch(64% .215 25 / .16);color:var(--danger);border-radius:99px;padding:4px 10px;font:700 10px/1 'Saira',sans-serif;text-transform:uppercase;letter-spacing:.12em">Deteniendo</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-tertiary);color:var(--muted);border-radius:99px;padding:4px 10px;font:700 10px/1 'Saira',sans-serif;text-transform:uppercase;letter-spacing:.12em">Cerrada</span>
+  </div>
+
+  <p style="margin-top:48px;font-size:13px;color:var(--faint)"><span class="font-mono">RANGER-X CHECK © 2026</span> · Guía de implementación</p>
+</div>
+</body>
+</html>

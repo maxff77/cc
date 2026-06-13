@@ -1,0 +1,223 @@
+/* ============================================================================
+   RANGER-X CHECK — Design tokens
+   Built on the existing HeroUI "rack-plate" system, retuned to the
+   cyan → violet → magenta neon identity. Dark + light. Medium-neon:
+   visible accents, surfaces stay legible.
+   ============================================================================ */
+
+/* ---------- DARK (default / principal) ---------- */
+:root,
+.dark,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* base surfaces — deep violet-navy, never pure black */
+  --background:        oklch(14.0% 0.022 280);
+  --background-2:      oklch(11.5% 0.020 280);
+  --surface:           oklch(18.5% 0.026 282);
+  --surface-secondary: oklch(22.5% 0.030 284);
+  --surface-tertiary:  oklch(27.0% 0.032 286);
+  --border:            oklch(31.0% 0.035 288);
+  --border-strong:     oklch(40.0% 0.045 290);
+  --separator:         oklch(25.5% 0.030 286);
+
+  /* text */
+  --foreground:        oklch(96.0% 0.010 280);
+  --muted:             oklch(68.0% 0.030 286);
+  --faint:             oklch(52.0% 0.028 286);
+
+  /* fields */
+  --field-background:  oklch(16.5% 0.024 282);
+  --field-border:      oklch(33.0% 0.038 288);
+  --field-foreground:  oklch(97.0% 0.010 280);
+  --field-placeholder: oklch(60.0% 0.030 286);
+
+  /* brand spectrum */
+  --cyan:              oklch(80.0% 0.135 216);
+  --blue:             oklch(66.0% 0.180 250);
+  --accent:            oklch(64.0% 0.210 295);   /* violet — primary accent */
+  --accent-foreground: oklch(99.0% 0 0);
+  --accent-soft:       oklch(64.0% 0.210 295 / 0.16);
+  --magenta:           oklch(67.0% 0.255 332);
+  --focus:             oklch(70.0% 0.190 295);
+
+  /* semantics (kept from original system) */
+  --success:           oklch(76.0% 0.190 150);
+  --success-foreground:oklch(21.0% 0.060 150);
+  --danger:            oklch(64.0% 0.215 25);
+  --danger-foreground: oklch(99.0% 0 0);
+  --warning:           oklch(82.0% 0.150 78);
+  --warning-foreground:oklch(21.0% 0.060 78);
+
+  /* the hero gradient */
+  --brand-gradient: linear-gradient(102deg,
+      var(--cyan) 0%,
+      var(--blue) 34%,
+      var(--accent) 62%,
+      var(--magenta) 100%);
+  --brand-gradient-soft: linear-gradient(102deg,
+      oklch(80% 0.135 216 / .18) 0%,
+      oklch(64% 0.21 295 / .18) 55%,
+      oklch(67% 0.255 332 / .18) 100%);
+
+  /* circuit/decoration lines */
+  --circuit: oklch(70% 0.12 250 / 0.35);
+
+  /* tunables (overwritten live by Tweaks) */
+  --glow: 1;                 /* 0..1.6 neon intensity multiplier */
+  --radius: 12px;            /* card radius */
+  --radius-field: 9px;
+  --radius-sm: 7px;
+  --density: 1;              /* row padding multiplier */
+}
+
+/* ---------- LIGHT ---------- */
+.light,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --background:        oklch(97.6% 0.006 280);
+  --background-2:      oklch(99.2% 0.004 280);
+  --surface:           oklch(100% 0 0);
+  --surface-secondary: oklch(97.2% 0.008 282);
+  --surface-tertiary:  oklch(94.4% 0.012 284);
+  --border:            oklch(90.5% 0.012 286);
+  --border-strong:     oklch(84.0% 0.018 288);
+  --separator:         oklch(93.0% 0.010 286);
+
+  --foreground:        oklch(23.0% 0.022 285);
+  --muted:             oklch(50.0% 0.024 286);
+  --faint:             oklch(64.0% 0.020 286);
+
+  --field-background:  oklch(99.0% 0.004 280);
+  --field-border:      oklch(88.0% 0.016 286);
+  --field-foreground:  oklch(23.0% 0.022 285);
+  --field-placeholder: oklch(60.0% 0.022 286);
+
+  --cyan:              oklch(60.0% 0.150 222);
+  --blue:             oklch(55.0% 0.190 252);
+  --accent:            oklch(54.0% 0.230 295);
+  --accent-foreground: oklch(99.0% 0 0);
+  --accent-soft:       oklch(54.0% 0.230 295 / 0.12);
+  --magenta:           oklch(56.0% 0.260 332);
+  --focus:             oklch(54.0% 0.230 295);
+
+  --success:           oklch(58.0% 0.150 150);
+  --success-foreground:oklch(99.0% 0 0);
+  --danger:            oklch(56.0% 0.215 25);
+  --danger-foreground: oklch(99.0% 0 0);
+  --warning:           oklch(70.0% 0.150 70);
+  --warning-foreground:oklch(21.0% 0.060 78);
+
+  --brand-gradient: linear-gradient(102deg,
+      var(--cyan) 0%,
+      var(--blue) 34%,
+      var(--accent) 62%,
+      var(--magenta) 100%);
+  --brand-gradient-soft: linear-gradient(102deg,
+      oklch(60% 0.15 222 / .12) 0%,
+      oklch(54% 0.23 295 / .12) 55%,
+      oklch(56% 0.26 332 / .12) 100%);
+
+  --circuit: oklch(55% 0.14 255 / 0.18);
+}
+
+/* accent presets toggled via Tweaks (overrides --accent + --focus) */
+[data-accent="cyan"]    { --accent: var(--cyan);    --focus: var(--cyan); }
+[data-accent="magenta"] { --accent: var(--magenta); --focus: var(--magenta); }
+/* violet is the default already in :root */
+
+/* ============================================================================
+   BASE
+   ============================================================================ */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Public Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* page ambient backdrop: subtle circuit grid + corner neon bloom */
+.rx-backdrop {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 0% 0%,   oklch(64% 0.21 295 / calc(0.10 * var(--glow))) 0%, transparent 60%),
+    radial-gradient(55% 45% at 100% 0%, oklch(80% 0.135 216 / calc(0.08 * var(--glow))) 0%, transparent 55%),
+    radial-gradient(70% 60% at 100% 100%, oklch(67% 0.255 332 / calc(0.07 * var(--glow))) 0%, transparent 60%);
+}
+.rx-backdrop::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--circuit) 1px, transparent 1px),
+    linear-gradient(90deg, var(--circuit) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(120% 100% at 50% -10%, #000 0%, transparent 70%);
+          mask-image: radial-gradient(120% 100% at 50% -10%, #000 0%, transparent 70%);
+  opacity: .5;
+}
+
+/* typography roles */
+.font-display { font-family: "Saira", system-ui, sans-serif; }
+.font-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+h1, h2, h3, .display { font-family: "Saira", system-ui, sans-serif; }
+
+::selection { background: var(--accent-soft); }
+
+/* ============================================================================
+   UTILITIES
+   ============================================================================ */
+.gradient-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.brand-fill { background: var(--brand-gradient); }
+
+.glow-accent {
+  box-shadow:
+    0 0 0 1px oklch(64% 0.21 295 / calc(0.5 * var(--glow))),
+    0 6px 26px oklch(64% 0.21 295 / calc(0.32 * var(--glow)));
+}
+.glow-soft {
+  box-shadow: 0 8px 30px oklch(64% 0.21 295 / calc(0.16 * var(--glow)));
+}
+
+/* engraved-legend mask: background above the border line, surface below */
+.legend-mask {
+  background: linear-gradient(to bottom,
+    var(--background) 50%, var(--surface) 50%);
+}
+
+/* scrollbars */
+.rx-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.rx-scroll::-webkit-scrollbar-track { background: transparent; }
+.rx-scroll::-webkit-scrollbar-thumb {
+  background: var(--surface-tertiary);
+  border-radius: 99px; border: 2px solid transparent; background-clip: padding-box;
+}
+.rx-scroll::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* focus ring */
+.rx-focus:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@keyframes rx-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes rx-dash { to { stroke-dashoffset: -100; } }
+@keyframes rx-fade-up {
+  from { transform: translateY(9px); }
+  to   { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rx-enter { animation: rx-fade-up .4s cubic-bezier(.2,.7,.2,1) both; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; }
+}

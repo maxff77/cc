@@ -1,123 +1,263 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
-/* NOTE: app/layout.tsx viewport.themeColor hardcodes hex approximations of
-   the two --background values below (light #f5f6f8 / dark #15181b) — an HTML
-   meta tag cannot reference CSS variables. If you retune --background,
-   update those hexes too. */
-/* === BEGIN canonical theme tokens (heroui-theme.css — copied VERBATIM, UX-DR1/UX-DR2) === */
-/*
- * HeroUI Theme Customization
- * Add this to your global.css after importing @heroui/styles
- * Only includes variables users need to customize
- * @see https://heroui.com/docs/react/getting-started/theming
- */
+/* ============================================================================
+   RANGER-X CHECK — neon design tokens
+   Ported from the Claude Design handoff
+   (_bmad-output/planning-artifacts/ux-designs/ranger-x-handoff/theme.css),
+   retuned to the cyan → violet → magenta neon identity. Dark + light.
 
+   RULE: HeroUI maps token NAMES → Tailwind utilities via its `@theme inline`.
+   So every HeroUI-required token name is KEPT; only VALUES change, plus new
+   Ranger-X tokens are added. These blocks are declared AFTER `@heroui/styles`
+   so explicit values win over HeroUI's derived `--radius-*`/`--*-soft` by source
+   order.
+
+   NOTE: app/layout.tsx viewport.themeColor hardcodes hex approximations of the
+   two --background values below (light ≈ #f6f5fa / dark ≈ #16141d). If you
+   retune --background, update those hexes too — a meta tag can't read a CSS var.
+   ============================================================================ */
+
+/* ---------- LIGHT (also carries the theme-independent tunables) ---------- */
 :root,
 .light,
 .default,
 [data-theme="light"],
 [data-theme="default"] {
-  /* Theme Colors (Light Mode) */
-  --accent: oklch(60% 0.19 292);
-  --accent-foreground: oklch(99.11% 0 0);
-  /* Ranger-X brand gradient stops (violet → cyan) — shared by .gradient-moment. */
-  --accent-from: oklch(58% 0.22 295);
-  --accent-to: oklch(78% 0.13 195);
-  --background: oklch(97.02% 0.0026 243.00);
-  --border: oklch(90.00% 0.0026 243.00);
-  --danger: oklch(65.32% 0.2340 24.44);
-  --danger-foreground: oklch(99.11% 0 0);
-  --default: oklch(94.00% 0.0026 243.00);
-  --default-foreground: oklch(21.03% 0.0059 243.00);
-  --field-background: oklch(100.00% 0.0013 243.00);
-  /* Light theme only: surface and field-background are both pure white, so a
-     transparent field-border made inputs vanish into plates. Borrow the
-     --border token for a visible edge (dark theme keeps transparent — its
-     field-background already sits below surface). */
-  --field-border: oklch(90.00% 0.0026 243.00);
-  --field-foreground: oklch(21.03% 0.0026 243.00);
-  --field-placeholder: oklch(55.17% 0.0051 243.00);
-  --focus: oklch(60% 0.19 292);
-  --foreground: oklch(21.03% 0.0026 243.00);
-  --muted: oklch(55.17% 0.0051 243.00);
-  --overlay: oklch(100.00% 0.0008 243.00);
-  --overlay-foreground: oklch(21.03% 0.0026 243.00);
-  --scrollbar: oklch(87.10% 0.0026 243.00);
-  --segment: oklch(100.00% 0.0026 243.00);
-  --segment-foreground: oklch(21.03% 0.0026 243.00);
-  --separator: oklch(92.00% 0.0026 243.00);
-  --success: oklch(73.29% 0.1945 149.51);
-  --success-foreground: oklch(21.03% 0.0059 149.51);
-  --surface: oklch(100.00% 0.0013 243.00);
-  --surface-foreground: oklch(21.03% 0.0026 243.00);
-  --surface-secondary: oklch(95.24% 0.0020 243.00);
-  --surface-secondary-foreground: oklch(21.03% 0.0026 243.00);
-  --surface-tertiary: oklch(93.73% 0.0020 243.00);
-  --surface-tertiary-foreground: oklch(21.03% 0.0026 243.00);
-  --warning: oklch(78.19% 0.1593 71.03);
-  --warning-foreground: oklch(21.03% 0.0059 71.03);
+  color-scheme: light;
 
-  /* Border Radius */
-  --radius: 0.25rem;
-  --field-radius: 0.25rem;
+  /* base surfaces */
+  --background:                   oklch(97.6% 0.006 280);
+  --background-2:                 oklch(99.2% 0.004 280);
+  --surface:                      oklch(100% 0 0);
+  --surface-foreground:           oklch(23.0% 0.022 285);
+  --surface-secondary:            oklch(97.2% 0.008 282);
+  --surface-secondary-foreground: oklch(23.0% 0.022 285);
+  --surface-tertiary:             oklch(94.4% 0.012 284);
+  --surface-tertiary-foreground:  oklch(23.0% 0.022 285);
+  --border:                       oklch(90.5% 0.012 286);
+  --border-strong:                oklch(84.0% 0.018 288);
+  --separator:                    oklch(93.0% 0.010 286);
 
-  /* Font Family */
-  /* Make sure to load Public Sans font in your app */
+  /* text */
+  --foreground:                   oklch(23.0% 0.022 285);
+  --muted:                        oklch(50.0% 0.024 286);
+  --faint:                        oklch(64.0% 0.020 286);
+
+  /* neutral (HeroUI 'default') */
+  --default:                      oklch(94.4% 0.012 284);
+  --default-foreground:           oklch(23.0% 0.022 285);
+
+  /* fields */
+  --field-background:             oklch(99.0% 0.004 280);
+  --field-border:                 oklch(88.0% 0.016 286);
+  --field-foreground:             oklch(23.0% 0.022 285);
+  --field-placeholder:            oklch(60.0% 0.022 286);
+
+  /* overlays / segments / scrollbar (HeroUI-required → mapped to neon surfaces) */
+  --overlay:                      oklch(100% 0 0);
+  --overlay-foreground:           oklch(23.0% 0.022 285);
+  --segment:                      oklch(100% 0 0);
+  --segment-foreground:           oklch(23.0% 0.022 285);
+  --scrollbar:                    oklch(84.0% 0.018 288);
+
+  /* brand spectrum */
+  --cyan:                         oklch(60.0% 0.150 222);
+  --blue:                         oklch(55.0% 0.190 252);
+  --accent:                       oklch(54.0% 0.230 295);   /* violet — primary accent */
+  --accent-foreground:            oklch(99.0% 0 0);
+  --accent-soft:                  oklch(54.0% 0.230 295 / 0.12);
+  --magenta:                      oklch(56.0% 0.260 332);
+  --focus:                        oklch(54.0% 0.230 295);
+  /* legacy .gradient-moment endpoints (kept for back-compat) */
+  --accent-from:                  oklch(60.0% 0.150 222);
+  --accent-to:                    oklch(56.0% 0.260 332);
+
+  /* semantics */
+  --success:                      oklch(58.0% 0.150 150);
+  --success-foreground:           oklch(99.0% 0 0);
+  --danger:                       oklch(56.0% 0.215 25);
+  --danger-foreground:            oklch(99.0% 0 0);
+  --warning:                      oklch(70.0% 0.150 70);
+  --warning-foreground:           oklch(21.0% 0.060 78);
+
+  /* the hero gradient + soft wash + circuit decoration */
+  --brand-gradient: linear-gradient(102deg,
+      var(--cyan) 0%, var(--blue) 34%, var(--accent) 62%, var(--magenta) 100%);
+  --brand-gradient-soft: linear-gradient(102deg,
+      oklch(60% 0.15 222 / .12) 0%, oklch(54% 0.23 295 / .12) 55%, oklch(56% 0.26 332 / .12) 100%);
+  --circuit: oklch(55% 0.14 255 / 0.18);
+
+  /* radius + tunables (theme-independent: :root always matches).
+     --radius/--field-radius drive HeroUI's build-inlined utility scale (rounded-*).
+     --radius-field/--radius-sm are read at RUNTIME via inline var() by the
+     (deferred) native Ranger-X primitives — same as the handoff lib.jsx. */
+  --radius:        0.75rem;     /* 12px card radius — drives HeroUI's --radius-* scale */
+  --field-radius:  0.5625rem;   /* 9px */
+  --radius-field:  9px;
+  --radius-sm:     7px;
+  --glow:          1;           /* 0..1.6 neon intensity multiplier */
+  --density:       1;           /* row padding multiplier */
+
+  /* Font Family — loaded via next/font in config/fonts.ts */
   --font-sans: var(--font-public-sans);
 }
 
+/* ---------- DARK (default / principal) ---------- */
 .dark,
 [data-theme="dark"] {
   color-scheme: dark;
-  /* Theme Colors (Dark Mode) */
-  --accent: oklch(60% 0.19 292);
-  --accent-foreground: oklch(99.11% 0 0);
-  /* Ranger-X brand gradient stops (violet → cyan) — shared by .gradient-moment. */
-  --accent-from: oklch(58% 0.22 295);
-  --accent-to: oklch(78% 0.13 195);
-  --background: oklch(12.00% 0.0026 243.00);
-  --border: oklch(28.00% 0.0026 243.00);
-  --danger: oklch(59.40% 0.1977 23.33);
-  --danger-foreground: oklch(99.11% 0 0);
-  --default: oklch(27.40% 0.0026 243.00);
-  --default-foreground: oklch(99.11% 0 0);
-  --field-background: oklch(21.03% 0.0051 243.00);
-  --field-border: transparent;
-  --field-foreground: oklch(99.11% 0.0026 243.00);
-  --field-placeholder: oklch(70.50% 0.0051 243.00);
-  --focus: oklch(60% 0.19 292);
-  --foreground: oklch(99.11% 0.0026 243.00);
-  --muted: oklch(70.50% 0.0051 243.00);
-  --overlay: oklch(21.03% 0.0051 243.00);
-  --overlay-foreground: oklch(99.11% 0.0026 243.00);
-  --scrollbar: oklch(70.50% 0.0026 243.00);
-  --segment: oklch(39.64% 0.0026 243.00);
-  --segment-foreground: oklch(99.11% 0.0026 243.00);
-  --separator: oklch(25.00% 0.0026 243.00);
-  --success: oklch(73.29% 0.1945 149.51);
-  --success-foreground: oklch(21.03% 0.0059 149.51);
-  --surface: oklch(21.03% 0.0051 243.00);
-  --surface-foreground: oklch(99.11% 0.0026 243.00);
-  --surface-secondary: oklch(25.70% 0.0038 243.00);
-  --surface-secondary-foreground: oklch(99.11% 0.0026 243.00);
-  --surface-tertiary: oklch(27.21% 0.0038 243.00);
-  --surface-tertiary-foreground: oklch(99.11% 0.0026 243.00);
-  --warning: oklch(82.03% 0.1395 75.04);
-  --warning-foreground: oklch(21.03% 0.0059 75.04);
+
+  /* base surfaces — deep violet-navy, never pure black */
+  --background:                   oklch(14.0% 0.022 280);
+  --background-2:                 oklch(11.5% 0.020 280);
+  --surface:                      oklch(18.5% 0.026 282);
+  --surface-foreground:           oklch(96.0% 0.010 280);
+  --surface-secondary:            oklch(22.5% 0.030 284);
+  --surface-secondary-foreground: oklch(96.0% 0.010 280);
+  --surface-tertiary:             oklch(27.0% 0.032 286);
+  --surface-tertiary-foreground:  oklch(96.0% 0.010 280);
+  --border:                       oklch(31.0% 0.035 288);
+  --border-strong:                oklch(40.0% 0.045 290);
+  --separator:                    oklch(25.5% 0.030 286);
+
+  /* text */
+  --foreground:                   oklch(96.0% 0.010 280);
+  --muted:                        oklch(68.0% 0.030 286);
+  --faint:                        oklch(52.0% 0.028 286);
+
+  /* neutral (HeroUI 'default') */
+  --default:                      oklch(27.0% 0.032 286);
+  --default-foreground:           oklch(96.0% 0.010 280);
+
+  /* fields */
+  --field-background:             oklch(16.5% 0.024 282);
+  --field-border:                 oklch(33.0% 0.038 288);
+  --field-foreground:             oklch(97.0% 0.010 280);
+  --field-placeholder:            oklch(60.0% 0.030 286);
+
+  /* overlays / segments / scrollbar */
+  --overlay:                      oklch(18.5% 0.026 282);
+  --overlay-foreground:           oklch(96.0% 0.010 280);
+  --segment:                      oklch(22.5% 0.030 284);
+  --segment-foreground:           oklch(96.0% 0.010 280);
+  --scrollbar:                    oklch(40.0% 0.045 290);
+
+  /* brand spectrum */
+  --cyan:                         oklch(80.0% 0.135 216);
+  --blue:                         oklch(66.0% 0.180 250);
+  --accent:                       oklch(64.0% 0.210 295);
+  --accent-foreground:            oklch(99.0% 0 0);
+  --accent-soft:                  oklch(64.0% 0.210 295 / 0.16);
+  --magenta:                      oklch(67.0% 0.255 332);
+  --focus:                        oklch(70.0% 0.190 295);
+  --accent-from:                  oklch(80.0% 0.135 216);
+  --accent-to:                    oklch(67.0% 0.255 332);
+
+  /* semantics */
+  --success:                      oklch(76.0% 0.190 150);
+  --success-foreground:           oklch(21.0% 0.060 150);
+  --danger:                       oklch(64.0% 0.215 25);
+  --danger-foreground:            oklch(99.0% 0 0);
+  --warning:                      oklch(82.0% 0.150 78);
+  --warning-foreground:           oklch(21.0% 0.060 78);
+
+  /* the hero gradient + soft wash + circuit decoration */
+  --brand-gradient: linear-gradient(102deg,
+      var(--cyan) 0%, var(--blue) 34%, var(--accent) 62%, var(--magenta) 100%);
+  --brand-gradient-soft: linear-gradient(102deg,
+      oklch(80% 0.135 216 / .18) 0%, oklch(64% 0.21 295 / .18) 55%, oklch(67% 0.255 332 / .18) 100%);
+  --circuit: oklch(70% 0.12 250 / 0.35);
 }
-/* === END canonical theme tokens === */
 
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-	--font-sans: var(--font-public-sans), sans-serif;
-	--font-mono: var(--font-fira-code), monospace;
+  --font-sans: var(--font-public-sans), sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+  --font-display: var(--font-saira), "Saira", sans-serif;
 }
 
-/* Ranger-X brand gradient (violet → cyan). The ONE source for every gradient
-   moment (mark badge, Enviar fill, live pulse) so they stay in lockstep — DRY.
-   FILLS only; never background-clip:text on letters (hard ban). */
-.gradient-moment {
-	background-image: linear-gradient(135deg, var(--accent-from), var(--accent-to));
+/* ============================================================================
+   BASE + UTILITIES
+   ============================================================================ */
+* { box-sizing: border-box; }
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-soft); }
+
+/* Ranger-X brand gradient — the ONE source for every gradient moment. The
+   legacy `.gradient-moment` now aliases the 4-stop neon brand gradient, so its
+   existing callers (state-pill pulse, progress ring, nav badge) upgrade for
+   free. Gradient-on-TEXT is now sanctioned (the wordmark) via `.gradient-text`. */
+.gradient-moment { background-image: var(--brand-gradient); }
+.brand-fill { background: var(--brand-gradient); }
+.gradient-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+
+/* page ambient backdrop: subtle circuit grid + corner neon bloom */
+.rx-backdrop {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 0% 0%,   oklch(64% 0.21 295 / calc(0.10 * var(--glow))) 0%, transparent 60%),
+    radial-gradient(55% 45% at 100% 0%, oklch(80% 0.135 216 / calc(0.08 * var(--glow))) 0%, transparent 55%),
+    radial-gradient(70% 60% at 100% 100%, oklch(67% 0.255 332 / calc(0.07 * var(--glow))) 0%, transparent 60%);
+}
+.rx-backdrop::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--circuit) 1px, transparent 1px),
+    linear-gradient(90deg, var(--circuit) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(120% 100% at 50% -10%, #000 0%, transparent 70%);
+          mask-image: radial-gradient(120% 100% at 50% -10%, #000 0%, transparent 70%);
+  opacity: .5;
+}
+
+/* engraved-legend mask: background above the border line, surface below */
+.legend-mask {
+  background: linear-gradient(to bottom, var(--background) 50%, var(--surface) 50%);
+}
+
+/* glow utilities (scale with --glow; 0 = no glow) */
+.glow-accent {
+  box-shadow:
+    0 0 0 1px oklch(64% 0.21 295 / calc(0.5 * var(--glow))),
+    0 6px 26px oklch(64% 0.21 295 / calc(0.32 * var(--glow)));
+}
+.glow-soft { box-shadow: 0 8px 30px oklch(64% 0.21 295 / calc(0.16 * var(--glow))); }
+
+/* scrollbars */
+.rx-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.rx-scroll::-webkit-scrollbar-track { background: transparent; }
+.rx-scroll::-webkit-scrollbar-thumb {
+  background: var(--surface-tertiary);
+  border-radius: 99px; border: 2px solid transparent; background-clip: padding-box;
+}
+.rx-scroll::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* focus ring */
+.rx-focus:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+@keyframes rx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes rx-dash { to { stroke-dashoffset: -100; } }
+@keyframes rx-fade-up { from { transform: translateY(9px); } to { transform: translateY(0); } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .rx-enter { animation: rx-fade-up .4s cubic-bezier(.2, .7, .2, 1) both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;   /* stop infinite loops (spinners) strobing */
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
