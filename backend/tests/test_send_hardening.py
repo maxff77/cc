@@ -24,11 +24,12 @@ from app.db.base import async_session_factory
 from app.db.models import Batch, BatchLine, SendLog, User
 from app.db.repos import batches as batches_repo
 from app.db.repos import send_log as send_log_repo
-from httpx import AsyncClient
+from app.main import app
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 from telethon.errors import FloodWaitError
 
-from tests.conftest import FakeGateway
+from tests.conftest import FakeGateway, cleanup_users, login, seed_user
 
 # --- Local helpers -----------------------------------------------------------
 
@@ -510,6 +511,48 @@ async def test_owner_batch_is_never_cancelled_by_expiry(
         async with async_session_factory() as session:
             await session.execute(delete(Batch).where(Batch.id == batch_id))
             await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_staff_batch_not_cancelled_when_tenant_has_expired_client(
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """Regression: a SHARED "house" tenant holds staff (admin/owner) AND a
+    client whose plan lapsed. ``tenant_plan_expired`` is tenant-WIDE, so the
+    expired client used to poison the admin's own batch (cancelled at claim
+    time) — owner/admin send must be exempt (priority >= 1), matching the auth
+    gate's ``is_plan_expired``. Without the fix the batch lands 'cancelled' and
+    nothing is sent."""
+    admin = await seed_user("admin", email_prefix="test-shared")
+    expired_client = await seed_user(
+        "client",
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        email_prefix="test-shared",
+    )
+    # Co-locate the expired client in the admin's tenant (the seed/house tenant
+    # shape: owner + admin + client all on tenant_id 1 in production).
+    async with async_session_factory() as session:
+        row = await session.get(User, expired_client.id)
+        assert row is not None
+        row.tenant_id = admin.tenant_id
+        await session.commit()
+
+    http = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    try:
+        await login(http, admin.email)
+        batch_id = await _post_batch(http, "uno", gate["id"])  # priority 1 (admin)
+        assert await send_worker.step() is True
+        assert fake_gateway.sent == [f"{gate['value']} uno"]
+        assert await _batch_state(batch_id) == "completed"
+    finally:
+        await http.aclose()
+        async with async_session_factory() as session:
+            await session.execute(
+                delete(Batch).where(Batch.tenant_id == admin.tenant_id)
+            )
+            await session.commit()
+        await cleanup_users({admin.email, expired_client.email})
 
 
 # --- Global FloodWait window (2-4 deferred #1) -------------------------------------

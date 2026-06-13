@@ -295,7 +295,14 @@ async def step() -> bool:
         # only point where the pipeline would SPEND a channel slot on the
         # tenant. A paused batch of an expired tenant is never picked, so it
         # needs no active cancellation (1.4's lockout already shuts it out).
-        expired = await users_repo.tenant_plan_expired(session, pick.tenant_id)
+        # ONLY client batches (priority 0) are subject to expiry — owner/admin
+        # carry no plan (mirror of services.plans.is_plan_expired, which the
+        # auth gate uses). tenant_plan_expired is tenant-WIDE EXISTS, so
+        # without this guard a staff batch in a SHARED "house" tenant that
+        # also holds an expired client would be wrongly cancelled.
+        expired = pick.priority == 0 and await users_repo.tenant_plan_expired(
+            session, pick.tenant_id
+        )
         if not expired:
             line = await batches_repo.next_queued_line_for_tenant(
                 session, pick.tenant_id

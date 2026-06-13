@@ -131,9 +131,14 @@ async def tenant_plan_expired(session: AsyncSession, tenant_id: int) -> bool:
     <= now()`` — expiry decided in SQL (repo convention, see
     ``get_active_session_with_user``; ``services/plans.is_plan_expired`` is
     the pure mirror for already-loaded rows). The send worker checks it at
-    claim time to cancel an expired tenant's queued lines mid-batch. The
-    owner's tenant has no 'client' user ⇒ always ``False`` ⇒ owner batches
-    are never cancelled.
+    claim time to cancel an expired client's queued lines mid-batch.
+
+    This is tenant-WIDE (True iff ANY client in the tenant lapsed). The send
+    worker therefore consults it ONLY for client batches (priority 0):
+    owner/admin batches carry no plan and are exempt at the call site — a
+    shared "house" tenant holding staff users alongside an expired client must
+    not cancel staff sends (mirror of ``services.plans.is_plan_expired``, which
+    exempts non-clients for the auth gate).
     """
     stmt = (
         select(User.id)
