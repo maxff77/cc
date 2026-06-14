@@ -12,6 +12,7 @@ are GLOBAL/cross-tenant by design (an admin manages all clients) — see the
 """
 
 import logging
+import math
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -30,6 +31,7 @@ from app.api.sessions import (
 )
 from app.core import send_worker
 from app.core.redact import redact_reply_text
+from app.core.scheduler import scheduler
 from app.db.base import get_session
 from app.db.models import Gate, GateCategory, User
 from app.db.repos import audit as audit_repo
@@ -49,6 +51,7 @@ from app.errors import (
     invalid_contact,
     invalid_plan_days,
     invalid_renewal,
+    invalid_send_interval,
     renewal_would_shorten,
     session_not_found,
     tenant_not_found,
@@ -56,6 +59,7 @@ from app.errors import (
 )
 from app.services import admission as admission_service
 from app.services import auth as auth_service
+from app.services import pacing as pacing_service
 from app.services import plans as plans_service
 from app.services import users as users_service
 
@@ -662,6 +666,60 @@ async def update_admission(
     await session.commit()
     send_worker.wake()
     return AdmissionOut(max_active_senders=body.max_active_senders)
+
+
+# --- Send interval (configurable pacing) -------------------------------------
+#
+# Owner-only knob: the constant interval between sends on the shared account
+# (the scheduler floor ``G``). Lives in ``system_settings`` (hot-configurable,
+# durable). Bounded 2–30s server-side — lowering it raises ban risk, so a
+# client/admin can never touch it.
+
+
+class IntervalOut(BaseModel):
+    interval_seconds: float
+
+
+class UpdateIntervalRequest(BaseModel):
+    interval_seconds: float
+
+
+@router.get("/interval", response_model=IntervalOut)
+async def get_interval(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> IntervalOut:
+    """Current send interval in seconds (env default when unset)."""
+    return IntervalOut(interval_seconds=await pacing_service.get_interval(session))
+
+
+@router.put("/interval", response_model=IntervalOut)
+async def update_interval(
+    body: UpdateIntervalRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> IntervalOut:
+    """Set the constant send interval (seconds), bounded 2–30s.
+
+    Bounds checked in the route (invalid_admission_cap idiom — a clean error
+    code, not a raw 422). Applied live to the scheduler floor after commit;
+    NO ``send_worker.wake()`` on purpose — pacing is wake-immune, so a control
+    never makes the shared account send faster mid-sleep. The FloodWait
+    governor keeps self-tuning the live pace UP from this new floor.
+    """
+    # Reject NaN/±Inf explicitly — a chained ``MIN <= x <= MAX`` happens to
+    # drop them (NaN compares False), but that is correctness-by-accident on a
+    # ban-safety knob; ``isfinite`` makes the intent refactor-proof.
+    if not math.isfinite(body.interval_seconds) or not (
+        pacing_service.INTERVAL_MIN
+        <= body.interval_seconds
+        <= pacing_service.INTERVAL_MAX
+    ):
+        raise invalid_send_interval()
+    await pacing_service.set_interval(session, body.interval_seconds)
+    await session.commit()
+    scheduler.set_floor(body.interval_seconds)
+    return IntervalOut(interval_seconds=body.interval_seconds)
 
 
 # --- Gate category CRUD (Story 2.2, owner addition) --------------------------

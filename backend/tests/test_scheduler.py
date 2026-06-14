@@ -119,6 +119,48 @@ def test_governor_decays_one_step_per_quiet_window() -> None:
     assert sched.interval(7) == 4.0  # never below the configured floor
 
 
+# --- Unit: configurable floor (set_floor) -------------------------------------
+
+
+def test_set_floor_snaps_to_value_with_no_active_flood() -> None:
+    """Steady state (no live FloodWait): raising or lowering snaps instantly."""
+    sched = Scheduler()
+    sched.set_floor(2.0)
+    assert sched.floor == 2.0
+    assert sched.g_min == 2.0
+    assert sched.interval(1) == 2.0  # applies on the very next send
+    sched.set_floor(8.0)
+    assert sched.g_min == 8.0  # raise snaps too
+
+
+def test_set_floor_keeps_governor_elevation_mid_flood() -> None:
+    """Mid-flood the live pace keeps its elevation; only the floor moves."""
+    clock = FakeClock()
+    sched = Scheduler(now=clock)
+    sched.note_flood_wait(0.0)  # g_min 4.0 → 6.0, flood active
+    sched.set_floor(2.0)
+    assert sched.floor == 2.0
+    assert sched.g_min == 6.0  # max(elevated, new floor) — not dropped
+
+
+def test_decay_converges_to_runtime_floor_not_env_default() -> None:
+    """The critical wiring: decay returns to the CONFIGURED floor (2.0),
+    never the env constant (4.0) and never below the new floor."""
+    clock = FakeClock()
+    sched = Scheduler(now=clock)
+    sched.set_floor(2.0)
+    sched.note_flood_wait(0.0)  # 2.0 → 3.0
+    sched.note_flood_wait(0.0)  # 3.0 → 4.5
+    assert sched.g_min == 4.5
+
+    clock.advance(600.0)
+    assert sched.interval(1) == 3.0  # 4.5 ÷1.5
+    clock.advance(600.0)
+    assert sched.interval(1) == 2.0  # 3.0 ÷1.5 → the runtime floor
+    clock.advance(600.0)
+    assert sched.interval(1) == 2.0  # never below it (would be 4.0 if buggy)
+
+
 # --- Unit: round-robin fairness (AC 1) -----------------------------------------
 
 

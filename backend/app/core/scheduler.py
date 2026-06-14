@@ -49,6 +49,12 @@ class Scheduler:
 
     def reset(self) -> None:
         """Forget cursor + governor state (tests; equivalent to a restart)."""
+        # ``_floor`` is the configured interval (the constant ``G``); ``_g_min``
+        # is the LIVE value the governor raises above it on FloodWait and decays
+        # back toward. Both start from the env default; ``set_floor`` (owner UI,
+        # Story: configurable interval) and the boot loader move the floor at
+        # runtime, which is why decay reads ``self._floor`` not the env constant.
+        self._floor: float = settings.scheduler_g_min_seconds
         self._g_min: float = settings.scheduler_g_min_seconds
         self._last_flood_at: float | None = None
         self._flood_until: float = 0.0
@@ -72,6 +78,27 @@ class Scheduler:
         the worker's next turn — accepted, the read is observability.
         """
         return self._g_min
+
+    @property
+    def floor(self) -> float:
+        """Configured interval the governor decays back to (owner-tunable)."""
+        return self._floor
+
+    def set_floor(self, seconds: float) -> None:
+        """Set the configured interval live (owner UI / boot loader).
+
+        Re-baselines without fighting an active FloodWait: in steady state
+        (no live FloodWait) the live value snaps straight to the new floor so
+        a lowered interval applies on the next send, not after a decay window;
+        mid-flood it keeps any governor elevation (``max``) and decays toward
+        the new floor afterwards. Always clamped into ``[floor, ceiling]`` —
+        a control never makes the account send below its safe floor.
+        """
+        self._floor = seconds
+        if self._last_flood_at is None:
+            self._g_min = min(seconds, _G_MIN_CEIL)
+        else:
+            self._g_min = min(max(self._g_min, seconds), _G_MIN_CEIL)
 
     @property
     def flood_events_total(self) -> int:
@@ -120,7 +147,7 @@ class Scheduler:
 
     def _maybe_decay(self) -> None:
         """Lazy decay: one ÷1.5 step per 600s window without FloodWaits."""
-        floor = settings.scheduler_g_min_seconds
+        floor = self._floor
         if self._last_flood_at is None or self._g_min <= floor:
             return
         if self._now() - self._last_flood_at >= _GOVERNOR_DECAY_SECONDS:

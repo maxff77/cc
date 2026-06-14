@@ -36,6 +36,7 @@ from app.core.telegram import gateway
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory, engine
 from app.errors import AppError
+from app.services import pacing as pacing_service
 from app.services import targets as targets_service
 
 
@@ -57,6 +58,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with async_session_factory() as boot_db:
         await targets_service.ensure_seeded(boot_db)
         await targets_service.reload_gateway(boot_db)
+        # Restore the owner-configured send interval into the scheduler floor
+        # so a restart preserves the cadence (no-op when unset → env default).
+        await pacing_service.apply_persisted(boot_db)
     # Restore a persisted watchdog latch BEFORE the worker can claim anything
     # (Story 4.1, AC 3: a deploy/restart never resumes sending on its own).
     await watchdog.load_persisted()

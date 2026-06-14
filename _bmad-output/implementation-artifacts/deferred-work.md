@@ -76,3 +76,9 @@ Open design questions for the spec:
 - Trivial part regardless of direction: `scheduler_g_min_seconds` default 3.0 → **4.0** (`backend/app/config.py:63`) + `.env.example`.
 - Interaction with the FloodWait governor (`note_flood_wait` raises `g_min` ×1.5, `_G_MIN_CEIL=30`) and lazy decay — keep both.
 - "detectara automaticamente la concurrencia": n already = `active_senders` (non-paused) from the repo; reuse it, no new detection needed.
+
+## Flaky test: test_flood_window_gates_the_next_claim — surfaced 2026-06-14
+
+Surfaced during the `spec-configurable-send-interval` review (NOT caused by it — the acceptance auditor confirmed it fails at the same ~3/8 rate on the clean baseline `177d110` with the feature stashed out). `backend/tests/test_send_hardening.py:625` opens a real 0.4s FloodWait window (`scheduler.note_flood_wait(0.4)`) then asserts `await asyncio.wait_for(send_worker.step(), timeout=2.0) is True`. Under event-loop jitter against the wake-immune `sleep_paced` gate, `step()` occasionally observes `flood_remaining()==0` and returns `False`, failing the assert non-deterministically.
+
+Fix options (separate, focused change): inject/fake the clock for the flood window (the scheduler already takes an injectable `now`), or widen the window well above the timeout. Keep the FloodWait/governor/window semantics — only the test timing is fragile.

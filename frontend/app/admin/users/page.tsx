@@ -120,6 +120,9 @@ export default function AdminUsersPage() {
 
           {/* Owner knob: admission-control cap (Story 4.2). */}
           {isOwner && <AdmissionControlCard />}
+
+          {/* Owner knob: constant send interval (configurable pacing). */}
+          {isOwner && <SendIntervalCard />}
         </div>
 
         {/* Right zone: the users table. */}
@@ -491,6 +494,132 @@ function AdmissionControlCard() {
           <Button
             className="sm:mb-1"
             isDisabled={mutation.isPending || admission.isLoading}
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Guardando…" : "Guardar"}
+          </Button>
+        </Form>
+      )}
+    </section>
+  );
+}
+
+// --- Send interval (configurable pacing, owner only) -----------------------
+
+interface IntervalOut {
+  interval_seconds: number;
+}
+
+const INTERVAL_KEY = ["admin-interval"] as const;
+const INTERVAL_MIN = 2;
+const INTERVAL_MAX = 30;
+
+// Decimal-aware gate (0.5s steps allowed); backend re-enforces 2..30.
+function isValidInterval(value: string): boolean {
+  const v = value.trim();
+  const n = Number(v);
+
+  return /^\d+(\.\d+)?$/.test(v) && n >= INTERVAL_MIN && n <= INTERVAL_MAX;
+}
+
+function SendIntervalCard() {
+  const queryClient = useQueryClient();
+  // null = untouched → render the server value; editing overrides it.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  const interval = useQuery({
+    queryKey: INTERVAL_KEY,
+    queryFn: () => api.get<IntervalOut>("/api/admin/interval"),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (seconds: number) =>
+      api.put<IntervalOut>("/api/admin/interval", {
+        interval_seconds: seconds,
+      }),
+    onSuccess: (data) => {
+      setDraft(null);
+      setBanner(null);
+      queryClient.setQueryData(INTERVAL_KEY, data);
+    },
+    onError: (err) => {
+      // invalid_send_interval (and anything else) carries the server's
+      // Spanish message — render it verbatim ({code, message} contract).
+      setBanner(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  const value = draft ?? String(interval.data?.interval_seconds ?? "");
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (mutation.isPending) return;
+    setError(null);
+    setBanner(null);
+
+    if (!isValidInterval(value)) {
+      setError(
+        `Indica un intervalo entre ${INTERVAL_MIN} y ${INTERVAL_MAX} segundos.`,
+      );
+
+      return;
+    }
+    mutation.mutate(Number(value));
+  }
+
+  return (
+    <section className="mb-6 rounded-lg border border-default/30 p-4">
+      <h2 className="mb-1 text-lg font-medium">Intervalo de envío</h2>
+      <p className="mb-3 text-sm text-default-500">
+        Segundos entre cada mensaje en la cuenta compartida. Bajarlo acelera el
+        envío pero AUMENTA el riesgo de baneo de Telegram — el piso de{" "}
+        {INTERVAL_MIN}s protege la cuenta. Aplica en vivo, sin reinicio.
+      </p>
+
+      {banner && (
+        <Alert className="mb-3" status="danger">
+          {banner}
+        </Alert>
+      )}
+
+      {interval.isError ? (
+        <Alert status="danger">
+          No pudimos cargar el intervalo. Recarga la página.
+        </Alert>
+      ) : (
+        <Form
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={onSubmit}
+        >
+          <TextField
+            isRequired
+            className="flex flex-col gap-1 sm:w-40"
+            isDisabled={interval.isLoading}
+            isInvalid={error !== null}
+            name="interval_seconds"
+            step={0.5}
+            type="number"
+            value={value}
+            onChange={(v) => {
+              setDraft(v);
+              if (error) setError(null);
+            }}
+          >
+            <Label>Segundos por envío</Label>
+            <Input placeholder="4" />
+            {error && <FieldError>{error}</FieldError>}
+          </TextField>
+
+          <Button
+            className="sm:mb-1"
+            isDisabled={mutation.isPending || interval.isLoading}
             type="submit"
             variant="primary"
           >

@@ -372,3 +372,11 @@ def invalid_admission_cap() -> AppError:
         code="invalid_admission_cap",
         message="Indica un límite entre 0 y 1000 (0 desactiva el control de admisión).",
     )
+
+
+def invalid_send_interval() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_send_interval",
+        message="Indica un intervalo entre 2 y 30 segundos.",
+    )
