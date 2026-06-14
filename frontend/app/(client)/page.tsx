@@ -3,8 +3,8 @@
 // Envío surface (Story 2.2; controls + FloodWait notice since 2.3; live
 // response views since 3.2). Live state is driven ONLY by the WS store
 // (UX-DR12 — no optimistic state beyond the server-confirmed POST seed).
-// Desktop ≥lg: 4-col grid 300px 1fr 1fr 1fr (UX-DR19) — cockpit left, then the
-// three response panels (todas / aprobadas / datos CC) side by side.
+// Desktop ≥lg: 2-col grid 300px + 1fr — cockpit left, then a single full-width
+// tabbed pane (todas / aprobadas / datos CC). Mobile stacks to one column.
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert } from "@heroui/react";
@@ -29,9 +29,6 @@ import { ActiveSessionCard } from "@/components/sessions/active-session-card";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import {
-  CompletaPanel,
-  FiltradaConResponsePanel,
-  FiltradaPanel,
   ResponseTabs,
   ResponseViewsLegend,
 } from "@/components/sessions/response-views";
@@ -124,7 +121,22 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+    <div className="cockpit-type mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
+      {/* Cockpit type system ("Mando"): a commanding sans hierarchy — larger
+          labels, tabs, the Enviar button, and the ring readout than the base
+          scale so live state reads at a glance. Scoped to the cockpit; it
+          targets component-rendered classes, so it lives in a co-located
+          <style> rather than utilities. */}
+      <style>{`
+        .cockpit-type .pointer-events-none .font-mono { font-size: 30px; }
+        .cockpit-type .label { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
+        .cockpit-type .tabs__tab { font-size: 0.9375rem; font-weight: 600; }
+        .cockpit-type .button { font-size: 0.9375rem; font-weight: 600; letter-spacing: 0.01em; }
+        .cockpit-type .select__value,
+        .cockpit-type .select__trigger { font-size: 0.9375rem; }
+        .cockpit-type .text-sm { font-size: 0.9375rem; }
+      `}</style>
+
       {/* Cockpit column — pinned on desktop, single column on mobile. */}
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
@@ -201,38 +213,23 @@ export default function EnvioPage() {
         {gates.data && <SendForm gates={gates.data.items} live={live} />}
       </div>
 
-      {/* Desktop data panels (3.2): todas / aprobadas / datos CC side by side;
-          the lists scroll internally — the cockpit stays sticky. Wrapped in a
-          single grid cell spanning columns 2–4 so the legend can sit ABOVE the
-          three panels (a bare grid-row span would push them below the tall
-          cockpit column). The wrapper re-creates the 3-col track internally. */}
-      <div className="hidden lg:col-span-3 lg:flex lg:flex-col lg:gap-3">
-        {/* Explains the set-relationship of the three views so their relabeled
-            headers aren't a memory tax. */}
+      {/* Desktop data area (3.2): a single full-width tabbed pane (todas /
+          aprobadas / datos CC) so each view gets the column's full width
+          instead of three cramped side-by-side panels. This is the same
+          ResponseTabs component as the mobile one above (lg:hidden), shown
+          here at lg+. */}
+      <div className="hidden lg:flex lg:flex-col lg:gap-3">
         <ResponseViewsLegend />
-        <div className="grid grid-cols-[repeat(3,minmax(0,1fr))] items-start gap-6">
-          <CompletaPanel
-            className="flex"
-            exportPath={exportCompleta}
-            listClassName="lg:max-h-[calc(100vh-10rem)]"
-            responses={live.responses}
-            total={live.responsesTotal}
-          />
-          <FiltradaConResponsePanel
-            className="flex"
-            exportPath={exportFiltradaCompleta}
-            listClassName="lg:max-h-[calc(100vh-10rem)]"
-            responses={live.responses}
-            total={live.responsesOkTotal}
-          />
-          <FiltradaPanel
-            cc={live.cc}
-            className="flex"
-            exportPath={exportFiltrada}
-            listClassName="lg:max-h-[calc(100vh-10rem)]"
-            total={live.ccNew}
-          />
-        </div>
+        <ResponseTabs
+          cc={live.cc}
+          ccTotal={live.ccNew}
+          exportPathCompleta={exportCompleta}
+          exportPathFiltrada={exportFiltrada}
+          exportPathFiltradaCompleta={exportFiltradaCompleta}
+          responses={live.responses}
+          responsesOkTotal={live.responsesOkTotal}
+          responsesTotal={live.responsesTotal}
+        />
       </div>
     </div>
   );
