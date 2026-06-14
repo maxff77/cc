@@ -11,7 +11,6 @@ import {
   Form,
   Input,
   Label,
-  Table,
   TextField,
 } from "@heroui/react";
 
@@ -126,93 +125,101 @@ export default function AdminUsersPage() {
         {/* Right zone: the users table. */}
         <SectionCard legend="USUARIOS" padding="none">
           {users.isLoading && <PanelSkeleton rows={5} />}
-
           {users.isError && (
             <Alert className="m-3" status="danger">
               No pudimos cargar los usuarios. Recarga la página.
             </Alert>
           )}
+          {users.data &&
+            (users.data.items.length === 0 ? (
+              <EmptyState
+                eyebrow="Usuarios"
+                message="Todavía no hay clientes."
+              />
+            ) : (
+              // Stacked data-rows instead of a 6-column table: in the narrow
+              // 1fr grid track the table truncated the action cluster. Each
+              // user is now a row that reflows — nothing is column-bound.
+              <ul className="flex flex-col gap-2 p-2">
+                {users.data.items.map((u) => (
+                  <li
+                    key={u.id}
+                    className="flex flex-col gap-2 border-b border-separator px-2 py-2.5 last:border-b-0"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="break-all font-mono text-[0.8rem] font-semibold text-foreground">
+                        {u.email}
+                      </span>
+                      <span className="inline-flex shrink-0 gap-1.5">
+                        <span className="rounded-full bg-surface-tertiary px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                          {u.role}
+                        </span>
+                        {u.role === "client" &&
+                          (u.is_blocked ? (
+                            <span className="rounded-full bg-danger/18 px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-danger">
+                              Bloqueado
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-success/15 px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-success">
+                              Activo
+                            </span>
+                          ))}
+                      </span>
+                    </div>
 
-          {users.data && (
-            <Table>
-              <Table.Content aria-label="Usuarios">
-                <Table.Header>
-                  <Table.Column isRowHeader>Correo</Table.Column>
-                  <Table.Column>Rol</Table.Column>
-                  <Table.Column>Contacto</Table.Column>
-                  <Table.Column>Vence</Table.Column>
-                  <Table.Column>Estado</Table.Column>
-                  <Table.Column>Acciones</Table.Column>
-                </Table.Header>
-                <Table.Body
-                  items={users.data.items}
-                  renderEmptyState={() => (
-                    <EmptyState
-                      eyebrow="Usuarios"
-                      message="Todavía no hay clientes."
-                    />
-                  )}
-                >
-                  {(u) => (
-                    <Table.Row id={u.id}>
-                      <Table.Cell>{u.email}</Table.Cell>
-                      <Table.Cell>{u.role}</Table.Cell>
-                      <Table.Cell>
+                    <div className="flex flex-wrap gap-x-5 gap-y-1">
+                      <span className="inline-flex items-baseline gap-2 font-mono text-[0.72rem] tabular-nums text-foreground">
+                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                          Contacto
+                        </span>
                         <ContactLink contact={u.contact} />
-                      </Table.Cell>
-                      <Table.Cell>{formatExpiry(u.expires_at)}</Table.Cell>
-                      <Table.Cell>
-                        {u.role !== "client" ? (
-                          "—"
-                        ) : u.is_blocked ? (
-                          <span className="font-medium text-danger">
-                            Bloqueado
-                          </span>
-                        ) : (
-                          <span className="text-muted">Activo</span>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        {u.role === "client" ? (
-                          <div className="flex flex-col gap-2">
-                            {/* Entry point of the cross-tenant support view
-                                (Story 3.6, Flow 5) — clients only: the support
-                                target is a client's tenant. */}
-                            <Link
-                              className="text-sm text-muted underline hover:text-foreground"
-                              href={`/admin/tenants/${u.tenant_id}`}
-                            >
-                              Sesiones
-                            </Link>
-                            <ClientLifecycleActions
-                              user={u}
-                              onChanged={() =>
-                                queryClient.invalidateQueries({
-                                  queryKey: USERS_KEY,
-                                })
-                              }
-                            />
-                          </div>
-                        ) : isOwner && u.role === "admin" ? (
-                          <DeleteAdminAction
-                            email={u.email}
-                            userId={u.id}
-                            onDeleted={() =>
+                      </span>
+                      <span className="inline-flex items-baseline gap-2 font-mono text-[0.72rem] tabular-nums text-foreground">
+                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                          Vence
+                        </span>
+                        <span>{formatExpiry(u.expires_at)}</span>
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {u.role === "client" ? (
+                        <>
+                          <Link
+                            className="text-[11px] text-muted underline hover:text-foreground"
+                            href={`/admin/tenants/${u.tenant_id}`}
+                          >
+                            Sesiones
+                          </Link>
+                          <ClientLifecycleActions
+                            user={u}
+                            onChanged={() =>
                               queryClient.invalidateQueries({
                                 queryKey: USERS_KEY,
                               })
                             }
                           />
-                        ) : (
-                          "—"
-                        )}
-                      </Table.Cell>
-                    </Table.Row>
-                  )}
-                </Table.Body>
-              </Table.Content>
-            </Table>
-          )}
+                        </>
+                      ) : isOwner && u.role === "admin" ? (
+                        <DeleteAdminAction
+                          email={u.email}
+                          userId={u.id}
+                          onDeleted={() =>
+                            queryClient.invalidateQueries({
+                              queryKey: USERS_KEY,
+                            })
+                          }
+                        />
+                      ) : (
+                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                          Sin acciones
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ))}
         </SectionCard>
       </div>
     </AdminShell>

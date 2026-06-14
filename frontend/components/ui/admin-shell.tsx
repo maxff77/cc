@@ -80,7 +80,9 @@ export function AdminShell({
         </Button>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl px-4 py-6 lg:px-6">
+      {/* Wider frame (max-w-6xl) + fluid gutters: gives the inner two-zone
+          grid more room on desktop and comfortable margins on mobile. */}
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 lg:px-8">
         <div className="flex flex-col gap-6">
           <PageHeader actions={actions} title={title} />
           {children}
