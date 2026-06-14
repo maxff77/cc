@@ -165,16 +165,16 @@ def test_governor_counts_events_and_raises_until_the_ceiling() -> None:
     sched = Scheduler()
     assert sched.flood_events_total == 0
     assert sched.governor_raises == 0
-    # 3.0 ×1.5 per event: six raises reach the 30s ceiling…
-    for _ in range(6):
+    # 4.0 ×1.5 per event (6→9→13.5→20.25→30): five raises reach the 30s ceiling…
+    for _ in range(5):
         sched.note_flood_wait(0.0)
     assert sched.g_min == 30.0
-    assert sched.flood_events_total == 6
-    assert sched.governor_raises == 6
-    # …the seventh FloodWait is still an EVENT but no longer a raise.
+    assert sched.flood_events_total == 5
+    assert sched.governor_raises == 5
+    # …the sixth FloodWait is still an EVENT but no longer a raise.
     sched.note_flood_wait(0.0)
-    assert sched.flood_events_total == 7
-    assert sched.governor_raises == 6
+    assert sched.flood_events_total == 6
+    assert sched.governor_raises == 5
     sched.reset()
     assert sched.flood_events_total == 0
 
@@ -209,7 +209,7 @@ async def test_worker_floodwaits_feed_counters_logs_and_alert(
 
     assert scheduler.flood_events_total == 3
     assert scheduler.governor_raises == 3
-    assert scheduler.g_min == pytest.approx(10.125)  # 3.0 ×1.5³
+    assert scheduler.g_min == pytest.approx(13.5)  # 4.0 ×1.5³
 
     flood_events = [e for e in events if e[1] == "flood.wait"]
     assert len(flood_events) == 3
@@ -315,7 +315,7 @@ async def test_observability_reports_every_slice(
 
     assert body["flood"]["events_total"] == 2
     assert body["flood"]["governor_raises"] == 2
-    assert body["flood"]["g_min"] == pytest.approx(6.75)  # 3.0 ×1.5²
+    assert body["flood"]["g_min"] == pytest.approx(9.0)  # 4.0 ×1.5²
     assert body["flood"]["events_in_window"] == 2
     assert body["flood"]["alert_active"] is False  # below the threshold of 3
 

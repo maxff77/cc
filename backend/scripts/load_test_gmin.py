@@ -1,8 +1,8 @@
 """Pre-launch gate: ``G_min`` load test against a fake Telegram gateway (Story 4.4, AC1).
 
-Exercises the multi-tenant scheduling contract (architecture: ``G = max(G_min,
-P(n)/n)``, round-robin, owner priority bounded at 50%, paused tenants excluded
-from ``n``) at ``G_min = 3.0s`` against a **fake gateway** that models
+Exercises the multi-tenant scheduling contract (constant interval ``G = G_min``,
+round-robin, owner priority bounded at 50%, paused tenants excluded from ``n``)
+at ``G_min = 4.0s`` against a **fake gateway** that models
 Telegram-side flood control as a sliding-window rate limit. Nothing here talks
 to real Telegram, the production VPS, or the database — the simulation runs on
 a virtual clock and finishes in milliseconds.
@@ -25,7 +25,7 @@ the real scheduler (seam: anything implementing ``next_sender()`` /
 ``global_interval()`` over ``SimSender`` state) and keep the assertions.
 
 Usage (from backend/, venv active):
-    python -m scripts.load_test_gmin                 # defaults: 8 clients x 100 lines, G_min=3.0
+    python -m scripts.load_test_gmin                 # defaults: 8 clients x 100 lines, G_min=4.0
     python -m scripts.load_test_gmin --clients 10 --lines 200 --owner-lines 50
     python -m scripts.load_test_gmin --g-min 1.0     # demonstrates an UNSAFE G_min (gate fails)
     python -m scripts.load_test_gmin --json          # machine-readable report
@@ -40,9 +40,9 @@ import sys
 from collections import deque
 from dataclasses import dataclass, field
 
-DEFAULT_G_MIN = 3.0
+DEFAULT_G_MIN = 4.0
 # Fake-gateway flood model: tolerate up to 22 messages per rolling 60s window.
-# G_min=3.0 sustains 20/min (passes with margin); 2.0s pacing -> 30/min (fails).
+# G_min=4.0 sustains 15/min (passes with margin); 2.0s pacing -> 30/min (fails).
 DEFAULT_WINDOW_SECONDS = 60.0
 DEFAULT_MAX_IN_WINDOW = 22
 DEFAULT_FLOODWAIT_SECONDS = 30.0
@@ -126,9 +126,9 @@ class SimSender:
 class ReferenceScheduler:
     """Reference implementation of the architecture's scheduling contract.
 
-    - ``P(n)``: per-client target interval, 10s at n=1, linear to 20s at n>=5.
-    - ``G = max(G_min, P(n)/n)`` with ``n`` = active (non-paused, non-drained)
-      CLIENT senders; paused tenants are excluded from ``n``.
+    - ``G = G_min`` constant: one send every ``G_min`` regardless of ``n``
+      (owner decision 2026-06-13; the old adaptive ``P(n)/n`` band is gone).
+      Round-robin spreads the slot, so each client's turn is ``G×n``.
     - Round-robin across active clients (stable rotation).
     - Owner lines jump the rotation but take at most 50% of send slots while
       clients are active; with no active clients the owner sends at ``G_min``.
@@ -152,15 +152,6 @@ class ReferenceScheduler:
         )
         self._last_slot_was_owner = False
 
-    @staticmethod
-    def per_client_target(n: int) -> float:
-        """``P(n)``: 10s at n=1, linear up to 20s at n>=5."""
-        if n <= 1:
-            return 10.0
-        if n >= 5:
-            return 20.0
-        return 10.0 + (20.0 - 10.0) * (n - 1) / 4
-
     def active_client_count(self) -> int:
         return sum(
             1
@@ -169,10 +160,11 @@ class ReferenceScheduler:
         )
 
     def global_interval(self) -> float:
-        n = self.active_client_count()
-        if n == 0:
-            return self.g_min  # owner-only: may send at G_min directly
-        return max(self.g_min, self.per_client_target(n) / n)
+        """Constant interval between sends — flat ``g_min``, n ignored (matches
+        production: round-robin spreads the slot, so each client's turn is
+        ``G×n``). The governor still raises ``g_min`` on FloodWait.
+        """
+        return self.g_min
 
     def _owner_with_pending(self) -> SimSender | None:
         for s in self.senders:

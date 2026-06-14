@@ -473,9 +473,9 @@ async def test_snapshot_live_shape_and_eta_math(
         f"{gate['value']} dos",
         f"{gate['value']} tres",
     ]
-    # Honest adaptive ETA (UX-DR14 / Story 2.4): queued × n × G with a single
-    # active sender → 3 × 1 × interval(1)=10.0.
-    assert snap["eta_seconds"] == 30.0
+    # Honest ETA (UX-DR14): queued × n × G with a single active sender and a
+    # constant interval → 3 × 1 × 4.0.
+    assert snap["eta_seconds"] == 12.0
     assert snap["cc_new"] == 0  # real since 3.1 — this test captures nothing
     # Story 3.2: the POST bound an active capture session — the snapshot
     # carries its id, with empty panels and honest zero totals (no captures).

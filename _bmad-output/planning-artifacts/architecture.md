@@ -405,13 +405,13 @@ Decisions documented with verified versions; patterns cover the 5 conflict areas
 ### Gap Analysis Results
 
 **Critical — RESOLVED in this validation:**
-- **FR13↔NFR1 capacity math.** The 10–20s band is per-client; the send channel is global. Resolution — adaptive interval formula:
-  - `G_min` = validated minimum global interval (start **3.0s**, tune by load test)
-  - Per-client target `P(n)` = `10s` at n=1, linear to `20s` at n=5
-  - Global interval `G = max(G_min, P(n)/n)`; each active client gets a turn every `G×n`
-  - Consequence: per-client band holds up to **n ≈ ⌊20/G_min⌋ ≈ 6** concurrent senders; beyond that, per-client cadence degrades linearly (n=50 → ~150s/turn) while the account stays safe. This is NFR4's "slower, never down" made explicit.
-  - Owner priority: owner lines jump the rotation and may send at `G_min` directly.
+- **FR13↔NFR1 capacity math.** The send channel is global. Resolution — **constant interval** (owner decision 2026-06-13, SUPERSEDES the original adaptive `P(n)/n` 10–20s band):
+  - `G = G_min` = the constant global interval, **4.0s** (owner's hard floor; tune by load test). The account fires one line every `G_min` regardless of `n`.
+  - Round-robin spreads the single slot across active clients, so each client's turn comes every `G×n` — "more clients = each slower" falls out of the rotation, not the interval.
+  - Consequence: per-client cadence degrades linearly with `n` (n=10 → 40s/turn) while the account's global send rate stays pinned at the safe `1/G_min`. This is NFR4's "slower, never down" made explicit. The constant floor — not a per-client band — IS the ban protection.
+  - FloodWait governor still self-tunes `G_min` UPWARD (×1.5, decays back); owner priority: owner lines jump the rotation, bounded ≤50% of slots.
   - UI must show honest ETA derived from `G×n` so degradation is visible, not mysterious.
+  - *Historical note:* the original band was `P(n)` linear 10s→20s, `G = max(G_min, P(n)/n)`, `G_min=3.0s`. It made few-client sending slow (n=1→10s) for fairness guarantees; the owner inverted this to a constant cadence since the floor already bounds account safety.
 
 **Risk Deep-Dive (elicitation findings — pre-mortem, FMEA, assumption audit, boundary sweep, cascade analysis):**
 

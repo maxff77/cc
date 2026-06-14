@@ -55,14 +55,15 @@ class Settings(BaseSettings):
     # deployment keeps sending. After that the owner-managed DB list is
     # authoritative (the gateway round-robins over it). Leading ``@`` optional.
     telegram_target: str = ""
-    # Global FLOOR of the adaptive send interval (Story 2.4): the scheduler
-    # computes G = max(G_min, P(n)/n) and the FloodWait governor self-tunes
-    # G_min upward from this configured floor. Server config ONLY — never
-    # accepted from any request (FR12). NOT the effective interval: with one
-    # sender the system still paces at P(1)=10s. Configurable per AC 2
-    # ("to be load-tested"); a residual SEND_INTERVAL_SECONDS in a VPS .env
-    # is harmless (extra="ignore").
-    scheduler_g_min_seconds: float = 3.0
+    # The CONSTANT send interval, in seconds (owner decision 2026-06-13): the
+    # scheduler paces every send at exactly G_min regardless of how many
+    # clients are active (round-robin spreads the slot, so each client's turn
+    # comes every G×n). The FloodWait governor still self-tunes G_min UPWARD
+    # from this floor — it is the real ban protection. Server config ONLY —
+    # never accepted from any request (FR12). This IS the effective interval
+    # now (no adaptive band). 4.0s is the owner's hard floor. A residual
+    # SEND_INTERVAL_SECONDS in a VPS .env is harmless (extra="ignore").
+    scheduler_g_min_seconds: float = 4.0
 
     @property
     def session_ttl_seconds(self) -> int:

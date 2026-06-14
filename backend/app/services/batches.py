@@ -44,10 +44,12 @@ def eta_seconds(queued: int, n_eff: int) -> float:
 
     A tenant's turn comes every ``G×n``, so draining ``queued`` lines takes
     ≈ ``queued × n_eff × interval(n_eff)`` (architecture: "UI must show honest
-    ETA derived from G×n so degradation is visible, not mysterious").
-    Recorded decision: owner priority does NOT adjust client ETAs — the
-    approximation is recomputed on every event; no falsely-precise queueing
-    math (UX-DR14).
+    ETA derived from G×n so degradation is visible, not mysterious"). ``G`` is
+    now a constant (``g_min``) and ``interval`` ignores its argument, so
+    ``n_eff`` enters only through this ``×n_eff`` factor — that is what makes
+    the ETA grow as clients join. Recorded decision: owner priority does NOT
+    adjust client ETAs — the approximation is recomputed on every event; no
+    falsely-precise queueing math (UX-DR14).
     """
     return queued * n_eff * scheduler.interval(n_eff)
 
