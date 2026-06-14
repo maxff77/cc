@@ -29,10 +29,7 @@ import { WatchdogNotice } from "@/components/batch/watchdog-notice";
 import { ActiveSessionCard } from "@/components/sessions/active-session-card";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
-import {
-  ResponseTabs,
-  ResponseViewsLegend,
-} from "@/components/sessions/response-views";
+import { ResponseTabs } from "@/components/sessions/response-views";
 
 interface GateListResponse {
   items: GateOut[];
@@ -224,11 +221,10 @@ export default function EnvioPage() {
           pane (no longer duplicated mobile/desktop): it rides the right column
           on wide screens and stacks under the master on narrow. Always rendered
           (never gated on isLive): in idle it shows the empty states or the
-          still-active session's rows — the data survives the lote. The legend
-          spells out the set-relationship so the tabs aren't a memory tax
-          (aprobadas ⊂ todas; datos CC extracted from them). */}
+          still-active session's rows — the data survives the lote. The tab
+          labels + colored counts carry the set-relationship (aprobadas ⊂ todas;
+          datos CC extracted from them) — no separate legend prose. */}
       <div className="cockpit__detail">
-        <ResponseViewsLegend />
         <ResponseTabs
           cc={live.cc}
           ccTotal={live.ccNew}

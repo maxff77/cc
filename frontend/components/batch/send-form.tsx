@@ -157,137 +157,146 @@ export function SendForm({
     mutation.mutate({ text, gate_id: gateId });
   }
 
-  return (
-    // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote
-    // plate of the cockpit; legendAs="h2" keeps a heading in the outline.
-    <SectionCard
-      className="flex flex-col gap-4"
-      legend="Nuevo lote"
-      legendAs="h2"
-    >
-      {banner && <Alert status="danger">{banner}</Alert>}
+  // --- Reusable controls, defined ONCE so every layout below shares the same
+  // bindings (no duplicated state/handlers). Used by the original render and
+  // the distill variants alike, so nothing orphans on discard. ---
+  const bannerEl = banner ? <Alert status="danger">{banner}</Alert> : null;
 
+  // Active-gate chip (UX-DR9 / prefijo-chip token): name · value.
+  const gateChip = (
+    <div className="flex flex-wrap items-center gap-2">
+      <LabelCaps>Gate activo</LabelCaps>
+      <MonoChip>
+        {live.gateName} · {live.gateValue}
+      </MonoChip>
+      {/* No select to anchor to while live → speaks as an operation Alert. */}
+      {selectError && (
+        <Alert className="w-full" status="danger">
+          {selectError}
+        </Alert>
+      )}
+    </div>
+  );
+
+  const categorySelect = (
+    <Select
+      className="w-full"
+      isDisabled={isLive}
+      isInvalid={selectError !== null && categoryKey == null}
+      placeholder="Elige una categoría"
+      selectedKey={categoryKey}
+      onSelectionChange={(key) => {
+        setCategoryKey(key == null ? null : String(key));
+        setGateKey(null); // changing category resets the gate pick
+        if (selectError) setSelectError(null);
+      }}
+    >
+      <Label>Categoría</Label>
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      {selectError !== null && categoryKey == null && (
+        <FieldError>{selectError}</FieldError>
+      )}
+      <Select.Popover>
+        <ListBox>
+          {categories.map((name) => (
+            <ListBox.Item key={name} id={name} textValue={name}>
+              {name}
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+
+  const gateSelect = (
+    <Select
+      className="w-full"
+      isDisabled={isLive || categoryKey == null}
+      isInvalid={selectError !== null && categoryKey != null}
+      placeholder="Elige un gate"
+      selectedKey={gateKey}
+      onSelectionChange={(key) => {
+        setGateKey(key == null ? null : String(key));
+        if (selectError) setSelectError(null);
+      }}
+    >
+      <Label>Gate</Label>
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      {selectError !== null && categoryKey != null && (
+        <FieldError>{selectError}</FieldError>
+      )}
+      <Select.Popover>
+        <ListBox>
+          {gatesInCategory.map((g) => (
+            <ListBox.Item
+              key={g.id}
+              id={String(g.id)}
+              textValue={`${g.name} ${g.value}`}
+            >
+              <span>{g.name}</span>{" "}
+              <span className="font-mono text-muted">{g.value}</span>
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  );
+
+  const linesField = (
+    <TextField
+      className="flex flex-col gap-1"
+      isInvalid={textError !== null}
+      name="lines"
+      value={text}
+      onChange={(v) => {
+        setText(v);
+        if (textError) setTextError(null);
+      }}
+    >
+      <Label>Líneas</Label>
+      <TextArea className="min-h-40 font-mono" placeholder="Pega tus líneas" />
+      {textError && <FieldError>{textError}</FieldError>}
+    </TextField>
+  );
+
+  // The commit action uses SOLID violet (--accent, white text ~4.6:1, WCAG AA).
+  // The brand gradient is reserved for the two TEXT-FREE moments. Appending
+  // while 'stopping' is rejected server-side — disable here too.
+  const submitButton = (
+    <Button
+      isDisabled={mutation.isPending || live.state === "stopping"}
+      type="submit"
+      variant="primary"
+    >
+      {mutation.isPending ? "Enviando…" : "Enviar"}
+    </Button>
+  );
+
+  // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote plate of
+  // the cockpit; legendAs="h2" keeps a heading in the outline.
+  return (
+    <SectionCard className="flex flex-col gap-4" legend="Nuevo lote" legendAs="h2">
+      {bannerEl}
       <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
         {isLive ? (
-          // Active-gate chip (UX-DR9 / prefijo-chip token): name · value.
-          <div className="flex flex-wrap items-center gap-2">
-            <LabelCaps>Gate activo</LabelCaps>
-            <MonoChip>
-              {live.gateName} · {live.gateValue}
-            </MonoChip>
-            {/* "No hay gates en el catálogo." — no select to anchor to while
-                live, so it speaks as an operation Alert (§1.8 case 2). */}
-            {selectError && (
-              <Alert className="w-full" status="danger">
-                {selectError}
-              </Alert>
-            )}
-          </div>
+          gateChip
         ) : (
-          // Stacked vertical selects (ui-polish-spec §4.5): inside the 300px
-          // cockpit column there is no side-by-side; the shared selectError
-          // anchors to the guilty select via isInvalid + FieldError.
+          // Stacked vertical selects (ui-polish-spec §4.5): inside the cockpit
+          // column there is no side-by-side; the shared selectError anchors to
+          // the guilty select via isInvalid + FieldError.
           <div className="flex flex-col gap-3">
-            <Select
-              className="w-full"
-              isDisabled={isLive}
-              isInvalid={selectError !== null && categoryKey == null}
-              placeholder="Elige una categoría"
-              selectedKey={categoryKey}
-              onSelectionChange={(key) => {
-                setCategoryKey(key == null ? null : String(key));
-                setGateKey(null); // changing category resets the gate pick
-                if (selectError) setSelectError(null);
-              }}
-            >
-              <Label>Categoría</Label>
-              <Select.Trigger>
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              {selectError !== null && categoryKey == null && (
-                <FieldError>{selectError}</FieldError>
-              )}
-              <Select.Popover>
-                <ListBox>
-                  {categories.map((name) => (
-                    <ListBox.Item key={name} id={name} textValue={name}>
-                      {name}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
-
-            <Select
-              className="w-full"
-              isDisabled={isLive || categoryKey == null}
-              isInvalid={selectError !== null && categoryKey != null}
-              placeholder="Elige un gate"
-              selectedKey={gateKey}
-              onSelectionChange={(key) => {
-                setGateKey(key == null ? null : String(key));
-                if (selectError) setSelectError(null);
-              }}
-            >
-              <Label>Gate</Label>
-              <Select.Trigger>
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              {selectError !== null && categoryKey != null && (
-                <FieldError>{selectError}</FieldError>
-              )}
-              <Select.Popover>
-                <ListBox>
-                  {gatesInCategory.map((g) => (
-                    <ListBox.Item
-                      key={g.id}
-                      id={String(g.id)}
-                      textValue={`${g.name} ${g.value}`}
-                    >
-                      <span>{g.name}</span>{" "}
-                      <span className="font-mono text-muted">{g.value}</span>
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Select.Popover>
-            </Select>
+            {categorySelect}
+            {gateSelect}
           </div>
         )}
-
-        <TextField
-          className="flex flex-col gap-1"
-          isInvalid={textError !== null}
-          name="lines"
-          value={text}
-          onChange={(v) => {
-            setText(v);
-            if (textError) setTextError(null);
-          }}
-        >
-          <Label>Líneas</Label>
-          <TextArea
-            className="min-h-40 font-mono"
-            placeholder="Pega tus líneas"
-          />
-          {textError && <FieldError>{textError}</FieldError>}
-        </TextField>
-
-        {/* Appending while 'stopping' is rejected server-side (409
-            batch_stopping) — disable here too, defense in both layers.
-            The commit action uses SOLID violet (--accent, white text ~4.6:1,
-            WCAG AA). The brand gradient is reserved for the two TEXT-FREE
-            moments — the nav mark badge and the live pulse dot — because white
-            label text over the bright cyan gradient terminus fails AA (~1.85:1).
-            HeroUI variant="primary" resolves to the retoned violet --accent. */}
-        <Button
-          isDisabled={mutation.isPending || live.state === "stopping"}
-          type="submit"
-          variant="primary"
-        >
-          {mutation.isPending ? "Enviando…" : "Enviar"}
-        </Button>
+        {linesField}
+        {submitButton}
       </Form>
     </SectionCard>
   );
