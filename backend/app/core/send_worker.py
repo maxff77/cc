@@ -4,8 +4,8 @@ hardened 2.5; admission control 4.2).
 A single ``asyncio.Task`` created in the lifespan drains queued batch lines.
 Selection is NOT FIFO: ``core.scheduler`` rotates round-robin across active
 tenants with bounded owner priority, and the inter-send interval is the
-adaptive ``G = max(g_min, P(n)/n)`` — recomputed every turn, never constant
-(Story 2.4). Each step opens its OWN session via ``async_session_factory``
+constant ``G = g_min`` (owner decision 2026-06-13; the FloodWait governor
+still tunes it upward). Each step opens its OWN session via ``async_session_factory``
 (NEVER the request-scoped one) and the Telegram send happens with no session
 held (a FloodWait can sleep for minutes — it must not pin a pool connection).
 
@@ -253,7 +253,7 @@ async def _admit_waiting() -> None:
 async def step() -> bool:
     """Process at most one line. Returns True iff a line was sent OR failed
     (a failed line burned 3 real attempts against the API — pacing the
-    adaptive interval afterwards protects the account all the same).
+    constant interval afterwards protects the account all the same).
 
     Factored out of the infinite loop so tests can await single steps
     deterministically (no real Telegram, no background task).
@@ -844,20 +844,11 @@ async def run_worker() -> None:
             await sleep_cancelable(_ERROR_RETRY_SECONDS)
             continue
         if sent:
-            # System-controlled ADAPTIVE interval between sends (FR12):
-            # G = max(g_min, P(n)/n), recomputed every turn. sleep_paced is
-            # wake-immune — a control never makes the system send faster.
-            # The count gets its own try/except: a transient DB failure here
-            # must NOT escape the loop and kill the singleton worker (the
-            # step() except above exists precisely to survive DB blips).
-            try:
-                async with async_session_factory() as session:
-                    n = await batches_repo.count_active_senders(session)
-            except Exception:
-                logger.exception(
-                    "pacing count failed — falling back to n=1 interval"
-                )
-                n = 1
-            await sleep_paced(scheduler.interval(max(1, n)))
+            # System-controlled CONSTANT interval between sends (FR12):
+            # G = g_min regardless of n. sleep_paced is wake-immune — a control
+            # never makes the system send faster. n no longer affects pacing,
+            # so the per-send active-sender count (and its DB round-trip) is
+            # gone; the FloodWait governor still tunes g_min upward.
+            await sleep_paced(scheduler.interval(1))
         else:
             await sleep_cancelable(_IDLE_SLEEP_SECONDS)

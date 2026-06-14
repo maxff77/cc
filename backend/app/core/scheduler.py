@@ -1,15 +1,19 @@
 """Multi-tenant send scheduler (Story 2.4): round-robin, owner priority,
-adaptive interval, FloodWait governor.
+constant interval, FloodWait governor.
 
 The send worker is the ONLY consumer: it lists ``active_senders`` from the
 repo, asks ``scheduler.pick_next`` whose line goes out next, and paces the
 loop with ``scheduler.interval(n)``. REST handlers never touch this module —
 the interval is the system's, never a request's (FR12).
 
-Formula (AC 2, architecture Gap Analysis): ``G = max(G_min, P(n)/n)`` with
-``P(n)`` linear from 10s (n=1) to 20s (n>=5). The 10–20s band is a PRODUCT
-constant (FR13), not configuration; only the floor ``G_min`` is configurable
-(``scheduler_g_min_seconds``) and self-tunes on FloodWait.
+Interval: a CONSTANT ``G = G_min`` between sends regardless of how many
+clients are active (owner decision 2026-06-13, superseding the old adaptive
+``P(n)/n`` 10–20s band). The shared account fires one line every ``G_min``
+seconds and round-robin rotates the slot across active tenants, so each
+client's turn naturally comes every ``G×n`` — "more clients = each slower"
+falls out of the rotation, not the interval. ``G_min`` is the configured
+floor (``scheduler_g_min_seconds``, default 4.0s) and still self-tunes UP on
+FloodWait (the governor) — it is the real ban protection, not the band.
 
 State is process memory ON PURPOSE (recorded decision): a single worker in a
 single asyncio loop consumes it, and neither the rotation cursor nor the
@@ -24,12 +28,6 @@ from collections.abc import Callable
 from app.config import settings
 from app.db.repos.batches import ActiveSender
 
-# Product band of the per-client turn (FR13): P(n) = min(CAP, BASE + SLOPE·(n−1)).
-# NOT configurable — only the G_min floor is (AC 2).
-_P_BASE = 10.0
-_P_CAP = 20.0
-_P_SLOPE = 2.5
-
 # FloodWait governor (AC 4): every event raises g_min ×1.5 (capped); after a
 # full window without FloodWaits it decays one ÷1.5 step per window, never
 # below the configured floor — "self-tuning toward the safe band" both ways.
@@ -38,13 +36,8 @@ _G_MIN_CEIL = 30.0
 _GOVERNOR_DECAY_SECONDS = 600.0
 
 
-def _target_per_client(n: int) -> float:
-    """P(n): the per-client turn target, linear 10s→20s, saturated at n>=5."""
-    return min(_P_CAP, _P_BASE + _P_SLOPE * (n - 1))
-
-
 class Scheduler:
-    """Rotation cursor + adaptive-interval governor (one instance per worker).
+    """Rotation cursor + constant-interval governor (one instance per worker).
 
     The clock is injectable so the governor's decay window is deterministic
     under test; production uses ``time.monotonic``.
@@ -69,7 +62,7 @@ class Scheduler:
         self._flood_events_total: int = 0
         self._governor_raises: int = 0
 
-    # --- adaptive interval (AC 2) + governor (AC 4) -------------------------
+    # --- constant interval (AC 2) + governor (AC 4) -------------------------
 
     @property
     def g_min(self) -> float:
@@ -92,10 +85,15 @@ class Scheduler:
         return self._governor_raises
 
     def interval(self, n: int) -> float:
-        """``G = max(g_min, P(n)/n)`` for ``n`` active (non-paused) senders."""
+        """Constant ``G = g_min`` between sends; ``n`` no longer affects pacing.
+
+        The shared account fires every ``g_min`` seconds and round-robin
+        spreads the slot across the ``n`` active senders, so each client's turn
+        comes every ``G×n`` for free. ``n`` is kept in the signature for caller
+        compatibility (and ``eta_seconds``' ``G×n`` math) but is ignored here.
+        """
         self._maybe_decay()
-        n = max(1, n)
-        return max(self._g_min, _target_per_client(n) / n)
+        return self._g_min
 
     def note_flood_wait(self, seconds: float) -> None:
         """A FloodWait happened: raise the floor AND open the global window.

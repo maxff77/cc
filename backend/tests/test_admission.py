@@ -188,7 +188,7 @@ async def test_batch_over_cap_enters_fifo_queue_with_position(
         async with async_session_factory() as session:
             assert await batches_repo.count_active_senders(session) == 1
             snap = await batches_service.snapshot(session, user_a.tenant_id)
-        assert snap["eta_seconds"] == 20.0  # 2 × 1 × interval(1)=10.0
+        assert snap["eta_seconds"] == 8.0  # 2 × 1 × 4.0 (constant interval)
     finally:
         await http_b.aclose()
         await http_c.aclose()

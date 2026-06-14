@@ -3,10 +3,10 @@
 Pure simulation — no DB, no ASGI app, no Telegram. Exercises the two
 repo-local launch gates:
 
-- ``scripts.load_test_gmin``: the scheduling contract (``G = max(G_min,
-  P(n)/n)``, round-robin fairness, bounded owner priority, paused-tenant
-  exclusion) holds at ``G_min = 3.0s`` against the fake gateway, and FloodWait
-  handling retries the same line while the governor raises ``G_min``.
+- ``scripts.load_test_gmin``: the scheduling contract (constant ``G = G_min``,
+  round-robin fairness, bounded owner priority, paused-tenant exclusion) holds
+  at ``G_min = 4.0s`` against the fake gateway, and FloodWait handling retries
+  the same line while the governor raises ``G_min``.
 - ``scripts.attribution_volume_test``: the reply_to attribution rule keeps
   unmatched ≈ 0 at volume, edits never double-attribute, and a reply is never
   attributed across tenants.
@@ -24,7 +24,7 @@ from scripts.load_test_gmin import (
     run_load_test,
 )
 
-G_MIN = 3.0
+G_MIN = 4.0
 
 
 def _default_gateway() -> FakeGateway:
@@ -58,13 +58,12 @@ def test_round_robin_is_fair_across_clients() -> None:
     assert first_sends[-1] - first_sends[0] < report.avg_gap * len(senders)
 
 
-def test_per_client_cadence_stays_in_the_band() -> None:
-    """n=3 active clients: cadence ≈ P(3)=15s, inside the 10–20s band."""
+def test_per_client_cadence_is_g_times_n() -> None:
+    """n=3 active clients, constant G=4.0: each client's turn ≈ G×n = 12s."""
     senders = build_senders(n_clients=3, lines_per_client=40)
     report = run_load_test(senders, _default_gateway(), g_min=G_MIN)
     for cadence in report.per_client_cadence.values():
-        assert 10.0 <= cadence <= 20.0
-        assert abs(cadence - 15.0) < 1.0
+        assert abs(cadence - G_MIN * 3) < 1.0  # 4.0 × 3 = 12s
 
 
 def test_owner_jumps_rotation_but_capped_at_half_slots() -> None:
@@ -84,23 +83,20 @@ def test_paused_client_is_excluded_from_n() -> None:
     )
     report = run_load_test(senders, _default_gateway(), g_min=G_MIN)
     assert report.sends_per_sender["client-5"] == 0
-    # n=4 active -> G = P(4)/4 = 17.5/4 = 4.375s, NOT P(5)/5 = 4.0s.
-    assert abs(report.avg_gap - 4.375) < 0.2
+    # Interval is constant G=G_min regardless of n; the paused client just
+    # doesn't consume slots (its lines never send).
+    assert abs(report.avg_gap - G_MIN) < 0.2
     assert report.passed
 
 
-def test_adaptive_formula_matches_architecture() -> None:
-    """G = max(G_min, P(n)/n) with P linear from 10s (n=1) to 20s (n>=5)."""
-    assert ReferenceScheduler.per_client_target(1) == 10.0
-    assert ReferenceScheduler.per_client_target(3) == 15.0
-    assert ReferenceScheduler.per_client_target(5) == 20.0
-    assert ReferenceScheduler.per_client_target(50) == 20.0
+def test_constant_interval_matches_architecture() -> None:
+    """G = G_min constant — the same interval for any number of clients."""
     senders = build_senders(n_clients=1, lines_per_client=1)
     sched = ReferenceScheduler(senders, g_min=G_MIN)
-    assert sched.global_interval() == 10.0  # P(1)/1 > G_min
+    assert sched.global_interval() == G_MIN  # n=1
     big = build_senders(n_clients=10, lines_per_client=1)
     sched_big = ReferenceScheduler(big, g_min=G_MIN)
-    assert sched_big.global_interval() == G_MIN  # 20/10 = 2.0 < G_min floor
+    assert sched_big.global_interval() == G_MIN  # n=10 — identical, flat
 
 
 # --- load test: FloodWait handling and the governor -------------------------

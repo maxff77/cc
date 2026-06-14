@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from app.core import send_worker
 from app.core.broadcaster import broadcaster
-from app.core.scheduler import Scheduler, _target_per_client, scheduler
+from app.core.scheduler import Scheduler, scheduler
 from app.db.base import async_session_factory
 from app.db.models import User
 from app.db.repos import batches as batches_repo
@@ -63,40 +63,26 @@ def _pick(sched: Scheduler, active: list[ActiveSender]) -> ActiveSender:
     return pick
 
 
-# --- Unit: adaptive formula (AC 2) -------------------------------------------
+# --- Unit: constant interval (owner decision 2026-06-13) ----------------------
 
 
-def test_interval_truth_table_from_dev_notes() -> None:
-    """The Dev Notes table, asserted verbatim: G = max(g_min, P(n)/n)."""
+def test_interval_is_constant_g_min_regardless_of_n() -> None:
+    """Flat interval: G = g_min (default 4.0s) for ANY n — no adaptive band."""
     sched = Scheduler()
-    assert sched.interval(1) == 10.0
-    assert sched.interval(2) == 6.25
-    assert sched.interval(3) == 5.0
-    assert sched.interval(4) == 4.375
-    assert sched.interval(5) == 4.0
-    assert sched.interval(6) == pytest.approx(20.0 / 6.0)
-    assert sched.interval(7) == 3.0  # the configured floor kicks in
-    assert sched.interval(50) == 3.0  # "slower, never down" (NFR4)
+    for n in (1, 2, 3, 4, 5, 6, 7, 50):
+        assert sched.interval(n) == 4.0
 
 
 def test_per_client_turn_is_g_times_n() -> None:
+    """Round-robin spreads the constant slot: each client's turn is G×n."""
     sched = Scheduler()
-    turns = {1: 10.0, 2: 12.5, 3: 15.0, 4: 17.5, 5: 20.0, 6: 20.0, 7: 21.0, 50: 150.0}
-    for n, turn in turns.items():
-        assert sched.interval(n) * n == pytest.approx(turn)
+    for n in (1, 2, 3, 4, 5, 6, 7, 50):
+        assert sched.interval(n) * n == pytest.approx(4.0 * n)
 
 
-def test_target_per_client_saturates_at_cap() -> None:
-    assert _target_per_client(1) == 10.0
-    assert _target_per_client(4) == 17.5
-    assert _target_per_client(5) == 20.0
-    assert _target_per_client(6) == 20.0
-    assert _target_per_client(50) == 20.0
-
-
-def test_interval_clamps_n_to_at_least_one() -> None:
+def test_interval_handles_n_zero_defensively() -> None:
     sched = Scheduler()
-    assert sched.interval(0) == 10.0  # defensive: n=0 behaves like n=1
+    assert sched.interval(0) == 4.0  # n is ignored; constant floor either way
 
 
 # --- Unit: FloodWait governor (AC 4) ------------------------------------------
@@ -105,11 +91,11 @@ def test_interval_clamps_n_to_at_least_one() -> None:
 def test_governor_raises_floor_and_caps_at_ceiling() -> None:
     clock = FakeClock()
     sched = Scheduler(now=clock)
-    assert sched.g_min == 3.0
+    assert sched.g_min == 4.0
     sched.note_flood_wait(0.0)
-    assert sched.g_min == 4.5  # ×1.5
-    # The raised floor shows through interval(): P(7)/7 ≈ 2.86 < 4.5.
-    assert sched.interval(7) == 4.5
+    assert sched.g_min == 6.0  # ×1.5
+    # The raised floor shows through interval() — the constant rises with it.
+    assert sched.interval(7) == 6.0
     for _ in range(20):
         sched.note_flood_wait(0.0)
     assert sched.g_min == 30.0  # ceiling — never beyond
@@ -118,19 +104,19 @@ def test_governor_raises_floor_and_caps_at_ceiling() -> None:
 def test_governor_decays_one_step_per_quiet_window() -> None:
     clock = FakeClock()
     sched = Scheduler(now=clock)
-    sched.note_flood_wait(0.0)  # 4.5
-    sched.note_flood_wait(0.0)  # 6.75
-    assert sched.g_min == 6.75
+    sched.note_flood_wait(0.0)  # 6.0
+    sched.note_flood_wait(0.0)  # 9.0
+    assert sched.g_min == 9.0
 
     clock.advance(599.0)
-    assert sched.interval(7) == 6.75  # window not over yet — no decay
+    assert sched.interval(7) == 9.0  # window not over yet — no decay
     clock.advance(1.0)
-    assert sched.interval(7) == 4.5  # one ÷1.5 step…
-    assert sched.interval(7) == 4.5  # …and only one per window
+    assert sched.interval(7) == 6.0  # one ÷1.5 step…
+    assert sched.interval(7) == 6.0  # …and only one per window
     clock.advance(600.0)
-    assert sched.interval(7) == 3.0  # second window, second step
+    assert sched.interval(7) == 4.0  # second window, second step
     clock.advance(600.0)
-    assert sched.interval(7) == 3.0  # never below the configured floor
+    assert sched.interval(7) == 4.0  # never below the configured floor
 
 
 # --- Unit: round-robin fairness (AC 1) -----------------------------------------
@@ -470,11 +456,11 @@ async def test_floodwait_raises_governor_and_broadcasts_globally(
     await _post_batch(http, "solo", gate["id"])
     fake_gateway.errors.append(FloodWaitError(request=None, capture=0))
 
-    assert scheduler.g_min == 3.0
+    assert scheduler.g_min == 4.0
     assert await send_worker.step() is True  # retried the same line after 0s
 
     # Both halves of AC 4 together: the governor floor rose ×1.5 …
-    assert scheduler.g_min == 4.5
+    assert scheduler.g_min == 6.0
     # … and the FloodWait was explained to EVERYONE (global event).
     assert ("flood.wait", {"seconds": 0}) in recorded
     assert fake_gateway.sent == [f"{gate['value']} solo"]
@@ -491,28 +477,29 @@ async def test_eta_scales_with_active_senders_and_reincludes_paused(
     http_a, user_a = client_user
     batch_a = await _post_batch(http_a, "uno\ndos\ntres", gate["id"])
 
-    # One active sender: 3 × 1 × interval(1)=10.0.
+    # One active sender: 3 × 1 × interval=4.0 (constant).
     async with async_session_factory() as session:
         snap = await batches_service.snapshot(session, user_a.tenant_id)
-    assert snap["eta_seconds"] == 30.0
+    assert snap["eta_seconds"] == 12.0
 
     http_b, user_b = await _second_client()
     try:
         await _post_batch(http_b, "x1\nx2\nx3", gate["id"])
 
-        # Two active senders: 3 × 2 × interval(2)=6.25.
+        # Two active senders: 3 × 2 × interval=4.0 (the interval is flat now;
+        # ETA grows only through the ×n factor).
         async with async_session_factory() as session:
             snap = await batches_service.snapshot(session, user_a.tenant_id)
-        assert snap["eta_seconds"] == 37.5
+        assert snap["eta_seconds"] == 24.0
 
-        # Pause A: it leaves n (B accelerates back to n=1) but its OWN
+        # Pause A: it leaves n (B's ETA drops back to n=1) but its OWN
         # "ETA on resume" re-includes it (n_eff = n + 1 = 2).
         assert (await http_a.post(f"/api/batches/{batch_a}/pause")).status_code == 204
         async with async_session_factory() as session:
             snap_a = await batches_service.snapshot(session, user_a.tenant_id)
             snap_b = await batches_service.snapshot(session, user_b.tenant_id)
-        assert snap_a["eta_seconds"] == 37.5  # 3 × 2 × 6.25
-        assert snap_b["eta_seconds"] == 30.0  # 3 × 1 × 10.0 — paused A excluded
+        assert snap_a["eta_seconds"] == 24.0  # 3 × 2 × 4.0
+        assert snap_b["eta_seconds"] == 12.0  # 3 × 1 × 4.0 — paused A excluded
     finally:
         await http_b.aclose()
         await cleanup_users({user_b.email})
