@@ -50,8 +50,10 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     # Outside the repo and the web root on the VPS (Story 1.7 convention).
     telegram_session_path: str = "/var/lib/cc/anon.session"
-    # Destination username (single target at MVP). Leading ``@`` optional —
-    # the gateway strips it.
+    # SEED destination (multi-target sending): on a fresh DB the boot seeds the
+    # ``send_targets`` list with this one chat so the legacy single-target
+    # deployment keeps sending. After that the owner-managed DB list is
+    # authoritative (the gateway round-robins over it). Leading ``@`` optional.
     telegram_target: str = ""
     # Global FLOOR of the adaptive send interval (Story 2.4): the scheduler
     # computes G = max(G_min, P(n)/n) and the FloodWait governor self-tunes

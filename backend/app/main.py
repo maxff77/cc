@@ -27,14 +27,16 @@ from app.api.gates import router as gates_router
 from app.api.health import router as health_router
 from app.api.observability import router as observability_router
 from app.api.sessions import router as sessions_router
+from app.api.targets import router as targets_router
 from app.api.watchdog import router as watchdog_router
 from app.api.ws import router as ws_router
 from app.core import capture
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
 from app.core.watchdog import watchdog
-from app.db.base import engine
+from app.db.base import async_session_factory, engine
 from app.errors import AppError
+from app.services import targets as targets_service
 
 
 @asynccontextmanager
@@ -47,6 +49,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # capture queue meanwhile (review 3-1).
     capture.hold_until_boot()
     await gateway.connect()  # never raises — unauthorized just means 503s
+    # Load the send destinations (multi-target sending): seed the first one from
+    # the legacy TELEGRAM_TARGET env on a fresh DB, then resolve the enabled
+    # list into the gateway. Non-fatal — an unauthorized gateway resolves none
+    # and sending stays 503 until re-auth (same as before). MUST run before the
+    # worker starts so the first send has a target.
+    async with async_session_factory() as boot_db:
+        await targets_service.ensure_seeded(boot_db)
+        await targets_service.reload_gateway(boot_db)
     # Restore a persisted watchdog latch BEFORE the worker can claim anything
     # (Story 4.1, AC 3: a deploy/restart never resumes sending on its own).
     await watchdog.load_persisted()
@@ -84,6 +94,7 @@ def create_app() -> FastAPI:
     app.include_router(gates_router)
     app.include_router(batches_router)
     app.include_router(sessions_router)
+    app.include_router(targets_router)
     app.include_router(watchdog_router)
     app.include_router(observability_router)
     app.include_router(ws_router)

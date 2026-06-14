@@ -61,3 +61,16 @@ Context: the Claude Design handoff (`Ranger-X Check`, bundle `g_hgmhSvvnImjlaxry
 
 Foundation review notes (carry into the chrome/Logo goal):
 - **Saira condensed**: `components/ui/logo.tsx` sets `fontStretch: "condensed"` on the wordmark, but `config/fonts.ts` loads Saira as STATIC instances (`weight: ["700","800"]`), which carry no `wdth` axis — so the wordmark renders normal-width, not condensed (the handoff prototype had the same limitation). When the Logo actually ships in the nav/login, load Saira as a variable font with the `wdth` axis (or a `Saira_SemiCondensed` family) if true condensed width is wanted.
+
+## Concurrency-scaled send interval — deferred from quick-dev split (2026-06-13)
+
+Context: owner (Richard) asked for an interval that **scales with concurrency** — few active users → send FASTER, many → send SLOWER, with a HARD floor of **4s** ("de eso no puede bajar más"). Split out (2026-06-13) from the multi-target-send work because it touches a load-bearing safety/product constant and needs its own design decision; multi-target ships first.
+
+**Conflict to resolve before building.** `core/scheduler.py` already adapts to concurrency, but in the OPPOSITE direction. Current formula `G = max(g_min, P(n)/n)` with `P(n)=min(20, 10+2.5·(n−1))` and `g_min` (`scheduler_g_min_seconds`, default **3.0**) yields: n=1→10s, n=2→6.25s, n=3→5s, n=4→4.38s, n=5→4s, n≥6→~3s (floored). So today **few users = SLOW (10s), many = FAST (3s)** — the reverse of the request. This is deliberate (FR13 / Story 2.4): the 10–20s band guarantees each client a turn within ≤20s, and the floor protects the shared account. The floor IS the real ban protection; the per-client band is what the owner wants inverted.
+
+Open design questions for the spec:
+- **Is the inversion actually wanted once explained?** The floor (raise 3.0→4.0) already caps the account's max send rate regardless of n; inverting the curve makes the app slowest exactly when busiest, for no extra account safety (the floor already bounds global rate). Confirm intent vs. just bumping the floor.
+- If inverting: define the new curve (e.g. `G = clamp(4s, 4 + k·(n−1), ceiling)`), pick `k` and a ceiling so high-n doesn't starve clients, and reconcile with FR13 / `architecture.md` (the 10–20s band is documented as a non-configurable product constant — amend it).
+- Trivial part regardless of direction: `scheduler_g_min_seconds` default 3.0 → **4.0** (`backend/app/config.py:63`) + `.env.example`.
+- Interaction with the FloodWait governor (`note_flood_wait` raises `g_min` ×1.5, `_G_MIN_CEIL=30`) and lazy decay — keep both.
+- "detectara automaticamente la concurrencia": n already = `active_senders` (non-paused) from the repo; reuse it, no new detection needed.

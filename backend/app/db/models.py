@@ -180,6 +180,38 @@ class Gate(Base):
     category: Mapped["GateCategory"] = relationship()
 
 
+class SendTarget(Base):
+    """A Telegram destination the shared account sends to (multi-target sending).
+
+    GLOBAL config — intentionally NO tenant_id: the owner curates ONE shared
+    list of chats (the checker bot directly + the CC groups where it lives), and
+    the send worker round-robins across the ENABLED + currently-resolvable ones
+    to spread per-chat load. ``chat_id`` is the marked peer id — account-global,
+    equals ``event.chat_id`` so it doubles as the capture filter — and is
+    BigInteger because supergroup/channel ids (``-100…``) overflow int4.
+
+    Resolution state is NOT a column: it is transient (depends on the live
+    Telethon session) and derived from the gateway at read time. Hard-deletable
+    — nothing references a target historically (``send_log`` has no chat_id; the
+    ``message_id`` alone attributes replies), so retiring config leaves no orphan.
+    """
+
+    __tablename__ = "send_targets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    label: Mapped[str] = mapped_column(String(80))
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Batch(Base):
     """One send batch (lote) for a tenant (Story 2.2).
 

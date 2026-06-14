@@ -37,7 +37,7 @@ def test_bridge_enqueues_during_boot_gap_then_filters_after_resolution() -> None
     received: list[IncomingReply] = []
     gateway.register_capture(received.append)
 
-    # Boot gap: _target_id is None — the event is enqueued, NOT dropped
+    # Boot gap: _target_ids is empty — the event is enqueued, NOT dropped
     # (attribution via send_log is the real authority; review 3-1).
     gateway._bridge(_event(chat_id=5, msg_id=7), edited=False)
     assert [r.message_id for r in received] == [7]
@@ -45,13 +45,14 @@ def test_bridge_enqueues_during_boot_gap_then_filters_after_resolution() -> None
     assert received[0].edited is False
     assert received[0].attempts == 0
 
-    # Target resolved: other chats are filtered out again …
-    gateway._target_id = 99
+    # Targets resolved (multi-target set): other chats are filtered out again …
+    gateway._target_ids = {99, 42}
     gateway._bridge(_event(chat_id=5, msg_id=8), edited=False)
     assert len(received) == 1
-    # … and the target chat passes through (edits flagged).
+    # … and ANY registered destination passes through (edits flagged).
     gateway._bridge(_event(chat_id=99, msg_id=9, reply_to=None), edited=True)
-    assert [r.message_id for r in received] == [7, 9]
+    gateway._bridge(_event(chat_id=42, msg_id=10, reply_to=None), edited=False)
+    assert [r.message_id for r in received] == [7, 9, 10]
     assert received[1].edited is True
     assert received[1].reply_to_msg_id is None
 

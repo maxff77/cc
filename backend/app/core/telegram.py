@@ -63,21 +63,24 @@ class TelegramGateway:
         self.client: TelegramClient | None = None
         self.authorized: bool = False
         # True by default so tests can drive sending by flipping only
-        # ``authorized``; ``connect()`` sets it for real.
+        # ``authorized``; ``reload_targets()`` sets it for real (True iff at
+        # least one destination resolved).
         self.target_ok: bool = True
-        self._entity: object | None = None
-        # Capture bridge (Story 3.1): installed BEFORE connect() by the
-        # lifespan; the marked peer id of the target, captured at resolve
-        # time, is what the handlers filter on (None ⇒ boot gap: events are
-        # enqueued unfiltered — attribution is the real authority).
+        # Resolved send destinations: (input_entity, marked_peer_id) pairs.
+        # ``send()`` round-robins over them; ``_target_ids`` is the capture
+        # filter (set membership). EMPTY set ⇒ boot gap: events enqueue
+        # unfiltered — attribution via send_log is the real authority.
+        self._entities: list[tuple[object, int]] = []
+        self._target_ids: set[int] = set()
+        self._send_index: int = 0
+        # Capture bridge (Story 3.1): installed BEFORE connect() by the lifespan.
         self._capture: Callable[[IncomingReply], None] | None = None
-        self._target_id: int | None = None
         self._handlers_registered = False
 
     @property
     def ready(self) -> bool:
         """True iff the gateway can actually deliver messages."""
-        return self.authorized and self.target_ok and self._entity is not None
+        return self.authorized and bool(self._entities)
 
     async def connect(self) -> None:
         """Connect + resolve the target. NEVER raises — failures log and leave
@@ -117,23 +120,113 @@ class TelegramGateway:
                 "anon.session missing/unauthorized — run scripts/telegram_auth.py"
             )
             return
-        await self._resolve_target()
+        # Targets are resolved separately via ``reload_targets()``, driven by
+        # the lifespan from the DB list (multi-target sending) — the gateway
+        # stays agnostic of the DB. connect() only owns the client + auth.
 
-    async def _resolve_target(self) -> None:
-        """Resolve ``telegram_target`` once; failure marks ``target_ok=False``."""
-        target = settings.telegram_target.strip().lstrip("@")
-        if not target or self.client is None:
-            logger.warning("TELEGRAM_TARGET not set — sending stays down")
+    async def reload_targets(
+        self, targets: list[tuple[int, str]]
+    ) -> dict[str, list[int]]:
+        """Resolve ``(chat_id, label)`` destinations into the active send set.
+
+        Atomically replaces ``_entities``/``_target_ids`` (a single rebind, so an
+        in-flight ``send()``/``recent_outgoing()`` keeps iterating its own
+        snapshot). A target that no longer resolves (the account left the chat,
+        a bad id) is SKIPPED and reported, never fatal — ``target_ok`` becomes
+        True iff at least one resolved. Safe to call at runtime (owner edit).
+        Returns ``{"resolved": [peer_ids], "failed": [chat_ids]}``.
+
+        A bare supergroup/channel id (``-100…``) only resolves when telethon has
+        its access_hash cached; a COLD session (fresh process) does not. So on
+        the first resolution failure we warm the entity cache ONCE via
+        ``get_dialogs`` and retry the stragglers — otherwise a saved numeric
+        target would silently 503 after every restart. Duplicate peer ids
+        (two stored rows for one chat) are kept once.
+        """
+        if self.client is None or not self.authorized:
+            self._entities = []
+            self._target_ids = set()
+            self._send_index = 0
             self.target_ok = False
-            return
+            return {"resolved": [], "failed": [cid for cid, _ in targets]}
+        resolved: list[tuple[object, int]] = []
+        seen_peers: set[int] = set()
+        pending = list(targets)
+        warmed = False
+        while True:
+            still_failing: list[tuple[int, str]] = []
+            for chat_id, label in pending:
+                peer = await self._resolve_peer(chat_id)
+                if peer is None:
+                    still_failing.append((chat_id, label))
+                    continue
+                entity, peer_id = peer
+                if peer_id in seen_peers:
+                    continue  # two stored ids for one chat → keep it once
+                seen_peers.add(peer_id)
+                resolved.append((entity, peer_id))
+            pending = still_failing
+            if not pending or warmed:
+                break
+            warmed = True
+            try:
+                # Warm telethon's session entity cache (access_hash) so bare
+                # numeric channel/supergroup ids resolve on the retry pass.
+                await self.client.get_dialogs(limit=200)
+            except Exception:
+                logger.warning("get_dialogs cache-warm failed")
+        for chat_id, label in pending:
+            logger.warning(
+                "could not resolve send target chat_id=%s label=%r", chat_id, label
+            )
+        self._entities = resolved
+        self._target_ids = {peer_id for _, peer_id in resolved}
+        self._send_index = 0
+        self.target_ok = bool(resolved)
+        if not resolved:
+            logger.warning("no send targets resolved — sending stays down (503)")
+        return {
+            "resolved": [peer_id for _, peer_id in resolved],
+            "failed": [cid for cid, _ in pending],
+        }
+
+    async def _resolve_peer(
+        self, identifier: int | str
+    ) -> tuple[object, int] | None:
+        """Resolve one id/@username to ``(input_entity, marked_peer_id)`` or None."""
         try:
-            self._entity = await self.client.get_input_entity(target)
-            # Marked peer id (matches event.chat_id) — the capture filter.
-            self._target_id = await self.client.get_peer_id(self._entity)
-            self.target_ok = True
+            entity = await self.client.get_input_entity(identifier)
+            return entity, int(await self.client.get_peer_id(entity))
         except Exception:
-            logger.exception("could not resolve TELEGRAM_TARGET %r", target)
-            self.target_ok = False
+            return None
+
+    async def resolve_one(self, identifier: int | str) -> int | None:
+        """Resolve a single target (id or @username) to its marked chat id, or
+        ``None``. Validates an owner's pick before persisting and seeds from the
+        legacy ``TELEGRAM_TARGET`` env."""
+        if self.client is None or not self.authorized:
+            return None
+        peer = await self._resolve_peer(identifier)
+        if peer is None:
+            logger.warning("could not resolve target identifier %r", identifier)
+            return None
+        return peer[1]
+
+    def resolved_ids(self) -> set[int]:
+        """Marked chat ids the gateway currently has resolved (live status)."""
+        return set(self._target_ids)
+
+    async def list_dialogs(self, limit: int = 100) -> list[tuple[int, str]]:
+        """Discovery: chats the account is in, as ``(chat_id, title)``.
+
+        Feeds the owner's "pick a destination" UI. Raises when not authorized —
+        the caller maps it to ``telegram_unauthorized``."""
+        if self.client is None or not self.authorized:
+            raise RuntimeError("telegram gateway not authorized")
+        out: list[tuple[int, str]] = []
+        async for dialog in self.client.iter_dialogs(limit=limit):
+            out.append((int(dialog.id), dialog.name or str(dialog.id)))
+        return out
 
     def register_capture(self, callback: Callable[[IncomingReply], None]) -> None:
         """Install the capture callback (Story 3.1). Called BEFORE ``connect()``
@@ -174,13 +267,15 @@ class TelegramGateway:
         """Filter + convert one telethon event into an ``IncomingReply``."""
         if event.out:
             return  # our own outgoing messages are never bot replies
-        # _target_id is None only in the boot gap (handlers live from BEFORE
-        # connect(); the target resolves after the authorization check):
-        # enqueue UNFILTERED rather than drop (review 3-1) — attribution via
-        # send_log is the real authority, so a cross-chat message simply lands
-        # in the monitored unmatched bucket, while a dropped catch_up replay
-        # would be lost forever (telethon advances the persisted pts state).
-        if self._target_id is not None and event.chat_id != self._target_id:
+        # _target_ids is EMPTY only in the boot gap (handlers live from BEFORE
+        # connect(); targets resolve after the authorization check): enqueue
+        # UNFILTERED rather than drop (review 3-1) — attribution via send_log is
+        # the real authority, so a cross-chat message simply lands in the
+        # monitored unmatched bucket, while a dropped catch_up replay would be
+        # lost forever (telethon advances the persisted pts state). Once
+        # resolved, only messages from a registered destination pass (the set
+        # generalizes the original single-target equality to multi-target).
+        if self._target_ids and event.chat_id not in self._target_ids:
             return
         capture = self._capture
         if capture is None:
@@ -204,8 +299,19 @@ class TelegramGateway:
         ``SessionLostError`` (Story 4.1) after flipping ``authorized`` off so
         new ``POST /api/batches`` 503 on their own.
         """
-        if self.client is None or self._entity is None:
+        # Snapshot the list (a concurrent reload_targets rebinds it): one send
+        # works against one consistent view.
+        entities = self._entities
+        if self.client is None or not entities:
             raise RuntimeError("telegram gateway not ready")
+        # Round-robin per message across the resolved destinations (spreads
+        # per-chat load — the operator's manual "send to CC1..CC6 in turn").
+        # The cursor is process memory, like the scheduler's: a restart/reload
+        # resets it and rotation re-establishes itself. Advance only on SUCCESS
+        # so a FloodWait retries the SAME chat. This NEVER changes pacing — the
+        # global interval is the scheduler's; this only picks WHICH chat.
+        idx = self._send_index % len(entities)
+        entity, _ = entities[idx]
         try:
             # parse_mode=None (2.5 deferred fix): delivered text must equal
             # line.text BYTE-FOR-BYTE — Telethon's default markdown rendering
@@ -213,12 +319,13 @@ class TelegramGateway:
             # bot receives AND breaking both boot reconciliation's equality
             # check and 3.1's attribution assumptions.
             message = await self.client.send_message(
-                self._entity, text, parse_mode=None
+                entity, text, parse_mode=None
             )
         except _AUTH_LOSS_ERRORS as e:
             self.authorized = False
             logger.error("event=session_lost source=send error=%s: %s", type(e).__name__, e)
             raise SessionLostError(f"{type(e).__name__}: {e}") from e
+        self._send_index = idx + 1
         return int(message.id)
 
     async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
@@ -229,26 +336,38 @@ class TelegramGateway:
         double-sent). Raises when the client isn't ready — the caller owns
         the fallback (telethon stays confined to this module).
         """
-        if self.client is None or self._entity is None:
+        entities = self._entities  # snapshot vs a concurrent reload rebind
+        if self.client is None or not entities:
             raise RuntimeError("telegram gateway not ready")
         try:
+            # Aggregate recent OUTGOING messages across ALL destinations
+            # (round-robin spreads our sends over them). message_id is
+            # account-global, so dedup by id + sort newest-first reproduces the
+            # shape boot reconciliation expects from a single chat.
             # Plain history + client-side ``m.out`` filter (2.5 deferred fix):
             # ``from_user="me"`` switches Telethon to messages.Search, whose
-            # weaker consistency can miss a message sent seconds before a
-            # crash — exactly the message reconciliation exists to find.
-            # getHistory is strongly consistent. ``raw_text`` (not ``text``)
+            # weaker consistency can miss a message sent seconds before a crash
+            # — getHistory is strongly consistent. ``raw_text`` (not ``text``)
             # so the comparison sees what was sent, never a markdown render.
-            # Bot replies interleave with our sends (~1:1), so scan a wider
-            # raw window and stop once ``limit`` OUTGOING messages are found.
-            messages: list[tuple[int, str]] = []
-            async for message in self.client.iter_messages(
-                self._entity, limit=limit * 4
-            ):
-                if not message.out:
-                    continue
-                messages.append((int(message.id), message.raw_text or ""))
-                if len(messages) >= limit:
-                    break
+            # Bot replies interleave ~1:1, so scan a wider raw window per chat
+            # and stop once ``limit`` OUTGOING are found in it.
+            seen: set[int] = set()
+            merged: list[tuple[int, str]] = []
+            for entity, _ in entities:
+                kept = 0
+                async for message in self.client.iter_messages(
+                    entity, limit=limit * 4
+                ):
+                    if not message.out:
+                        continue
+                    mid = int(message.id)
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                    merged.append((mid, message.raw_text or ""))
+                    kept += 1
+                    if kept >= limit:
+                        break
         except _AUTH_LOSS_ERRORS as e:
             # Same conversion as send() — the boot-recovery caller falls into
             # its existing reconcile_unverified fallback; the first real send
@@ -261,7 +380,8 @@ class TelegramGateway:
                 e,
             )
             raise SessionLostError(f"{type(e).__name__}: {e}") from e
-        return messages
+        merged.sort(key=lambda t: t[0], reverse=True)
+        return merged
 
     async def disconnect(self) -> None:
         """Disconnect on shutdown (no-op when never connected)."""

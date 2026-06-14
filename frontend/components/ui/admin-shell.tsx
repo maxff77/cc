@@ -20,6 +20,7 @@ const ITEMS = [
   { href: "/sessions", label: "Historial", ownerOnly: false },
   { href: "/admin/users", label: "Usuarios", ownerOnly: false },
   { href: "/admin/gates", label: "Gates", ownerOnly: true },
+  { href: "/admin/destinos", label: "Destinos", ownerOnly: true },
 ] as const;
 
 export function AdminShell({

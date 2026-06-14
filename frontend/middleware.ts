@@ -141,6 +141,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/admin/users", request.url));
   }
 
+  // /admin/destinos is owner-only (multi-target sending): the send-target list
+  // is a shared-account safety surface, same gate as /admin/gates. Admins are
+  // redirected to their own surface; clients were already bounced to / above.
+  const isDestinosPath =
+    request.nextUrl.pathname === "/admin/destinos" ||
+    request.nextUrl.pathname.startsWith("/admin/destinos/");
+
+  if (isDestinosPath && me.role !== "owner") {
+    return NextResponse.redirect(new URL("/admin/users", request.url));
+  }
+
   return NextResponse.next();
 }
 

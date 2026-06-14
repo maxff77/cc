@@ -216,6 +216,33 @@ def telegram_unauthorized() -> AppError:
     )
 
 
+# --- Send-target management (multi-target sending) -----------------------
+
+
+def telegram_target_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="telegram_target_not_found",
+        message="Ese destino no existe.",
+    )
+
+
+def telegram_target_exists() -> AppError:
+    return AppError(
+        status_code=409,
+        code="telegram_target_exists",
+        message="Ese destino ya está en la lista.",
+    )
+
+
+def telegram_target_unresolvable() -> AppError:
+    return AppError(
+        status_code=422,
+        code="telegram_target_unresolvable",
+        message="No pudimos resolver ese destino. ¿La cuenta sigue en ese chat?",
+    )
+
+
 # --- Codes this story (2.3) defines --------------------------------------
 
 
