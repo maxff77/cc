@@ -3,8 +3,9 @@
 // Envío surface (Story 2.2; controls + FloodWait notice since 2.3; live
 // response views since 3.2). Live state is driven ONLY by the WS store
 // (UX-DR12 — no optimistic state beyond the server-confirmed POST seed).
-// Desktop ≥lg: 2-col grid 300px + 1fr — cockpit left, then a single full-width
-// tabbed pane (todas / aprobadas / datos CC). Mobile stacks to one column.
+// Layout: tablet master-detail — cockpit master (ring → controls → form) +
+// a response detail pane. Two columns from 900px (tablet landscape / desktop),
+// stacked below (tablet portrait / phone).
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert } from "@heroui/react";
@@ -121,12 +122,12 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="cockpit-type mx-auto w-full max-w-[1600px] lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
-      {/* Cockpit type system ("Mando"): a commanding sans hierarchy — larger
-          labels, tabs, the Enviar button, and the ring readout than the base
-          scale so live state reads at a glance. Scoped to the cockpit; it
-          targets component-rendered classes, so it lives in a co-located
-          <style> rather than utilities. */}
+    <div className="cockpit cockpit-type mx-auto w-full max-w-[1280px]">
+      {/* Cockpit type system ("Mando") + tablet master-detail layout. Both
+          live in this co-located <style> because they target component-rendered
+          classes (HeroUI: .select__trigger / .button / .tabs__tab), not
+          utilities. The type scale bumps labels, tabs, the Enviar button and
+          the ring readout so live state reads at a glance. */}
       <style>{`
         .cockpit-type .pointer-events-none .font-mono { font-size: 30px; }
         .cockpit-type .label { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
@@ -135,10 +136,36 @@ export default function EnvioPage() {
         .cockpit-type .select__value,
         .cockpit-type .select__trigger { font-size: 0.9375rem; }
         .cockpit-type .text-sm { font-size: 0.9375rem; }
+
+        /* Master-detail: stacked by default (phone / tablet portrait — master
+           fills first, detail follows), two columns from 900px (tablet
+           landscape / desktop). 360px is the touch-comfortable master width. */
+        .cockpit__master { display: flex; flex-direction: column; gap: 20px; }
+        .cockpit__detail { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+        @media (min-width: 900px) {
+          .cockpit {
+            display: grid;
+            grid-template-columns: 360px minmax(0, 1fr);
+            align-items: start;
+            gap: 24px;
+          }
+          .cockpit__master { position: sticky; top: 1.5rem; }
+          .cockpit__detail { margin-top: 0; }
+        }
+
+        /* Touch context (tablet / hybrid): grow the real controls to a 44px+
+           target. Pointer-fine desktop sizing is left untouched. */
+        @media (pointer: coarse) {
+          .cockpit .select__trigger,
+          .cockpit .button { min-height: 46px; }
+          .cockpit .tabs__tab { min-height: 44px; }
+          .cockpit .textarea { min-height: 11rem; }
+        }
       `}</style>
 
-      {/* Cockpit column — pinned on desktop, single column on mobile. */}
-      <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
+      {/* Master — ring, controls, form. Pinned on wide screens so live state
+          stays in view while the detail pane scrolls. */}
+      <div className="cockpit__master">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
             would read as a silent stall (AC 2). Idle renders the ring at 0
             (ui-polish-spec §4.2) so starting a lote causes no layout jump. */}
@@ -166,7 +193,6 @@ export default function EnvioPage() {
             component TODO) — renders nothing without the field. */}
         <PlanExpiryNotice />
 
-        {/* Mobile order per DESIGN.md: ring → controls → data panels → form. */}
         <BatchControls live={live} />
         {/* Watchdog global pause (4.1): danger banner + owner-only resume —
             above FloodNotice (a latched pause outranks a transient wait). */}
@@ -178,25 +204,6 @@ export default function EnvioPage() {
         {/* Pendientes: the still-queued lines, draining one-by-one as they
             send (replaces the "textarea clears all at once" feel). */}
         <PendingLines live={live} />
-
-        {/* Mobile dual views (3.2): segmented tabs, capped height with
-            internal scroll — the form below stays reachable. Always rendered
-            (never gated on isLive): in idle they show the empty states or
-            the still-active session's rows — the data survives the lote. The
-            legend spells out the set-relationship so the tabs aren't a memory
-            tax (aprobadas ⊂ todas; datos CC extracted from them). */}
-        <ResponseViewsLegend className="lg:hidden" />
-        <ResponseTabs
-          cc={live.cc}
-          ccTotal={live.ccNew}
-          className="lg:hidden"
-          exportPathCompleta={exportCompleta}
-          exportPathFiltrada={exportFiltrada}
-          exportPathFiltradaCompleta={exportFiltradaCompleta}
-          responses={live.responses}
-          responsesOkTotal={live.responsesOkTotal}
-          responsesTotal={live.responsesTotal}
-        />
 
         {/* Gates loading (ui-polish-spec §4.8): skeleton with the form's own
             plate — never a floating centered spinner. */}
@@ -213,12 +220,14 @@ export default function EnvioPage() {
         {gates.data && <SendForm gates={gates.data.items} live={live} />}
       </div>
 
-      {/* Desktop data area (3.2): a single full-width tabbed pane (todas /
-          aprobadas / datos CC) so each view gets the column's full width
-          instead of three cramped side-by-side panels. This is the same
-          ResponseTabs component as the mobile one above (lg:hidden), shown
-          here at lg+. */}
-      <div className="hidden lg:flex lg:flex-col lg:gap-3">
+      {/* Detail — the dual Completa/Filtrada views the operator watches. One
+          pane (no longer duplicated mobile/desktop): it rides the right column
+          on wide screens and stacks under the master on narrow. Always rendered
+          (never gated on isLive): in idle it shows the empty states or the
+          still-active session's rows — the data survives the lote. The legend
+          spells out the set-relationship so the tabs aren't a memory tax
+          (aprobadas ⊂ todas; datos CC extracted from them). */}
+      <div className="cockpit__detail">
         <ResponseViewsLegend />
         <ResponseTabs
           cc={live.cc}
