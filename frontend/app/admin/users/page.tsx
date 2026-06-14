@@ -604,7 +604,6 @@ function SendIntervalCard() {
             isDisabled={interval.isLoading}
             isInvalid={error !== null}
             name="interval_seconds"
-            step={0.5}
             type="number"
             value={value}
             onChange={(v) => {
