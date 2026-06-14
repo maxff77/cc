@@ -9,10 +9,10 @@
 // action, never automatic). The `watchdog.resumed` event clears the banner
 // in every tab — no optimistic clear here (UX-DR12).
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Button } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
+import { Btn } from "@/components/ui/btn";
 
 // Spanish copy by machine reason (backend core/watchdog.py constants).
 const REASON_COPY: Record<string, string> = {
@@ -56,15 +56,14 @@ export function WatchdogNotice() {
       <p className="font-semibold text-danger">{copy}</p>
       {isOwner ? (
         <div className="mt-2 flex flex-col gap-1">
-          <Button
-            className="text-danger"
-            isDisabled={resume.isPending}
+          <Btn
+            disabled={resume.isPending}
             size="sm"
-            variant="secondary"
-            onPress={() => resume.mutate()}
+            variant="danger"
+            onClick={() => resume.mutate()}
           >
             Reanudar envíos
-          </Button>
+          </Btn>
           {resume.isError && (
             <span className="text-danger">
               {resume.error instanceof ApiError

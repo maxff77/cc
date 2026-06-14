@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { ContactPanel } from "@/components/contact-panel";
+import { AuthLayout } from "@/components/ui/auth-layout";
 import { api } from "@/lib/api";
 
 // Hard-lockout surface for an expired client (UX flow 4: never a dead-end —
@@ -30,18 +31,8 @@ export default function ExpiredPage() {
   }, []);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <span className="self-center font-mono text-2xl font-extrabold tracking-[-0.03em]">
-          CC
-        </span>
-
-        <h1 className="text-center text-lg font-bold tracking-[-0.01em]">
-          Tu plan venció
-        </h1>
-
-        <ContactPanel message={MESSAGE} />
-      </div>
-    </main>
+    <AuthLayout title="Tu plan venció">
+      <ContactPanel message={MESSAGE} />
+    </AuthLayout>
   );
 }

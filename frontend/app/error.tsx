@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { Alert, Button } from "@heroui/react";
+
+import { AuthLayout } from "@/components/ui/auth-layout";
+import { Notice } from "@/components/ui/notice";
+import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
 
 export default function Error({
   error,
@@ -17,20 +21,23 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <Alert status="danger">
-          <Alert.Content>
-            <Alert.Title>Algo salió mal.</Alert.Title>
-            <Alert.Description>
-              Recarga la página o intenta de nuevo.
-            </Alert.Description>
-          </Alert.Content>
-        </Alert>
-        <Button variant="primary" onPress={() => reset()}>
+    <AuthLayout
+      subtitle="Recarga la página o intenta de nuevo."
+      title="Algo salió mal"
+    >
+      <div className="flex flex-col gap-4">
+        <Notice status="danger">
+          <span className="flex items-center gap-3">
+            <span className="flex text-danger">
+              <Icon name="refresh" size={20} />
+            </span>
+            No pudimos completar la última acción.
+          </span>
+        </Notice>
+        <Btn full icon="refresh" variant="primary" onClick={() => reset()}>
           Reintentar
-        </Button>
+        </Btn>
       </div>
-    </main>
+    </AuthLayout>
   );
 }

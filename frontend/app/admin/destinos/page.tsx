@@ -2,27 +2,19 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import clsx from "clsx";
-import {
-  Alert,
-  AlertDialog,
-  Button,
-  FieldError,
-  Form,
-  Input,
-  Label,
-  ListBox,
-  Select,
-  Table,
-  TextField,
-} from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { AdminShell } from "@/components/ui/admin-shell";
+import { Btn } from "@/components/ui/btn";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Field } from "@/components/ui/field";
 import { MonoChip } from "@/components/ui/mono-chip";
+import { Notice } from "@/components/ui/notice";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
+import { Select } from "@/components/ui/select";
+import { StatePill } from "@/components/ui/state-pill";
 
 // Local response shapes mirror the backend target schemas (snake_case,
 // end-to-end) — same explicit-interface idiom as the gates/users pages.
@@ -47,8 +39,6 @@ interface DiscoveredChat {
 
 const TARGETS_KEY = ["admin-targets"] as const;
 const LABEL_MAX = 80;
-
-const PILL = "rounded px-2 py-0.5 text-[11px] font-medium";
 
 // Mirror of the backend label validator: required, ≤80 chars.
 function validateLabel(raw: string): string | null {
@@ -88,53 +78,69 @@ export default function AdminDestinosPage() {
           {targets.isLoading && <PanelSkeleton rows={5} />}
 
           {targets.isError && (
-            <Alert className="m-3" status="danger">
+            <Notice className="m-3" status="danger">
               No pudimos cargar los destinos. Recarga la página.
-            </Alert>
+            </Notice>
           )}
 
-          {targets.data && (
-            <Table>
-              <Table.Content aria-label="Destinos de envío">
-                <Table.Header>
-                  <Table.Column isRowHeader>Etiqueta</Table.Column>
-                  <Table.Column>Chat ID</Table.Column>
-                  <Table.Column>Estado</Table.Column>
-                  <Table.Column>Acciones</Table.Column>
-                </Table.Header>
-                <Table.Body
-                  items={targets.data.items}
-                  renderEmptyState={() => (
-                    <EmptyState message="No hay destinos. Agregá al menos uno." />
-                  )}
+          {targets.data &&
+            (targets.data.items.length === 0 ? (
+              <EmptyState message="No hay destinos. Agregá al menos uno." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table
+                  aria-label="Destinos de envío"
+                  className="w-full text-sm"
                 >
-                  {(t) => (
-                    <Table.Row id={t.id}>
-                      <Table.Cell>{t.label}</Table.Cell>
-                      <Table.Cell>
-                        <MonoChip>{String(t.chat_id)}</MonoChip>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <StatusPills target={t} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="flex gap-2">
-                          <ToggleTargetAction
-                            target={t}
-                            onChanged={invalidate}
-                          />
-                          <DeleteTargetAction
-                            target={t}
-                            onDeleted={invalidate}
-                          />
-                        </div>
-                      </Table.Cell>
-                    </Table.Row>
-                  )}
-                </Table.Body>
-              </Table.Content>
-            </Table>
-          )}
+                  <thead>
+                    <tr className="border-b border-separator text-left">
+                      <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                        Etiqueta
+                      </th>
+                      <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                        Chat ID
+                      </th>
+                      <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                        Estado
+                      </th>
+                      <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {targets.data.items.map((t) => (
+                      <tr
+                        key={t.id}
+                        className="border-b border-separator last:border-b-0"
+                      >
+                        <td className="px-3 py-2.5 text-foreground">
+                          {t.label}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <MonoChip>{String(t.chat_id)}</MonoChip>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <StatusPills target={t} />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex gap-2">
+                            <ToggleTargetAction
+                              target={t}
+                              onChanged={invalidate}
+                            />
+                            <DeleteTargetAction
+                              target={t}
+                              onDeleted={invalidate}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
         </SectionCard>
       </div>
     </AdminShell>
@@ -146,27 +152,13 @@ export default function AdminDestinosPage() {
 function StatusPills({ target }: { target: TargetOut }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      <span
-        className={clsx(
-          PILL,
-          target.enabled
-            ? "bg-success/15 text-success"
-            : "bg-warning/18 text-warning",
-        )}
-      >
+      <StatePill tone={target.enabled ? "success" : "warning"}>
         {target.enabled ? "Activo" : "Pausado"}
-      </span>
+      </StatePill>
       {target.enabled && (
-        <span
-          className={clsx(
-            PILL,
-            target.resolved
-              ? "bg-accent/15 text-accent"
-              : "bg-danger/15 text-danger",
-          )}
-        >
+        <StatePill tone={target.resolved ? "accent" : "danger"}>
           {target.resolved ? "Resuelto" : "No resuelto"}
-        </span>
+        </StatePill>
       )}
     </div>
   );
@@ -251,29 +243,47 @@ function AddTargetBlock({
         ? "No pudimos listar los chats. Intenta de nuevo."
         : null;
 
+  // Native select options — disabled empty-catalog hint when there's nothing
+  // new to add (matches the gates page's "Sin categorías" placeholder idiom).
+  const chatOptions =
+    available.length === 0
+      ? [
+          {
+            id: "__none",
+            label: discover.data
+              ? "No hay chats nuevos."
+              : "Buscá chats primero.",
+          },
+        ]
+      : available.map((c) => ({ id: String(c.chat_id), label: c.title }));
+
   return (
     <SectionCard legend="AGREGAR DESTINO" legendAs="h2">
       <div className="flex flex-col gap-3">
-        {banner && <Alert status="danger">{banner}</Alert>}
+        {banner && <Notice status="danger">{banner}</Notice>}
 
-        <Button
-          className="w-full"
-          isDisabled={discover.isFetching}
+        <Btn
+          full
+          disabled={discover.isFetching}
+          icon="search"
           variant="secondary"
-          onPress={() => discover.refetch()}
+          onClick={() => discover.refetch()}
         >
           {discover.isFetching ? "Buscando…" : "Buscar chats"}
-        </Button>
+        </Btn>
 
-        {discoverError && <Alert status="danger">{discoverError}</Alert>}
+        {discoverError && <Notice status="danger">{discoverError}</Notice>}
 
-        <Form className="flex flex-col gap-3" onSubmit={onSubmit}>
+        <form className="flex flex-col gap-3" onSubmit={onSubmit}>
           <Select
-            className="w-full"
+            label="Chat"
+            options={chatOptions}
             placeholder="Elegí un chat"
-            selectedKey={selected === null ? null : String(selected)}
-            onSelectionChange={(key) => {
-              const id = key == null ? null : Number(key);
+            value={selected === null ? null : String(selected)}
+            onChange={(key) => {
+              // The disabled empty-catalog hint carries no real id — ignore it.
+              if (key === "__none") return;
+              const id = Number(key);
 
               setSelected(id);
               const chat = available.find((c) => c.chat_id === id);
@@ -281,60 +291,31 @@ function AddTargetBlock({
               if (chat) setLabel(chat.title);
               if (labelError) setLabelError(null);
             }}
-          >
-            <Label>Chat</Label>
-            <Select.Trigger>
-              <Select.Value />
-              <Select.Indicator />
-            </Select.Trigger>
-            <Select.Popover>
-              <ListBox>
-                {available.length === 0 ? (
-                  <ListBox.Item isDisabled id="__none" textValue="Sin chats">
-                    {discover.data
-                      ? "No hay chats nuevos."
-                      : "Buscá chats primero."}
-                  </ListBox.Item>
-                ) : (
-                  available.map((c) => (
-                    <ListBox.Item
-                      key={c.chat_id}
-                      id={String(c.chat_id)}
-                      textValue={c.title}
-                    >
-                      {c.title}
-                    </ListBox.Item>
-                  ))
-                )}
-              </ListBox>
-            </Select.Popover>
-          </Select>
+          />
 
-          <TextField
-            isRequired
-            className="flex w-full flex-col gap-1"
-            isInvalid={labelError !== null}
+          <Field
+            required
+            error={labelError}
+            label="Etiqueta"
             name="label"
+            placeholder="CC1"
             value={label}
             onChange={(v) => {
               setLabel(v);
               if (labelError) setLabelError(null);
             }}
-          >
-            <Label>Etiqueta</Label>
-            <Input placeholder="CC1" />
-            {labelError && <FieldError>{labelError}</FieldError>}
-          </TextField>
+          />
 
-          <Button
-            className="w-full"
-            isDisabled={create.isPending}
+          <Btn
+            full
+            disabled={create.isPending}
+            icon="plus"
             type="submit"
             variant="primary"
           >
             {create.isPending ? "Agregando…" : "Agregar destino"}
-          </Button>
-        </Form>
+          </Btn>
+        </form>
       </div>
     </SectionCard>
   );
@@ -364,14 +345,15 @@ function ToggleTargetAction({
   });
 
   return (
-    <Button
-      isDisabled={mutation.isPending}
+    <Btn
+      disabled={mutation.isPending}
+      icon={target.enabled ? "pause" : "play"}
       size="sm"
       variant="secondary"
-      onPress={() => mutation.mutate()}
+      onClick={() => mutation.mutate()}
     >
       {target.enabled ? "Pausar" : "Activar"}
-    </Button>
+    </Btn>
   );
 }
 
@@ -412,62 +394,32 @@ function DeleteTargetAction({
 
   return (
     <>
-      <Button
+      <Btn
+        icon="trash"
         size="sm"
-        variant="secondary"
-        onPress={() => {
+        variant="danger"
+        onClick={() => {
           setError(null);
           setOpen(true);
         }}
       >
         Eliminar
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Eliminando…" : "Eliminar"}
+        confirmVariant="danger"
+        heading={`¿Eliminar el destino “${target.label}”?`}
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Eliminar el destino “{target.label}”?
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {error && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{error}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => mutation.mutate()}
-                >
-                  {mutation.isPending ? "Eliminando…" : "Eliminar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {error && <Notice status="danger">{error}</Notice>}
+      </ConfirmDialog>
     </>
   );
 }

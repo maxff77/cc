@@ -1,9 +1,9 @@
 "use client";
 
 // Session detail (Story 3.3, AC 2 + 3): the SAME dual Completa/Filtrada
-// views as Envío — CompletaPanel/FiltradaPanel/ResponseTabs reused verbatim
-// (they are props-driven on purpose; that reusability was a 3.2 design
-// requirement). The data arrives COMPLETE by REST (`limit=None` server-side
+// views as Envío — ResponseColumns/ResponseTabs reused verbatim (they are
+// props-driven on purpose; that reusability was a 3.2 design requirement).
+// The data arrives COMPLETE by REST (`limit=None` server-side
 // — the snapshot's 200-row cap is reconnection-only); the WS store only
 // signals "something new" for the live-follow refetch. Export `↓ .txt`
 // (Story 3.5): always present here — the session exists, and closed or in
@@ -12,18 +12,16 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { useLiveBatch, type CcRow, type ResponseRow } from "@/lib/ws";
 import {
-  CompletaPanel,
-  FiltradaConResponsePanel,
-  FiltradaPanel,
+  ResponseColumns,
   ResponseTabs,
 } from "@/components/sessions/response-views";
+import { Btn } from "@/components/ui/btn";
 import { EmptyState } from "@/components/ui/empty-state";
-import { MonoChip } from "@/components/ui/mono-chip";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { StatePill } from "@/components/ui/state-pill";
@@ -196,9 +194,9 @@ export default function SessionDetailPage() {
 
     return (
       <div className="flex flex-col gap-3">
-        <Alert status="danger">
+        <Notice status="danger">
           No pudimos cargar la sesión. Recarga la página.
-        </Alert>
+        </Notice>
         <Link
           className="self-start text-sm text-accent underline"
           href="/sessions"
@@ -234,69 +232,55 @@ export default function SessionDetailPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <PageHeader
-          actions={
-            <>
-              {/* Only on "Cerrada" (AC 1) — not destructive: secondary, no
-                  confirm. */}
-              {!data.is_active && (
-                <Button
-                  isDisabled={continuar.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => continuar.mutate()}
-                >
-                  {continuar.isPending ? "Continuando…" : "Continuar"}
-                </Button>
-              )}
-              <StatePill tone={data.is_active ? "accent" : "muted"}>
-                {data.is_active ? "En curso" : "Cerrada"}
-              </StatePill>
-            </>
-          }
-          back={{ href: "/sessions", label: "Historial" }}
-          title={data.name ?? fallbackName(data.created_at)}
-        />
-        {/* Gate chip + creation date; the internal id is debug data and no
-            longer shown (ui-polish-spec §3.8). */}
-        <div className="flex items-center gap-2">
-          <MonoChip>{data.gate_value}</MonoChip>
-          <span className="font-mono text-[11px] text-muted">
-            {fallbackName(data.created_at)}
-          </span>
-        </div>
-      </div>
+      {/* Gate · value · creation date ride the header's mono sub-line; the
+          internal id is debug data and no longer shown (ui-polish-spec §3.8). */}
+      <PageHeader
+        actions={
+          <>
+            {/* Only on "Cerrada" (AC 1) — not destructive: secondary, no
+                confirm. */}
+            {!data.is_active && (
+              <Btn
+                disabled={continuar.isPending}
+                icon="play"
+                size="md"
+                variant="secondary"
+                onClick={() => continuar.mutate()}
+              >
+                {continuar.isPending ? "Continuando…" : "Continuar"}
+              </Btn>
+            )}
+            <StatePill
+              dot={data.is_active ? "pulse" : undefined}
+              tone={data.is_active ? "accent" : "muted"}
+            >
+              {data.is_active ? "En curso" : "Cerrada"}
+            </StatePill>
+          </>
+        }
+        back={{ href: "/sessions", label: "Historial" }}
+        mono={`${data.gate_name} · ${data.gate_value} · ${fallbackName(data.created_at)}`}
+        title={data.name ?? fallbackName(data.created_at)}
+      />
 
-      {continueError && <Alert status="danger">{continueError}</Alert>}
+      {continueError && <Notice status="danger">{continueError}</Notice>}
 
-      {/* Desktop: the same two side-by-side panels as Envío; internal
+      {/* Desktop: the same three side-by-side panels as Envío; internal
           scroll — the detail competes with no cockpit. */}
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
-        <CompletaPanel
-          className="hidden lg:flex"
-          exportPath={exportCompleta}
-          listClassName="lg:max-h-[calc(100vh-12rem)]"
-          responses={responses}
-          total={data.responses_total}
-        />
-        <FiltradaConResponsePanel
-          className="hidden lg:flex"
-          exportPath={exportFiltradaCompleta}
-          listClassName="lg:max-h-[calc(100vh-12rem)]"
-          responses={responses}
-          total={data.responses_ok_total}
-        />
-        <FiltradaPanel
+      <div className="hidden lg:block">
+        <ResponseColumns
           cc={cc}
-          className="hidden lg:flex"
-          exportPath={exportFiltrada}
-          listClassName="lg:max-h-[calc(100vh-12rem)]"
-          total={data.cc_total}
+          ccTotal={data.cc_total}
+          exportPathCompleta={exportCompleta}
+          exportPathFiltrada={exportFiltrada}
+          exportPathFiltradaCompleta={exportFiltradaCompleta}
+          responses={responses}
+          responsesOkTotal={data.responses_ok_total}
+          responsesTotal={data.responses_total}
         />
       </div>
 
-      {/* Mobile: the same segmented Completa | Con response | Sin response. */}
+      {/* Mobile: the same segmented Completa | Con respuesta | Datos CC. */}
       <ResponseTabs
         cc={cc}
         ccTotal={data.cc_total}

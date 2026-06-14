@@ -1,23 +1,23 @@
 "use client";
 
-// Client navigation (UX-DR10): Envío | Historial for clients. Staff (owner/
-// admin) also send (3-tier priority owner > admin > client), so for them the
-// nav additionally cross-links to admin (Usuarios, + Gates for owner) —
-// mirroring AdminShell's Envío/Historial links the other way. Clients never
-// see admin links. Bottom nav on mobile (< lg) with a 6px live dot on Envío
-// (success green while sending, warning amber while paused/stopping — Story
-// 2.3); inline header strip on desktop. The header also hosts the state pill
-// (DESIGN.md: brand, nav, state pill) — the ONLY full-round piece of the
-// system (now the shared StatePill primitive), mirroring `batch.state`
-// verbatim and hidden at idle (AC 2).
+// Client navigation (UX-DR10 / Ranger-X handoff `Chrome`): sticky blurred
+// header with the shield Mark + gradient RANGER-X wordmark, nav tabs carrying a
+// brand-gradient underline when active, the live StatePill, a light/dark toggle
+// and Cerrar sesión. Staff (owner/admin) also send, so for them the nav
+// cross-links to admin (Usuarios, + Gates/Destinos for owner) — clients never
+// see admin links. Bottom nav on mobile (< lg) keeps the cockpit reachable; a
+// 6px live dot rides Envío there (success while sending, warning while
+// paused/stopping). The header StatePill mirrors `batch.state`, hidden at idle.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@heroui/react";
 
 import { api } from "@/lib/api";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
+import { Mark } from "@/components/ui/logo";
+import { Btn } from "@/components/ui/btn";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
 
 interface Me {
@@ -31,12 +31,13 @@ const ITEMS: readonly NavLink[] = [
   { href: "/sessions", label: "Historial" },
 ];
 
-// Cross-links to admin, shown ONLY to staff. Gates is owner-only (Story 2.1).
+// Cross-links to admin, shown ONLY to staff. Gates/Destinos are owner-only.
 const ADMIN_ITEMS: readonly NavLink[] = [
   { href: "/admin/users", label: "Usuarios" },
 ];
 const OWNER_ITEMS: readonly NavLink[] = [
   { href: "/admin/gates", label: "Gates" },
+  { href: "/admin/destinos", label: "Destinos" },
 ];
 
 // Verbatim copy per state (EXPERIENCE.md microcopy — tuteo, exact).
@@ -44,14 +45,11 @@ const PILL_COPY: Record<Exclude<BatchSurfaceState, "idle">, string> = {
   sending: "Enviando",
   paused: "En pausa",
   stopping: "Deteniendo",
-  // Story 4.2: queued for admission — live but not sending yet.
   waiting: "En espera",
 };
 
 // Tone + dot per state (ui-polish-spec §3.3): sending = accent + pulse,
-// paused = warning + static, stopping = danger (no dot — sub-second state).
-// 'waiting' wears warning like paused: same "vivo pero no enviando" family
-// (Story 4.2).
+// paused/waiting = warning + static, stopping = danger (no dot — sub-second).
 const PILL_TONE: Record<Exclude<BatchSurfaceState, "idle">, PillTone> = {
   sending: "accent",
   paused: "warning",
@@ -75,8 +73,10 @@ function NavItem({
   return (
     <Link
       className={clsx(
-        "rounded px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-        active ? "bg-surface-tertiary text-foreground" : "text-muted",
+        "rx-focus relative rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
+        active
+          ? "bg-surface-tertiary text-foreground"
+          : "text-muted hover:text-foreground",
         className,
       )}
       href={href}
@@ -93,6 +93,13 @@ function NavItem({
           />
         )}
       </span>
+      {/* Brand-gradient underline marks the active tab (handoff Chrome). */}
+      {active && (
+        <span
+          aria-hidden
+          className="brand-fill absolute inset-x-3 -bottom-[13px] h-0.5 rounded"
+        />
+      )}
     </Link>
   );
 }
@@ -100,10 +107,6 @@ function NavItem({
 export function ClientNav() {
   const pathname = usePathname();
   const live = useLiveBatch();
-  // Role decides whether staff cross-links appear. Shared ["me"] cache key —
-  // admin pages prime it, so this is usually a cache hit. While it loads,
-  // role is undefined and only the two client items render (no flicker of
-  // admin links for a client).
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api.get<Me>("/api/auth/me"),
@@ -120,7 +123,6 @@ export function ClientNav() {
     try {
       await api.post("/api/auth/logout");
     } finally {
-      // Full navigation so middleware re-reads the cleared cookie.
       window.location.assign("/login");
     }
   }
@@ -140,8 +142,6 @@ export function ClientNav() {
     navItems.map((item) => (
       <NavItem
         key={item.href}
-        // Prefix match keeps Historial lit on /sessions/[id] (Story 3.3); the
-        // "/" item stays exact-only so it never lights up everywhere.
         active={
           pathname === item.href ||
           (item.href !== "/" && pathname.startsWith(item.href + "/"))
@@ -155,24 +155,18 @@ export function ClientNav() {
 
   return (
     <>
-      <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:px-6">
-        <div className="flex items-center gap-6">
-          {/* Brand mark: gradient-filled badge (the .gradient-moment source)
-              beside a SOLID-foreground wordmark — never clip the gradient onto
-              the letters (hard ban). */}
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-border bg-[color-mix(in_oklch,var(--background)_82%,transparent)] px-4 py-3 backdrop-blur-md lg:px-6">
+        <div className="flex min-w-0 items-center gap-6">
           <Link
-            className="flex items-center gap-2 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="rx-focus flex shrink-0 items-center gap-2.5"
             href="/"
           >
-            <span
-              aria-hidden
-              className="gradient-moment size-6 shrink-0 rounded"
-            />
-            <span className="font-mono text-lg font-bold tracking-[-0.03em] text-foreground">
-              Ranger-X
+            <Mark size={28} />
+            <span className="gradient-text font-display text-xl font-extrabold italic leading-none tracking-[0.01em]">
+              RANGER-X
             </span>
           </Link>
-          {/* Desktop: the two items inline in the header strip. */}
+          {/* Desktop: inline nav tabs. */}
           <nav className="hidden items-center gap-1 lg:flex">{items()}</nav>
           {live.state !== "idle" && (
             <StatePill
@@ -189,13 +183,15 @@ export function ClientNav() {
             </StatePill>
           )}
         </div>
-        <Button size="sm" variant="secondary" onPress={logout}>
-          Cerrar sesión
-        </Button>
+        <div className="flex shrink-0 items-center gap-2.5">
+          <ThemeToggle />
+          <Btn size="sm" variant="secondary" onClick={logout}>
+            Cerrar sesión
+          </Btn>
+        </div>
       </header>
 
-      {/* Mobile: fixed bottom nav (the cockpit never scrolls away);
-          safe-area padding for home-indicator devices. */}
+      {/* Mobile: fixed bottom nav (the cockpit never scrolls away). */}
       <nav className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-around border-t border-border bg-background pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden">
         {items("flex-1 text-center")}
       </nav>

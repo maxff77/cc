@@ -1,27 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  AlertDialog,
-  Button,
-  FieldError,
-  Form,
-  Input,
-  Label,
-  ListBox,
-  Select,
-  Table,
-  TextField,
-} from "@heroui/react";
+import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
 import { AdminShell } from "@/components/ui/admin-shell";
+import { Btn } from "@/components/ui/btn";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Field } from "@/components/ui/field";
 import { MonoChip } from "@/components/ui/mono-chip";
+import { Notice } from "@/components/ui/notice";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
+import { Select } from "@/components/ui/select";
 
 // Local response shapes mirror the backend gate schemas (snake_case,
 // end-to-end) — same explicit-interface idiom as the users page.
@@ -120,6 +113,27 @@ export default function AdminGatesPage() {
     queryClient.invalidateQueries({ queryKey: GATES_KEY });
   };
 
+  const categoryItems = categories.data?.items ?? [];
+
+  // Group the catalog into one SectionCard per category (gate rows in a ul),
+  // following the Ranger-X GatesScreen pattern. Order follows the category
+  // list; categories with no gates still render (with an inline empty state).
+  const grouped = useMemo(() => {
+    const byCategory = new Map<number, GateOut[]>();
+
+    for (const g of gates.data?.items ?? []) {
+      const bucket = byCategory.get(g.category_id) ?? [];
+
+      bucket.push(g);
+      byCategory.set(g.category_id, bucket);
+    }
+
+    return categoryItems.map((c) => ({
+      category: c,
+      gates: byCategory.get(c.id) ?? [],
+    }));
+  }, [gates.data, categoryItems]);
+
   return (
     // Only the owner reaches this page (backend guard) → Gates nav visible.
     <AdminShell gatesVisible title="Gates">
@@ -127,73 +141,78 @@ export default function AdminGatesPage() {
         {/* Left zone: categories + create form (sticky on desktop). */}
         <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
           <CategoriesBlock
-            categories={categories.data?.items ?? []}
+            categories={categoryItems}
             isError={categories.isError}
             isLoading={categories.isLoading}
             onChanged={invalidateCategories}
           />
 
-          <CreateGateForm
-            categories={categories.data?.items ?? []}
-            onCreated={invalidate}
-          />
+          <CreateGateForm categories={categoryItems} onCreated={invalidate} />
         </div>
 
-        {/* Right zone: the catalog table. */}
-        <SectionCard legend="CATÁLOGO" padding="none">
-          {gates.isLoading && <PanelSkeleton rows={5} />}
+        {/* Right zone: the catalog, grouped by category. */}
+        <div className="flex flex-col gap-6">
+          {gates.isLoading && (
+            <SectionCard legend="CATÁLOGO" padding="none">
+              <PanelSkeleton rows={5} />
+            </SectionCard>
+          )}
 
           {gates.isError && (
-            <Alert className="m-3" status="danger">
+            <Notice status="danger">
               No pudimos cargar el catálogo. Recarga la página.
-            </Alert>
+            </Notice>
           )}
 
-          {gates.data && (
-            <Table>
-              <Table.Content aria-label="Catálogo de gates">
-                <Table.Header>
-                  <Table.Column isRowHeader>Nombre</Table.Column>
-                  <Table.Column>Gate</Table.Column>
-                  <Table.Column>Categoría</Table.Column>
-                  <Table.Column>Creado</Table.Column>
-                  <Table.Column>Acciones</Table.Column>
-                </Table.Header>
-                <Table.Body
-                  items={gates.data.items}
-                  renderEmptyState={() => (
-                    <EmptyState message="El catálogo está vacío." />
-                  )}
-                >
-                  {(g) => (
-                    <Table.Row id={g.id}>
-                      <Table.Cell>{g.name}</Table.Cell>
-                      <Table.Cell>
-                        <MonoChip>{g.value}</MonoChip>
-                      </Table.Cell>
-                      <Table.Cell>{g.category_name}</Table.Cell>
-                      <Table.Cell>
-                        <span className="font-mono text-[11px] text-muted tabular-nums">
-                          {formatCreated(g.created_at)}
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="flex gap-2">
-                          <EditGateAction
-                            categories={categories.data?.items ?? []}
-                            gate={g}
-                            onChanged={invalidate}
-                          />
-                          <DeleteGateAction gate={g} onDeleted={invalidate} />
-                        </div>
-                      </Table.Cell>
-                    </Table.Row>
-                  )}
-                </Table.Body>
-              </Table.Content>
-            </Table>
+          {gates.data && grouped.length === 0 && (
+            <SectionCard legend="CATÁLOGO" padding="none">
+              <EmptyState message="El catálogo está vacío." />
+            </SectionCard>
           )}
-        </SectionCard>
+
+          {gates.data &&
+            grouped.map(({ category, gates: rows }) => (
+              <SectionCard
+                key={category.id}
+                legend={category.name}
+                padding="none"
+              >
+                {rows.length === 0 ? (
+                  <EmptyState message="Sin gates en esta categoría." />
+                ) : (
+                  <ul className="m-0 list-none p-0">
+                    {rows.map((g, i) => (
+                      <li
+                        key={g.id}
+                        className={clsx(
+                          "flex items-center gap-3 px-3.5 py-3",
+                          // Top border separates rows (none on the first),
+                          // per the Ranger-X GatesScreen li styling.
+                          i && "border-t border-separator",
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="truncate text-sm font-semibold">
+                            {g.name}
+                          </span>
+                          <span className="font-mono text-[11px] text-muted tabular-nums">
+                            {formatCreated(g.created_at)}
+                          </span>
+                        </div>
+                        <MonoChip>{g.value}</MonoChip>
+                        <EditGateAction
+                          categories={categoryItems}
+                          gate={g}
+                          onChanged={invalidate}
+                        />
+                        <DeleteGateAction gate={g} onDeleted={invalidate} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </SectionCard>
+            ))}
+        </div>
       </div>
     </AdminShell>
   );
@@ -206,7 +225,6 @@ function CategorySelect({
   value,
   onChange,
   label = "Categoría",
-  isInvalid,
   errorMessage,
   className,
 }: {
@@ -214,41 +232,26 @@ function CategorySelect({
   value: number | null;
   onChange: (id: number | null) => void;
   label?: string;
-  isInvalid?: boolean;
   errorMessage?: string | null;
   className?: string;
 }) {
+  // Empty catalog: a single disabled hint option with zero behavior.
+  const options =
+    categories.length === 0
+      ? [{ id: "__none", label: "Primero crea una categoría." }]
+      : categories.map((c) => ({ id: String(c.id), label: c.name }));
+
   return (
     <Select
       className={className ?? "w-full"}
-      isInvalid={isInvalid}
+      disabled={categories.length === 0}
+      error={errorMessage}
+      label={label}
+      options={options}
       placeholder="Elegí una categoría"
-      selectedKey={value === null ? null : String(value)}
-      onSelectionChange={(key) => onChange(key == null ? null : Number(key))}
-    >
-      <Label>{label}</Label>
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      {errorMessage && <FieldError>{errorMessage}</FieldError>}
-      <Select.Popover>
-        <ListBox>
-          {categories.length === 0 ? (
-            // Empty catalog hint — disabled, not selectable, zero behavior.
-            <ListBox.Item isDisabled id="__none" textValue="Sin categorías">
-              Primero crea una categoría.
-            </ListBox.Item>
-          ) : (
-            categories.map((c) => (
-              <ListBox.Item key={c.id} id={String(c.id)} textValue={c.name}>
-                {c.name}
-              </ListBox.Item>
-            ))
-          )}
-        </ListBox>
-      </Select.Popover>
-    </Select>
+      value={value === null ? null : String(value)}
+      onChange={(id) => onChange(id === "__none" ? null : Number(id))}
+    />
   );
 }
 
@@ -305,41 +308,38 @@ function CategoriesBlock({
     // legendAs="h2": replaces the old "Categorías" h2 heading.
     <SectionCard legend="CATEGORÍAS" legendAs="h2">
       <div className="flex flex-col gap-3">
-        {banner && <Alert status="danger">{banner}</Alert>}
+        {banner && <Notice status="danger">{banner}</Notice>}
 
-        <Form className="flex flex-col gap-3" onSubmit={onSubmit}>
-          <TextField
-            isRequired
-            className="flex w-full flex-col gap-1"
-            isInvalid={fieldError !== null}
+        <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+          <Field
+            required
+            error={fieldError}
+            label="Nombre"
             name="category-name"
+            placeholder="Visa"
             value={name}
             onChange={(v) => {
               setName(v);
               if (fieldError) setFieldError(null);
             }}
-          >
-            <Label>Nombre</Label>
-            <Input placeholder="Visa" />
-            {fieldError && <FieldError>{fieldError}</FieldError>}
-          </TextField>
+          />
 
-          <Button
-            className="w-full"
-            isDisabled={mutation.isPending}
+          <Btn
+            full
+            disabled={mutation.isPending}
             type="submit"
             variant="primary"
           >
             {mutation.isPending ? "Creando…" : "Crear categoría"}
-          </Button>
-        </Form>
+          </Btn>
+        </form>
 
         <div>
           {isLoading && <PanelSkeleton rows={3} />}
           {isError && (
-            <Alert status="danger">
+            <Notice status="danger">
               No pudimos cargar las categorías. Recarga la página.
-            </Alert>
+            </Notice>
           )}
           {!isLoading && !isError && categories.length === 0 && (
             <EmptyState message="Todavía no hay categorías." />
@@ -363,7 +363,7 @@ function CategoryRow({
   onChanged: () => void;
 }) {
   // Max ONE layer open at a time (UX-DR21): the inline rename stays (a single
-  // field fits the 320px column); the delete confirm lives in an AlertDialog.
+  // field fits the 320px column); the delete confirm lives in a ConfirmDialog.
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [name, setName] = useState(category.name);
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -436,19 +436,16 @@ function CategoryRow({
     <li className="flex flex-col gap-2 py-2">
       <div className="flex items-center justify-between gap-3">
         {mode === "edit" ? (
-          <TextField
+          <Field
             className="flex-1"
-            isInvalid={renameError !== null}
+            error={renameError}
             name="rename"
             value={name}
             onChange={(v) => {
               setName(v);
               if (renameError) setRenameError(null);
             }}
-          >
-            <Input aria-label="Nombre de la categoría" />
-            {renameError && <FieldError>{renameError}</FieldError>}
-          </TextField>
+          />
         ) : (
           <span className="text-sm">{category.name}</span>
         )}
@@ -456,99 +453,68 @@ function CategoryRow({
         <div className="flex gap-2">
           {mode === "edit" ? (
             <>
-              <Button
-                isDisabled={rename.isPending}
+              <Btn
+                disabled={rename.isPending}
                 size="sm"
                 variant="primary"
-                onPress={saveRename}
+                onClick={saveRename}
               >
                 {rename.isPending ? "Guardando…" : "Guardar"}
-              </Button>
-              <Button
-                isDisabled={rename.isPending}
+              </Btn>
+              <Btn
+                disabled={rename.isPending}
                 size="sm"
                 variant="secondary"
-                onPress={() => {
+                onClick={() => {
                   setMode("view");
                   setRenameError(null);
                 }}
               >
                 Cancelar
-              </Button>
+              </Btn>
             </>
           ) : (
             <>
-              <Button
+              <Btn
                 size="sm"
                 variant="secondary"
-                onPress={() => {
+                onClick={() => {
                   setName(category.name);
                   setRenameError(null);
                   setMode("edit");
                 }}
               >
                 Renombrar
-              </Button>
-              <Button
+              </Btn>
+              <Btn
                 size="sm"
                 variant="secondary"
-                onPress={() => {
+                onClick={() => {
                   setDeleteError(null);
                   setConfirmOpen(true);
                 }}
               >
                 Eliminar
-              </Button>
+              </Btn>
             </>
           )}
         </div>
       </div>
 
-      <AlertDialog
-        isOpen={confirmOpen}
+      <ConfirmDialog
+        confirmLabel={remove.isPending ? "Eliminando…" : "Eliminar"}
+        confirmVariant="danger"
+        heading={`¿Eliminar la categoría “${category.name}”?`}
+        open={confirmOpen}
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate()}
         onOpenChange={(open) => {
           setConfirmOpen(open);
           if (!open) setDeleteError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Eliminar la categoría “{category.name}”?
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {deleteError && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{deleteError}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={remove.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setConfirmOpen(false);
-                    setDeleteError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={remove.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => remove.mutate()}
-                >
-                  {remove.isPending ? "Eliminando…" : "Eliminar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {deleteError && <Notice status="danger">{deleteError}</Notice>}
+      </ConfirmDialog>
     </li>
   );
 }
@@ -598,7 +564,7 @@ function CreateGateForm({
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // Enter can re-submit the Form while a POST is in flight (isDisabled only
+    // Enter can re-submit the Form while a POST is in flight (disabled only
     // blocks the button) — would double-create and show a spurious duplicate.
     if (mutation.isPending) return;
     setNameError(null);
@@ -619,65 +585,57 @@ function CreateGateForm({
   return (
     // legendAs="h2": replaces the old "Crear gate" h2 heading.
     <SectionCard legend="CREAR GATE" legendAs="h2">
-      {banner && (
-        <Alert className="mb-3" status="danger">
-          {banner}
-        </Alert>
-      )}
+      <div className="flex flex-col gap-3">
+        {banner && <Notice status="danger">{banner}</Notice>}
 
-      <Form className="flex flex-col gap-3" onSubmit={onSubmit}>
-        <TextField
-          isRequired
-          className="flex w-full flex-col gap-1"
-          isInvalid={nameError !== null}
-          name="name"
-          value={name}
-          onChange={(v) => {
-            setName(v);
-            if (nameError) setNameError(null);
-          }}
-        >
-          <Label>Nombre</Label>
-          <Input placeholder="Visa Oro" />
-          {nameError && <FieldError>{nameError}</FieldError>}
-        </TextField>
+        <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+          <Field
+            required
+            error={nameError}
+            label="Nombre"
+            name="name"
+            placeholder="Visa Oro"
+            value={name}
+            onChange={(v) => {
+              setName(v);
+              if (nameError) setNameError(null);
+            }}
+          />
 
-        <TextField
-          isRequired
-          className="flex w-full flex-col gap-1"
-          isInvalid={fieldError !== null}
-          name="value"
-          value={value}
-          onChange={(v) => {
-            setValue(v);
-            if (fieldError) setFieldError(null);
-          }}
-        >
-          <Label>Gate</Label>
-          <Input className="font-mono" placeholder=".ej" />
-          {fieldError && <FieldError>{fieldError}</FieldError>}
-        </TextField>
+          <Field
+            mono
+            required
+            error={fieldError}
+            label="Gate"
+            name="value"
+            placeholder=".ej"
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              if (fieldError) setFieldError(null);
+            }}
+          />
 
-        <CategorySelect
-          categories={categories}
-          errorMessage={categoryError}
-          isInvalid={categoryError !== null}
-          value={categoryId}
-          onChange={(id) => {
-            setCategoryId(id);
-            if (categoryError) setCategoryError(null);
-          }}
-        />
+          <CategorySelect
+            categories={categories}
+            errorMessage={categoryError}
+            value={categoryId}
+            onChange={(id) => {
+              setCategoryId(id);
+              if (categoryError) setCategoryError(null);
+            }}
+          />
 
-        <Button
-          className="w-full"
-          isDisabled={mutation.isPending}
-          type="submit"
-          variant="primary"
-        >
-          {mutation.isPending ? "Creando…" : "Crear gate"}
-        </Button>
-      </Form>
+          <Btn
+            full
+            disabled={mutation.isPending}
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Creando…" : "Crear gate"}
+          </Btn>
+        </form>
+      </div>
     </SectionCard>
   );
 }
@@ -746,10 +704,10 @@ function EditGateAction({
 
   return (
     <>
-      <Button
+      <Btn
         size="sm"
         variant="secondary"
-        onPress={() => {
+        onClick={() => {
           setName(gate.name);
           setValue(gate.value);
           setCategoryId(gate.category_id);
@@ -757,87 +715,55 @@ function EditGateAction({
           setOpen(true);
         }}
       >
-        Editar
-      </Button>
+        Renombrar
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
+        confirmVariant="primary"
+        heading="Editar gate"
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={save}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>Editar gate</AlertDialog.Heading>
-              </AlertDialog.Header>
-              <AlertDialog.Body>
-                <div className="flex flex-col gap-3">
-                  <TextField
-                    className="flex w-full flex-col gap-1"
-                    name="name"
-                    value={name}
-                    onChange={(v) => {
-                      setName(v);
-                      if (error) setError(null);
-                    }}
-                  >
-                    <Label>Nombre</Label>
-                    <Input />
-                  </TextField>
+        <div className="flex flex-col gap-3">
+          <Field
+            label="Nombre"
+            name="name"
+            value={name}
+            onChange={(v) => {
+              setName(v);
+              if (error) setError(null);
+            }}
+          />
 
-                  <TextField
-                    className="flex w-full flex-col gap-1"
-                    name="value"
-                    value={value}
-                    onChange={(v) => {
-                      setValue(v);
-                      if (error) setError(null);
-                    }}
-                  >
-                    <Label>Gate</Label>
-                    <Input className="font-mono" />
-                  </TextField>
+          <Field
+            mono
+            label="Gate"
+            name="value"
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              if (error) setError(null);
+            }}
+          />
 
-                  <CategorySelect
-                    categories={categories}
-                    value={categoryId}
-                    onChange={(id) => {
-                      setCategoryId(id);
-                      if (error) setError(null);
-                    }}
-                  />
+          <CategorySelect
+            categories={categories}
+            value={categoryId}
+            onChange={(id) => {
+              setCategoryId(id);
+              if (error) setError(null);
+            }}
+          />
 
-                  {error && <Alert status="danger">{error}</Alert>}
-                </div>
-              </AlertDialog.Body>
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="primary"
-                  onPress={save}
-                >
-                  {mutation.isPending ? "Guardando…" : "Guardar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+          {error && <Notice status="danger">{error}</Notice>}
+        </div>
+      </ConfirmDialog>
     </>
   );
 }
@@ -879,63 +805,32 @@ function DeleteGateAction({
 
   return (
     <>
-      <Button
+      <Btn
+        icon="trash"
         size="sm"
-        variant="secondary"
-        onPress={() => {
+        variant="danger"
+        onClick={() => {
           setError(null);
           setOpen(true);
         }}
       >
         Eliminar
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Eliminando…" : "Eliminar"}
+        confirmVariant="danger"
+        heading={`¿Eliminar este gate? (${gate.value})`}
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Eliminar este gate? (
-                  <span className="font-mono">{gate.value}</span>)
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {error && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{error}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => mutation.mutate()}
-                >
-                  {mutation.isPending ? "Eliminando…" : "Eliminar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {error && <Notice status="danger">{error}</Notice>}
+      </ConfirmDialog>
     </>
   );
 }

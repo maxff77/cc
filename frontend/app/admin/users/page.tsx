@@ -3,22 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  AlertDialog,
-  Button,
-  FieldError,
-  Form,
-  Input,
-  Label,
-  TextField,
-} from "@heroui/react";
+import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
 import { AdminShell } from "@/components/ui/admin-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
+import { Btn } from "@/components/ui/btn";
+import { Field } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { StatePill } from "@/components/ui/state-pill";
+import { LabelCaps } from "@/components/ui/label-caps";
 
 // Local response shapes mirror the backend admin schemas (snake_case,
 // end-to-end). The generated types/api.ts also carries them after
@@ -47,6 +44,13 @@ interface Me {
 const USERS_KEY = ["admin-users"] as const;
 const ME_KEY = ["me"] as const;
 
+// Role pill tone: owner→accent, admin→cyan, client→muted (per Ranger-X handoff).
+const ROLE_TONE: Record<string, "accent" | "cyan" | "muted"> = {
+  owner: "accent",
+  admin: "cyan",
+  client: "muted",
+};
+
 // `type="number"` still lets through strings Number.parseInt silently
 // mis-reads ("1e2" → 1, "30.5" → 30) or that serialize as null (NaN) — gate on
 // plain digits before trusting the value.
@@ -67,11 +71,11 @@ function formatExpiry(iso: string | null): string {
 // The backend stores the handle canonical (sin '@'); we re-add '@' for display
 // and link straight to the Telegram chat so the operator can write for renewal.
 function ContactLink({ contact }: { contact: string | null }) {
-  if (!contact) return <span className="text-muted">—</span>;
+  if (!contact) return <span className="text-[var(--faint)]">—</span>;
 
   return (
     <a
-      className="text-sm text-primary underline hover:text-primary-600"
+      className="text-sm text-accent underline hover:text-foreground"
       href={`https://t.me/${contact}`}
       rel="noopener noreferrer"
       target="_blank"
@@ -81,8 +85,31 @@ function ContactLink({ contact }: { contact: string | null }) {
   );
 }
 
+// Tokenized table header cell (LabelCaps-style: caps, 0.14em tracking, muted).
+function Th({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <th
+      className={clsx(
+        "px-3.5 pb-3 pt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-muted",
+        align === "right" ? "text-right" : "text-left",
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
 export default function AdminUsersPage() {
   const queryClient = useQueryClient();
+  // Segmented create switch: which form to show. The "admin" tab is owner-only;
+  // when the operator is a plain admin only the "client" branch ever renders.
+  const [tab, setTab] = useState<"client" | "admin">("client");
 
   const me = useQuery({
     queryKey: ME_KEY,
@@ -100,23 +127,47 @@ export default function AdminUsersPage() {
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         {/* Left zone: creation forms (sticky on desktop). */}
         <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
+          {/* Segmented create switch (Crear cliente | Crear admin). The admin
+              option only exists for owners — admins can create clients only. */}
+          {isOwner && (
+            <div className="flex gap-1.5 rounded-[var(--radius-field)] border border-border bg-surface-secondary p-1">
+              {(
+                [
+                  ["client", "Crear cliente"],
+                  ["admin", "Crear admin"],
+                ] as const
+              ).map(([id, lbl]) => (
+                <button
+                  key={id}
+                  className={clsx(
+                    "rx-focus flex-1 rounded-[var(--radius-sm)] px-2.5 py-2 font-display text-[13px] font-semibold tracking-[0.02em] transition-colors",
+                    tab === id
+                      ? "brand-fill text-white"
+                      : "text-muted hover:text-foreground",
+                  )}
+                  type="button"
+                  onClick={() => setTab(id)}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* One form, keyed by kind so switching tabs resets its draft state.
+              For non-owners the switch is hidden and only the client form shows. */}
           <CreateUserForm
-            kind="client"
-            title="Crear cliente"
+            key={isOwner ? tab : "client"}
+            kind={isOwner ? tab : "client"}
+            title={
+              (isOwner ? tab : "client") === "admin"
+                ? "Crear admin"
+                : "Crear cliente"
+            }
             onCreated={() =>
               queryClient.invalidateQueries({ queryKey: USERS_KEY })
             }
           />
-
-          {isOwner && (
-            <CreateUserForm
-              kind="admin"
-              title="Crear admin"
-              onCreated={() =>
-                queryClient.invalidateQueries({ queryKey: USERS_KEY })
-              }
-            />
-          )}
 
           {/* Owner knob: admission-control cap (Story 4.2). */}
           {isOwner && <AdmissionControlCard />}
@@ -129,9 +180,9 @@ export default function AdminUsersPage() {
         <SectionCard legend="USUARIOS" padding="none">
           {users.isLoading && <PanelSkeleton rows={5} />}
           {users.isError && (
-            <Alert className="m-3" status="danger">
+            <Notice className="m-3" status="danger">
               No pudimos cargar los usuarios. Recarga la página.
-            </Alert>
+            </Notice>
           )}
           {users.data &&
             (users.data.items.length === 0 ? (
@@ -140,88 +191,88 @@ export default function AdminUsersPage() {
                 message="Todavía no hay clientes."
               />
             ) : (
-              // Stacked data-rows instead of a 6-column table: in the narrow
-              // 1fr grid track the table truncated the action cluster. Each
-              // user is now a row that reflows — nothing is column-bound.
-              <ul className="flex flex-col gap-2 p-2">
-                {users.data.items.map((u) => (
-                  <li
-                    key={u.id}
-                    className="flex flex-col gap-2 border-b border-separator px-2 py-2.5 last:border-b-0"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="break-all font-mono text-[0.8rem] font-semibold text-foreground">
-                        {u.email}
-                      </span>
-                      <span className="inline-flex shrink-0 gap-1.5">
-                        <span className="rounded-full bg-surface-tertiary px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
-                          {u.role}
-                        </span>
-                        {u.role === "client" &&
-                          (u.is_blocked ? (
-                            <span className="rounded-full bg-danger/18 px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-danger">
-                              Bloqueado
-                            </span>
+              <div className="rx-scroll overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse">
+                  <thead>
+                    <tr>
+                      <Th>Correo</Th>
+                      <Th>Rol</Th>
+                      <Th>Contacto</Th>
+                      <Th>Vence</Th>
+                      <Th>Estado</Th>
+                      <Th align="right">Acciones</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.data.items.map((u, i) => (
+                      <tr
+                        key={u.id}
+                        className={clsx(i > 0 && "border-t border-separator")}
+                      >
+                        <td className="break-all px-3.5 py-3.5 font-mono text-[0.8rem] font-semibold text-foreground">
+                          {u.email}
+                        </td>
+                        <td className="px-3.5 py-3.5">
+                          <StatePill tone={ROLE_TONE[u.role] ?? "muted"}>
+                            {u.role}
+                          </StatePill>
+                        </td>
+                        <td className="px-3.5 py-3.5">
+                          <ContactLink contact={u.contact} />
+                        </td>
+                        <td className="px-3.5 py-3.5 font-mono text-[0.72rem] tabular-nums text-muted">
+                          {formatExpiry(u.expires_at)}
+                        </td>
+                        <td className="px-3.5 py-3.5">
+                          {u.role === "client" ? (
+                            u.is_blocked ? (
+                              <StatePill tone="danger">Bloqueado</StatePill>
+                            ) : (
+                              <StatePill tone="success">Activo</StatePill>
+                            )
                           ) : (
-                            <span className="rounded-full bg-success/15 px-2 py-0.5 font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-success">
-                              Activo
-                            </span>
-                          ))}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-x-5 gap-y-1">
-                      <span className="inline-flex items-baseline gap-2 font-mono text-[0.72rem] tabular-nums text-foreground">
-                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
-                          Contacto
-                        </span>
-                        <ContactLink contact={u.contact} />
-                      </span>
-                      <span className="inline-flex items-baseline gap-2 font-mono text-[0.72rem] tabular-nums text-foreground">
-                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
-                          Vence
-                        </span>
-                        <span>{formatExpiry(u.expires_at)}</span>
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {u.role === "client" ? (
-                        <>
-                          <Link
-                            className="text-[11px] text-muted underline hover:text-foreground"
-                            href={`/admin/tenants/${u.tenant_id}`}
-                          >
-                            Sesiones
-                          </Link>
-                          <ClientLifecycleActions
-                            user={u}
-                            onChanged={() =>
-                              queryClient.invalidateQueries({
-                                queryKey: USERS_KEY,
-                              })
-                            }
-                          />
-                        </>
-                      ) : isOwner && u.role === "admin" ? (
-                        <DeleteAdminAction
-                          email={u.email}
-                          userId={u.id}
-                          onDeleted={() =>
-                            queryClient.invalidateQueries({
-                              queryKey: USERS_KEY,
-                            })
-                          }
-                        />
-                      ) : (
-                        <span className="font-sans text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
-                          Sin acciones
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                            <span className="text-[var(--faint)]">—</span>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-3.5">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            {u.role === "client" ? (
+                              <>
+                                <Link
+                                  className="rx-focus inline-flex shrink-0 items-center rounded-[var(--radius-field)] px-3 py-1.5 font-display text-[13px] font-semibold tracking-[0.02em] text-muted transition-colors hover:text-foreground"
+                                  href={`/admin/tenants/${u.tenant_id}`}
+                                >
+                                  Sesiones
+                                </Link>
+                                <ClientLifecycleActions
+                                  user={u}
+                                  onChanged={() =>
+                                    queryClient.invalidateQueries({
+                                      queryKey: USERS_KEY,
+                                    })
+                                  }
+                                />
+                              </>
+                            ) : isOwner && u.role === "admin" ? (
+                              <DeleteAdminAction
+                                email={u.email}
+                                userId={u.id}
+                                onDeleted={() =>
+                                  queryClient.invalidateQueries({
+                                    queryKey: USERS_KEY,
+                                  })
+                                }
+                              />
+                            ) : (
+                              <LabelCaps>Sin acciones</LabelCaps>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
         </SectionCard>
       </div>
@@ -300,87 +351,77 @@ function CreateUserForm({
     // admin" h2 headings — keep the document outline under the page h1.
     <SectionCard legend={title} legendAs="h2">
       {banner && (
-        <Alert className="mb-3" status="danger">
+        <Notice className="mb-3" status="danger">
           {banner}
-        </Alert>
+        </Notice>
       )}
 
-      <Form className="flex flex-col gap-3" onSubmit={onSubmit}>
-        <TextField
-          isRequired
-          className="flex w-full flex-col gap-1"
-          isInvalid={emailError !== null}
+      <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+        <Field
+          required
+          error={emailError}
+          label="Correo"
           name="email"
+          placeholder="cliente@correo.com"
           type="email"
           value={email}
           onChange={(v) => {
             setEmail(v);
             if (emailError) setEmailError(null);
           }}
-        >
-          <Label>Correo</Label>
-          <Input placeholder="cliente@correo.com" />
-          {emailError && <FieldError>{emailError}</FieldError>}
-        </TextField>
+        />
 
-        <TextField
-          isRequired
-          className="flex w-full flex-col gap-1"
+        <Field
+          required
+          label="Contraseña"
           name="password"
+          placeholder="••••••••"
           type="password"
           value={password}
           onChange={setPassword}
-        >
-          <Label>Contraseña</Label>
-          <Input placeholder="••••••••" />
-        </TextField>
+        />
 
         {kind === "client" && (
-          <TextField
-            isRequired
-            className="flex w-full flex-col gap-1"
-            isInvalid={planError !== null}
+          <Field
+            required
+            error={planError}
+            label="Días del plan"
             name="plan_days"
+            placeholder="30"
             type="number"
             value={planDays}
             onChange={(v) => {
               setPlanDays(v);
               if (planError) setPlanError(null);
             }}
-          >
-            <Label>Días del plan</Label>
-            <Input placeholder="30" />
-            {planError && <FieldError>{planError}</FieldError>}
-          </TextField>
+          />
         )}
 
         {/* Client-only: contact is for renewal outreach; admins carry none. */}
         {kind === "client" && (
-          <TextField
-            className="flex w-full flex-col gap-1"
-            isInvalid={contactError !== null}
+          <Field
+            error={contactError}
+            label="Telegram (opcional)"
             name="contact"
+            placeholder="@usuario"
             value={contact}
             onChange={(v) => {
               setContact(v);
               if (contactError) setContactError(null);
             }}
-          >
-            <Label>Telegram (opcional)</Label>
-            <Input placeholder="@usuario" />
-            {contactError && <FieldError>{contactError}</FieldError>}
-          </TextField>
+          />
         )}
 
-        <Button
-          className="w-full"
-          isDisabled={mutation.isPending}
+        <Btn
+          full
+          disabled={mutation.isPending}
+          icon="plus"
           type="submit"
           variant="primary"
         >
           {mutation.isPending ? "Creando…" : "Crear"}
-        </Button>
-      </Form>
+        </Btn>
+      </form>
     </SectionCard>
   );
 }
@@ -450,58 +491,55 @@ function AdmissionControlCard() {
   }
 
   return (
-    <section className="mb-6 rounded-lg border border-default/30 p-4">
-      <h2 className="mb-1 text-lg font-medium">Control de admisión</h2>
-      <p className="mb-3 text-sm text-default-500">
+    <SectionCard legend="Control de admisión" legendAs="h2">
+      <p className="mb-3 text-sm leading-relaxed text-muted">
         Máximo de envíos activos a la vez; los lotes que excedan el límite
         esperan en cola. 0 desactiva el límite: todos los lotes entran de
         inmediato (degradación adaptativa pura).
       </p>
 
       {banner && (
-        <Alert className="mb-3" status="danger">
+        <Notice className="mb-3" status="danger">
           {banner}
-        </Alert>
+        </Notice>
       )}
 
       {admission.isError ? (
-        <Alert status="danger">
+        <Notice status="danger">
           No pudimos cargar el límite. Recarga la página.
-        </Alert>
+        </Notice>
       ) : (
-        <Form
+        <form
           className="flex flex-col gap-3 sm:flex-row sm:items-end"
           onSubmit={onSubmit}
         >
-          <TextField
-            isRequired
-            className="flex flex-col gap-1 sm:w-40"
-            isDisabled={admission.isLoading}
-            isInvalid={error !== null}
+          <Field
+            required
+            className="sm:w-40"
+            disabled={admission.isLoading}
+            error={error}
+            label="Envíos activos máx."
             name="max_active_senders"
+            placeholder="0"
             type="number"
             value={value}
             onChange={(v) => {
               setDraft(v);
               if (error) setError(null);
             }}
-          >
-            <Label>Envíos activos máx.</Label>
-            <Input placeholder="0" />
-            {error && <FieldError>{error}</FieldError>}
-          </TextField>
+          />
 
-          <Button
+          <Btn
             className="sm:mb-1"
-            isDisabled={mutation.isPending || admission.isLoading}
+            disabled={mutation.isPending || admission.isLoading}
             type="submit"
             variant="primary"
           >
             {mutation.isPending ? "Guardando…" : "Guardar"}
-          </Button>
-        </Form>
+          </Btn>
+        </form>
       )}
-    </section>
+    </SectionCard>
   );
 }
 
@@ -575,58 +613,55 @@ function SendIntervalCard() {
   }
 
   return (
-    <section className="mb-6 rounded-lg border border-default/30 p-4">
-      <h2 className="mb-1 text-lg font-medium">Intervalo de envío</h2>
-      <p className="mb-3 text-sm text-default-500">
+    <SectionCard legend="Intervalo de envío" legendAs="h2">
+      <p className="mb-3 text-sm leading-relaxed text-muted">
         Segundos entre cada mensaje en la cuenta compartida. Bajarlo acelera el
         envío pero AUMENTA el riesgo de baneo de Telegram — el piso de{" "}
         {INTERVAL_MIN}s protege la cuenta. Aplica en vivo, sin reinicio.
       </p>
 
       {banner && (
-        <Alert className="mb-3" status="danger">
+        <Notice className="mb-3" status="danger">
           {banner}
-        </Alert>
+        </Notice>
       )}
 
       {interval.isError ? (
-        <Alert status="danger">
+        <Notice status="danger">
           No pudimos cargar el intervalo. Recarga la página.
-        </Alert>
+        </Notice>
       ) : (
-        <Form
+        <form
           className="flex flex-col gap-3 sm:flex-row sm:items-end"
           onSubmit={onSubmit}
         >
-          <TextField
-            isRequired
-            className="flex flex-col gap-1 sm:w-40"
-            isDisabled={interval.isLoading}
-            isInvalid={error !== null}
+          <Field
+            required
+            className="sm:w-40"
+            disabled={interval.isLoading}
+            error={error}
+            label="Segundos por envío"
             name="interval_seconds"
+            placeholder="4"
             type="number"
             value={value}
             onChange={(v) => {
               setDraft(v);
               if (error) setError(null);
             }}
-          >
-            <Label>Segundos por envío</Label>
-            <Input placeholder="4" />
-            {error && <FieldError>{error}</FieldError>}
-          </TextField>
+          />
 
-          <Button
+          <Btn
             className="sm:mb-1"
-            isDisabled={mutation.isPending || interval.isLoading}
+            disabled={mutation.isPending || interval.isLoading}
             type="submit"
             variant="primary"
           >
             {mutation.isPending ? "Guardando…" : "Guardar"}
-          </Button>
-        </Form>
+          </Btn>
+        </form>
       )}
-    </section>
+    </SectionCard>
   );
 }
 
@@ -664,69 +699,39 @@ function DeleteAdminAction({
 
   return (
     <>
-      <Button
+      <Btn
+        icon="trash"
         size="sm"
-        variant="secondary"
-        onPress={() => {
+        variant="danger"
+        onClick={() => {
           setError(null);
           setOpen(true);
         }}
       >
         Eliminar
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Eliminando…" : "Sí, eliminar"}
+        confirmVariant="danger"
+        heading={`¿Eliminar este admin? (${email})`}
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Eliminar este admin? ({email})
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {error && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{error}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => mutation.mutate()}
-                >
-                  {mutation.isPending ? "Eliminando…" : "Sí, eliminar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {error && <Notice status="danger">{error}</Notice>}
+      </ConfirmDialog>
     </>
   );
 }
 
 // --- Client lifecycle: renew + block/unblock (Story 1.5) -----------------
 // Horizontal button row, constant row height — anything that used to expand
-// inline now lives in an AlertDialog (ui-polish-spec §3.5).
+// inline now lives in a ConfirmDialog (ui-polish-spec §3.5).
 
 function ClientLifecycleActions({
   user,
@@ -736,7 +741,7 @@ function ClientLifecycleActions({
   onChanged: () => void;
 }) {
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-1.5">
       <RenewAction userId={user.id} onChanged={onChanged} />
       <EditContactAction user={user} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
@@ -746,7 +751,7 @@ function ClientLifecycleActions({
 }
 
 // --- Edit Telegram contact (spec-client-telegram-contact) -----------------
-// Same dialog shape as RenewAction: a small form in an AlertDialog, constant
+// Same dialog shape as RenewAction: a small form in a ConfirmDialog, constant
 // row height. Empty input clears the contact (persists NULL).
 
 function EditContactAction({
@@ -782,10 +787,10 @@ function EditContactAction({
 
   return (
     <>
-      <Button
+      <Btn
         size="sm"
         variant="secondary"
-        onPress={() => {
+        onClick={() => {
           // Re-sync the draft to the current value each open (a prior cancel or
           // an external refresh may have moved it).
           setContact(user.contact ?? "");
@@ -794,64 +799,35 @@ function EditContactAction({
         }}
       >
         Contacto
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
+        confirmVariant="primary"
+        heading="Contacto de Telegram"
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>Contacto de Telegram</AlertDialog.Heading>
-              </AlertDialog.Header>
-              <AlertDialog.Body>
-                <div className="flex flex-col gap-3">
-                  <TextField
-                    className="flex flex-col gap-1"
-                    name="contact"
-                    value={contact}
-                    onChange={(v) => {
-                      setContact(v);
-                      if (error) setError(null);
-                    }}
-                  >
-                    <Label>Usuario (vacío para quitar)</Label>
-                    <Input placeholder="@usuario" />
-                  </TextField>
+        <div className="flex flex-col gap-3">
+          <Field
+            label="Usuario (vacío para quitar)"
+            name="contact"
+            placeholder="@usuario"
+            value={contact}
+            onChange={(v) => {
+              setContact(v);
+              if (error) setError(null);
+            }}
+          />
 
-                  {error && <Alert status="danger">{error}</Alert>}
-                </div>
-              </AlertDialog.Body>
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="primary"
-                  onPress={() => mutation.mutate()}
-                >
-                  {mutation.isPending ? "Guardando…" : "Guardar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+          {error && <Notice status="danger">{error}</Notice>}
+        </div>
+      </ConfirmDialog>
     </>
   );
 }
@@ -916,83 +892,58 @@ function RenewAction({
 
   return (
     <>
-      <Button size="sm" variant="secondary" onPress={() => setOpen(true)}>
+      <Btn
+        icon="refresh"
+        size="sm"
+        variant="secondary"
+        onClick={() => setOpen(true)}
+      >
         Renovar
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Renovando…" : "Renovar"}
+        confirmVariant="primary"
+        heading="Renovar plan"
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={submit}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>Renovar plan</AlertDialog.Heading>
-              </AlertDialog.Header>
-              <AlertDialog.Body>
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-2">
-                    <TextField
-                      className="flex w-24 flex-col gap-1"
-                      name="plan_days"
-                      type="number"
-                      value={days}
-                      onChange={(v) => {
-                        setDays(v);
-                        if (error) setError(null);
-                      }}
-                    >
-                      <Label>Días</Label>
-                      <Input placeholder="30" />
-                    </TextField>
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            <Field
+              className="w-24"
+              label="Días"
+              name="plan_days"
+              placeholder="30"
+              type="number"
+              value={days}
+              onChange={(v) => {
+                setDays(v);
+                if (error) setError(null);
+              }}
+            />
 
-                    <TextField
-                      className="flex flex-col gap-1"
-                      name="expires_at"
-                      type="date"
-                      value={date}
-                      onChange={(v) => {
-                        setDate(v);
-                        if (error) setError(null);
-                      }}
-                    >
-                      <Label>Hasta</Label>
-                      <Input />
-                    </TextField>
-                  </div>
+            <Field
+              className="flex-1"
+              label="Hasta"
+              name="expires_at"
+              type="date"
+              value={date}
+              onChange={(v) => {
+                setDate(v);
+                if (error) setError(null);
+              }}
+            />
+          </div>
 
-                  {error && <Alert status="danger">{error}</Alert>}
-                </div>
-              </AlertDialog.Body>
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="primary"
-                  onPress={submit}
-                >
-                  {mutation.isPending ? "Renovando…" : "Renovar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+          {error && <Notice status="danger">{error}</Notice>}
+        </div>
+      </ConfirmDialog>
     </>
   );
 }
@@ -1026,23 +977,23 @@ function BlockAction({
   });
 
   // Unblock restores access (not destructive) → acts on a single press. Its
-  // error renders as a compact Alert under the button — the documented
+  // error renders as a compact Notice under the button — the documented
   // exception for single-press action errors (ui-polish-spec §3.5).
   if (user.is_blocked) {
     return (
       <div className="flex flex-col gap-1">
-        <Button
-          isDisabled={mutation.isPending}
+        <Btn
+          disabled={mutation.isPending}
           size="sm"
           variant="secondary"
-          onPress={() => mutation.mutate()}
+          onClick={() => mutation.mutate()}
         >
           {mutation.isPending ? "Desbloqueando…" : "Desbloquear"}
-        </Button>
+        </Btn>
         {error && (
-          <Alert className="mt-1" status="danger">
+          <Notice className="mt-1" status="danger">
             {error}
-          </Alert>
+          </Notice>
         )}
       </div>
     );
@@ -1051,62 +1002,31 @@ function BlockAction({
   // Block closes the client's live session → confirm dialog.
   return (
     <>
-      <Button
+      <Btn
         size="sm"
         variant="danger"
-        onPress={() => {
+        onClick={() => {
           setError(null);
           setOpen(true);
         }}
       >
         Bloquear
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
+        confirmVariant="danger"
+        heading={`¿Bloquear a ${user.email}? Su sesión se cerrará al instante.`}
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) setError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Bloquear a {user.email}? Su sesión se cerrará al instante.
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {error && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{error}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setOpen(false);
-                    setError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={mutation.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => mutation.mutate()}
-                >
-                  {mutation.isPending ? "Bloqueando…" : "Sí, bloquear"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {error && <Notice status="danger">{error}</Notice>}
+      </ConfirmDialog>
     </>
   );
 }
@@ -1175,109 +1095,75 @@ function ResetPasswordAction({
 
   return (
     <>
-      <Button
+      <Btn
         size="sm"
         variant="secondary"
-        onPress={() => {
+        onClick={() => {
           setError(null);
           setOpen(true);
         }}
       >
         Resetear
-      </Button>
+      </Btn>
 
-      <AlertDialog
-        isOpen={open}
-        onOpenChange={(o) => {
-          setOpen(o);
-          if (!o) {
-            // Today only the footer buttons close this dialog (the Backdrop
-            // below pins isDismissable={false} + isKeyboardDismissDisabled —
-            // HeroUI 3.1's defaults, made explicit so a library upgrade or a
-            // stray prop can't silently open an ESC/backdrop path that
-            // destroys the one-time password by accident). This branch is
-            // the safety net: if any close route ever bypasses "Listo", the
-            // exactly-once password is still destroyed, never recoverable.
-            if (tempPassword) dismiss();
-            else setError(null);
-          }
-        }}
-      >
-        <AlertDialog.Backdrop isKeyboardDismissDisabled isDismissable={false}>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              {tempPassword ? (
-                <>
-                  <AlertDialog.Header>
-                    <AlertDialog.Heading>
-                      Contraseña temporal
-                    </AlertDialog.Heading>
-                  </AlertDialog.Header>
-                  <AlertDialog.Body>
-                    <div className="flex flex-col gap-2">
-                      <span className="font-mono text-sm">{tempPassword}</span>
-                      <span className="text-sm text-muted">
-                        Cópiala ahora: no volverá a mostrarse.
-                      </span>
-                      {error && <Alert status="danger">{error}</Alert>}
-                    </div>
-                  </AlertDialog.Body>
-                  <AlertDialog.Footer>
-                    <Button size="sm" variant="secondary" onPress={copy}>
-                      {copied ? "Copiada" : "Copiar"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      onPress={() => {
-                        setOpen(false);
-                        dismiss();
-                      }}
-                    >
-                      Listo
-                    </Button>
-                  </AlertDialog.Footer>
-                </>
-              ) : (
-                <>
-                  <AlertDialog.Header>
-                    <AlertDialog.Heading>
-                      ¿Resetear la contraseña de {user.email}? Su sesión se
-                      cerrará al instante.
-                    </AlertDialog.Heading>
-                  </AlertDialog.Header>
-                  {error && (
-                    <AlertDialog.Body>
-                      <Alert status="danger">{error}</Alert>
-                    </AlertDialog.Body>
-                  )}
-                  <AlertDialog.Footer>
-                    <Button
-                      isDisabled={mutation.isPending}
-                      size="sm"
-                      variant="secondary"
-                      onPress={() => {
-                        setOpen(false);
-                        setError(null);
-                      }}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      isDisabled={mutation.isPending}
-                      size="sm"
-                      variant="danger"
-                      onPress={() => mutation.mutate()}
-                    >
-                      {mutation.isPending ? "Reseteando…" : "Sí, resetear"}
-                    </Button>
-                  </AlertDialog.Footer>
-                </>
-              )}
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+      {tempPassword ? (
+        // The temp-password view. Closing by ANY route runs dismiss(), which
+        // destroys the exactly-once password — never recoverable (AC1). The
+        // backdrop/Escape paths are wired straight to dismiss via onOpenChange.
+        <ConfirmDialog
+          hideCancel
+          confirmLabel="Listo"
+          confirmVariant="primary"
+          heading="Contraseña temporal"
+          open={open}
+          onConfirm={() => {
+            setOpen(false);
+            dismiss();
+          }}
+          onOpenChange={(o) => {
+            // No close route bypasses dismiss(): backdrop/Escape also destroy
+            // the one-time password, by design.
+            if (!o) {
+              setOpen(false);
+              dismiss();
+            }
+          }}
+        >
+          {/* Single-action view: "Listo" is the only footer button (hideCancel)
+              so there's no ambiguous second close. Copy lives in the body. */}
+          <div className="flex flex-col gap-2">
+            <span className="font-mono text-sm text-foreground">
+              {tempPassword}
+            </span>
+            <span className="text-sm text-muted">
+              Cópiala ahora: no volverá a mostrarse.
+            </span>
+            <button
+              className="rx-focus self-start rounded-[var(--radius-field)] border border-border bg-surface-secondary px-3 py-1.5 font-display text-[13px] font-semibold tracking-[0.02em] text-foreground transition-colors hover:bg-surface-tertiary"
+              type="button"
+              onClick={copy}
+            >
+              {copied ? "Copiada" : "Copiar"}
+            </button>
+            {error && <Notice status="danger">{error}</Notice>}
+          </div>
+        </ConfirmDialog>
+      ) : (
+        <ConfirmDialog
+          confirmLabel={mutation.isPending ? "Reseteando…" : "Sí, resetear"}
+          confirmVariant="danger"
+          heading={`¿Resetear la contraseña de ${user.email}? Su sesión se cerrará al instante.`}
+          open={open}
+          pending={mutation.isPending}
+          onConfirm={() => mutation.mutate()}
+          onOpenChange={(o) => {
+            setOpen(o);
+            if (!o) setError(null);
+          }}
+        >
+          {error && <Notice status="danger">{error}</Notice>}
+        </ConfirmDialog>
+      )}
     </>
   );
 }

@@ -14,8 +14,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Spinner, Table } from "@heroui/react";
-import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
 import { type CcRow, type ResponseRow } from "@/lib/ws";
@@ -25,6 +23,12 @@ import {
   FiltradaPanel,
   ResponseTabs,
 } from "@/components/sessions/response-views";
+import { Btn } from "@/components/ui/btn";
+import { MonoChip } from "@/components/ui/mono-chip";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { PanelSkeleton } from "@/components/ui/panel-skeleton";
+import { StatePill } from "@/components/ui/state-pill";
 
 // Local mirrors of the backend schemas (snake_case end-to-end) — explicit
 // interfaces per the admin/users idiom; shapes copied from the client
@@ -85,16 +89,9 @@ function fallbackName(iso: string): string {
 
 function SessionBadge({ isActive }: { isActive: boolean }) {
   return (
-    <span
-      className={clsx(
-        "shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]",
-        isActive
-          ? "bg-accent/22 text-accent"
-          : "bg-surface-tertiary text-muted",
-      )}
-    >
+    <StatePill tone={isActive ? "accent" : "muted"}>
       {isActive ? "En curso" : "Cerrada"}
-    </span>
+    </StatePill>
   );
 }
 
@@ -166,9 +163,9 @@ export default function AdminTenantSessionsPage() {
 
   if (list.isLoading) {
     return (
-      <div className="flex justify-center py-10">
-        <Spinner />
-      </div>
+      <main className="mx-auto w-full max-w-4xl px-6 py-10">
+        <PanelSkeleton rows={6} />
+      </main>
     );
   }
 
@@ -182,84 +179,92 @@ export default function AdminTenantSessionsPage() {
 
     return (
       <main className="mx-auto w-full max-w-4xl px-6 py-10">
-        <Alert status="danger">
+        <Notice status="danger">
           No pudimos cargar las sesiones. Recarga la página.
-        </Alert>
+        </Notice>
       </main>
     );
   }
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-10">
-      <header className="flex items-baseline gap-4">
-        <Link
-          className="shrink-0 text-sm text-default-500 underline"
-          href="/admin/users"
-        >
-          ← Usuarios
-        </Link>
-        <h1 className="truncate text-2xl font-semibold">
-          Sesiones de {list.data.email}
-        </h1>
-      </header>
+      <PageHeader
+        back={{ href: "/admin/users", label: "Usuarios" }}
+        title={`Sesiones de ${list.data.email}`}
+      />
 
       {selectedId === null ? (
-        <Table>
-          <Table.Content aria-label="Sesiones del cliente">
-            <Table.Header>
-              <Table.Column isRowHeader>Nombre</Table.Column>
-              <Table.Column>Gate</Table.Column>
-              <Table.Column>Estado</Table.Column>
-              <Table.Column>Acciones</Table.Column>
-            </Table.Header>
-            <Table.Body
-              items={list.data.items}
-              renderEmptyState={() => "Este cliente no tiene sesiones."}
-            >
-              {(s) => (
-                <Table.Row id={s.id}>
-                  <Table.Cell>
-                    {s.name ?? fallbackName(s.created_at)}
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className="font-mono">{s.gate_value}</span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <SessionBadge isActive={s.is_active} />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onPress={() => setSelectedId(s.id)}
-                    >
-                      Ver
-                    </Button>
-                  </Table.Cell>
-                </Table.Row>
-              )}
-            </Table.Body>
-          </Table.Content>
-        </Table>
+        list.data.items.length === 0 ? (
+          <p className="px-1 py-6 text-sm text-muted">
+            Este cliente no tiene sesiones.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded border border-border bg-surface">
+            <table aria-label="Sesiones del cliente" className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-separator text-left">
+                  <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                    Nombre
+                  </th>
+                  <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                    Gate
+                  </th>
+                  <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                    Estado
+                  </th>
+                  <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.data.items.map((s) => (
+                  <tr
+                    key={s.id}
+                    className="border-b border-separator last:border-b-0"
+                  >
+                    <td className="px-3 py-2.5 text-foreground">
+                      {s.name ?? fallbackName(s.created_at)}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <MonoChip>{s.gate_value}</MonoChip>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <SessionBadge isActive={s.is_active} />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <Btn
+                        icon="eye"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setSelectedId(s.id)}
+                      >
+                        Ver
+                      </Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : detail.isLoading ? (
-        <div className="flex justify-center py-10">
-          <Spinner />
-        </div>
+        <PanelSkeleton rows={8} />
       ) : detail.isError || !detail.data ? (
         // session_not_found bounces back to the list via the effect above;
         // anything else surfaces here with a way back.
         <div className="flex flex-col gap-3">
-          <Alert status="danger">
+          <Notice status="danger">
             No pudimos cargar la sesión. Recarga la página.
-          </Alert>
-          <Button
+          </Notice>
+          <Btn
             className="self-start"
             size="sm"
             variant="secondary"
-            onPress={() => setSelectedId(null)}
+            onClick={() => setSelectedId(null)}
           >
             ← Sesiones
-          </Button>
+          </Btn>
         </div>
       ) : (
         <SessionDetail data={detail.data} onBack={() => setSelectedId(null)} />
@@ -306,9 +311,9 @@ function SessionDetail({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <Button size="sm" variant="secondary" onPress={onBack}>
+          <Btn size="sm" variant="secondary" onClick={onBack}>
             ← Sesiones
-          </Button>
+          </Btn>
           <SessionBadge isActive={data.is_active} />
         </div>
       </header>

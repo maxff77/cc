@@ -11,19 +11,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  AlertDialog,
-  Button,
-  FieldError,
-  Input,
-  TextField,
-} from "@heroui/react";
+import clsx from "clsx";
 
 import { api, ApiError } from "@/lib/api";
 import { clearSession } from "@/lib/ws";
+import { Btn } from "@/components/ui/btn";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Field } from "@/components/ui/field";
 import { MonoChip } from "@/components/ui/mono-chip";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
@@ -127,9 +124,9 @@ export default function SessionsPage() {
     content = <PanelSkeleton rows={6} />;
   } else if (sessions.isError || !sessions.data) {
     content = (
-      <Alert status="danger">
+      <Notice status="danger">
         No pudimos cargar el historial. Recarga la página.
-      </Alert>
+      </Notice>
     );
   } else if (sessions.data.items.length === 0) {
     // Empty state (AC 7) — copy verbatim, never a dead-end (UX-DR16). A REAL
@@ -157,9 +154,9 @@ export default function SessionsPage() {
         legendRight={<MonoChip>{group.gateValue}</MonoChip>}
         padding="none"
       >
-        <ul className="flex flex-col divide-y divide-separator">
-          {group.sessions.map((session) => (
-            <SessionRow key={session.id} session={session} />
+        <ul className="flex flex-col">
+          {group.sessions.map((session, i) => (
+            <SessionRow key={session.id} separated={i > 0} session={session} />
           ))}
         </ul>
       </SectionCard>
@@ -177,7 +174,13 @@ export default function SessionsPage() {
 // One session row (UX-DR11): Link (heading + mono sub-line) → badge →
 // actions. The actions live OUTSIDE the Link — tapping Renombrar/Eliminar
 // never navigates. Content editing does not exist anywhere (AC 5 / FR19).
-function SessionRow({ session }: { session: SessionOut }) {
+function SessionRow({
+  session,
+  separated,
+}: {
+  session: SessionOut;
+  separated: boolean;
+}) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
@@ -297,22 +300,25 @@ function SessionRow({ session }: { session: SessionOut }) {
 
   return (
     // flex-wrap: under sm the actions wrap to their own line instead of
-    // crushing the title (ui-polish-spec §3.7).
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+    // crushing the title (ui-polish-spec §3.7). First-row has no top border;
+    // every following row carries the separator (handoff HistorialScreen).
+    <li
+      className={clsx(
+        "flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3",
+        separated && "border-t border-separator",
+      )}
+    >
       {editing ? (
-        <TextField
+        <Field
           className="min-w-0 flex-1"
-          isInvalid={renameError !== null}
+          error={renameError}
           name="session-name"
           value={name}
           onChange={(v) => {
             setName(v);
             if (renameError) setRenameError(null);
           }}
-        >
-          <Input aria-label="Nombre de la sesión" maxLength={NAME_MAX} />
-          {renameError && <FieldError>{renameError}</FieldError>}
-        </TextField>
+        />
       ) : (
         <Link className="min-w-0 flex-1" href={`/sessions/${session.id}`}>
           <span className="block truncate text-sm font-medium">
@@ -322,39 +328,42 @@ function SessionRow({ session }: { session: SessionOut }) {
               the sub-line is the creation date, and only when a custom name
               isn't already showing it. */}
           {session.name !== null && (
-            <span className="block truncate font-mono text-[11px] text-muted">
+            <span className="mt-0.5 block truncate font-mono text-[11px] text-muted">
               {fallbackName(session.created_at)}
             </span>
           )}
         </Link>
       )}
 
-      <StatePill tone={session.is_active ? "accent" : "muted"}>
+      <StatePill
+        dot={session.is_active ? "pulse" : undefined}
+        tone={session.is_active ? "accent" : "muted"}
+      >
         {session.is_active ? "En curso" : "Cerrada"}
       </StatePill>
 
       <div className="flex shrink-0 gap-2">
         {editing ? (
           <>
-            <Button
-              isDisabled={rename.isPending}
+            <Btn
+              disabled={rename.isPending}
               size="sm"
               variant="primary"
-              onPress={saveRename}
+              onClick={saveRename}
             >
               {rename.isPending ? "Guardando…" : "Guardar"}
-            </Button>
-            <Button
-              isDisabled={rename.isPending}
+            </Btn>
+            <Btn
+              disabled={rename.isPending}
               size="sm"
               variant="secondary"
-              onPress={() => {
+              onClick={() => {
                 setEditing(false);
                 setRenameError(null);
               }}
             >
               Cancelar
-            </Button>
+            </Btn>
           </>
         ) : (
           <>
@@ -362,93 +371,65 @@ function SessionRow({ session }: { session: SessionOut }) {
                   active session already captures; no no-op button. NOT
                   destructive ⇒ secondary, no confirm (UX-DR triad). */}
             {!session.is_active && (
-              <Button
-                isDisabled={continuar.isPending}
+              <Btn
+                disabled={continuar.isPending}
+                icon="play"
                 size="sm"
                 variant="secondary"
-                onPress={() => continuar.mutate()}
+                onClick={() => continuar.mutate()}
               >
                 {continuar.isPending ? "Continuando…" : "Continuar"}
-              </Button>
+              </Btn>
             )}
-            <Button
+            <Btn
               size="sm"
               variant="secondary"
-              onPress={() => {
+              onClick={() => {
                 setName(session.name ?? "");
                 setRenameError(null);
                 setEditing(true);
               }}
             >
               Renombrar
-            </Button>
-            <Button
+            </Btn>
+            <Btn
+              icon="trash"
               size="sm"
               variant="danger"
-              onPress={() => {
+              onClick={() => {
                 setDeleteError(null);
                 setConfirmOpen(true);
               }}
             >
               Eliminar
-            </Button>
+            </Btn>
           </>
         )}
       </div>
 
       {continueError && (
-        <Alert className="w-full" status="danger">
+        <Notice className="w-full" status="danger">
           {continueError}
-        </Alert>
+        </Notice>
       )}
 
       {/* Confirm modal (AC 5) — a REAL modal per the AC (unlike the inline
-          confirm of admin/gates), max ONE level (UX-DR10). */}
-      <AlertDialog
-        isOpen={confirmOpen}
+          confirm of admin/gates), max ONE level (UX-DR10). session_in_use
+          (AC 6) shows INSIDE the dialog without closing it. */}
+      <ConfirmDialog
+        confirmLabel={remove.isPending ? "Eliminando…" : "Eliminar"}
+        confirmVariant="danger"
+        heading="¿Eliminar esta sesión? No se puede deshacer."
+        open={confirmOpen}
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate()}
         onOpenChange={(open) => {
           setConfirmOpen(open);
           if (!open) setDeleteError(null);
         }}
       >
-        <AlertDialog.Backdrop>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>
-                  ¿Eliminar esta sesión? No se puede deshacer.
-                </AlertDialog.Heading>
-              </AlertDialog.Header>
-              {deleteError && (
-                <AlertDialog.Body>
-                  <Alert status="danger">{deleteError}</Alert>
-                </AlertDialog.Body>
-              )}
-              <AlertDialog.Footer>
-                <Button
-                  isDisabled={remove.isPending}
-                  size="sm"
-                  variant="secondary"
-                  onPress={() => {
-                    setConfirmOpen(false);
-                    setDeleteError(null);
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  isDisabled={remove.isPending}
-                  size="sm"
-                  variant="danger"
-                  onPress={() => remove.mutate()}
-                >
-                  {remove.isPending ? "Eliminando…" : "Eliminar"}
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
+        {deleteError && <Notice status="danger">{deleteError}</Notice>}
+      </ConfirmDialog>
     </li>
   );
 }

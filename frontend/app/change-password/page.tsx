@@ -1,19 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Alert,
-  Button,
-  Description,
-  Form,
-  TextField,
-  Label,
-  Input,
-  FieldError,
-} from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
-import { SectionCard } from "@/components/ui/section-card";
+import { AuthLayout } from "@/components/ui/auth-layout";
+import { Field } from "@/components/ui/field";
+import { Btn } from "@/components/ui/btn";
+import { Notice } from "@/components/ui/notice";
 
 interface ChangePasswordResponse {
   home_path: string;
@@ -66,9 +59,8 @@ export default function ChangePasswordPage() {
         } else if (err.code === "not_authenticated") {
           window.location.assign("/login");
         } else if (err.code === "forbidden") {
-          // Flag already cleared (change completed in another tab): the
-          // session is fully valid, so send the user home instead of
-          // stranding them on a dead-end banner.
+          // Flag already cleared (change completed in another tab): the session
+          // is fully valid, so send the user home instead of stranding them.
           window.location.assign("/");
         } else {
           // Pydantic 422s carry no {code,message} body, so err.message can be
@@ -86,73 +78,67 @@ export default function ChangePasswordPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 py-12">
-      <div className="flex w-full max-w-sm flex-col gap-5">
-        <span className="self-center font-mono text-2xl font-extrabold tracking-[-0.03em]">
-          CC
-        </span>
+    <AuthLayout
+      subtitle="Elige una contraseña nueva para continuar."
+      title="Contraseña nueva"
+    >
+      {banner && (
+        <Notice className="mb-4" status="danger">
+          {banner}
+        </Notice>
+      )}
+      <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+        <Field
+          required
+          autoComplete="current-password"
+          error={currentError}
+          icon="lock"
+          label="Contraseña temporal"
+          name="current_password"
+          placeholder="••••••••"
+          type="password"
+          value={currentPassword}
+          onChange={(v) => {
+            setCurrentPassword(v);
+            if (currentError) setCurrentError(null);
+          }}
+        />
+        <div>
+          <Field
+            required
+            autoComplete="new-password"
+            error={fieldError}
+            icon="lock"
+            label="Contraseña nueva"
+            name="new_password"
+            placeholder="••••••••"
+            type="password"
+            value={newPassword}
+            onChange={(v) => {
+              setNewPassword(v);
+              if (fieldError) setFieldError(null);
+            }}
+          />
+          {/* Always-visible rule (ui-polish-spec §3.2): never reveal the 8-char
+              minimum only after failing. */}
+          {!fieldError && (
+            <p className="mt-1.5 px-0.5 text-[12px] text-muted">
+              Mínimo 8 caracteres.
+            </p>
+          )}
+        </div>
 
-        <h1 className="text-center text-lg font-bold tracking-[-0.01em]">
-          Contraseña nueva
-        </h1>
-
-        <p className="text-center text-sm text-muted">
-          Elige una contraseña nueva para continuar.
-        </p>
-
-        {banner && <Alert status="danger">{banner}</Alert>}
-
-        {/* legendAs="h2": the legend is the form's section heading. */}
-        <SectionCard legend="CONTRASEÑA" legendAs="h2">
-          <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
-            <TextField
-              isRequired
-              className="flex flex-col gap-1"
-              isInvalid={currentError !== null}
-              name="current_password"
-              type="password"
-              value={currentPassword}
-              onChange={(v) => {
-                setCurrentPassword(v);
-                if (currentError) setCurrentError(null);
-              }}
-            >
-              <Label>Contraseña temporal</Label>
-              <Input placeholder="••••••••" />
-              {currentError && <FieldError>{currentError}</FieldError>}
-            </TextField>
-
-            <TextField
-              isRequired
-              className="flex flex-col gap-1"
-              isInvalid={fieldError !== null}
-              name="new_password"
-              type="password"
-              value={newPassword}
-              onChange={(v) => {
-                setNewPassword(v);
-                if (fieldError) setFieldError(null);
-              }}
-            >
-              <Label>Contraseña nueva</Label>
-              <Input placeholder="••••••••" />
-              {/* Always-visible rule (ui-polish-spec §3.2): never reveal the
-                8-char minimum only after failing. */}
-              <Description>Mínimo 8 caracteres.</Description>
-              {fieldError && <FieldError>{fieldError}</FieldError>}
-            </TextField>
-
-            <Button
-              className="mt-2"
-              isDisabled={submitting}
-              type="submit"
-              variant="primary"
-            >
-              {submitting ? "Guardando…" : "Guardar"}
-            </Button>
-          </Form>
-        </SectionCard>
-      </div>
-    </main>
+        <Btn
+          full
+          className="mt-1"
+          disabled={submitting}
+          icon="check"
+          type="submit"
+          variant="primary"
+        >
+          {submitting ? "Guardando…" : "Guardar"}
+        </Btn>
+      </form>
+    </AuthLayout>
   );
 }

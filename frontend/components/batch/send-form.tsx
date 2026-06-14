@@ -8,23 +8,16 @@ import type { LiveBatchState } from "@/lib/ws";
 
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  FieldError,
-  Form,
-  Label,
-  ListBox,
-  Select,
-  TextArea,
-  TextField,
-} from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
 import { SectionCard } from "@/components/ui/section-card";
+import { Select } from "@/components/ui/select";
+import { Area } from "@/components/ui/area";
+import { Btn } from "@/components/ui/btn";
+import { Notice } from "@/components/ui/notice";
 
 // Mirrors backend GateOut (snake_case end-to-end, users/gates-page idiom).
 export interface GateOut {
@@ -68,8 +61,8 @@ export function SendForm({
   const [selectError, setSelectError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
-  // Any live state (sending/paused/stopping) locks the selector and shows
-  // the gate chip — appending to a PAUSED lote is allowed (Story 2.3).
+  // Any live state (sending/paused/stopping) locks the selector and shows the
+  // gate chip — appending to a PAUSED lote is allowed (Story 2.3).
   const isLive = live.state !== "idle";
 
   // Client category source: NO extra endpoint — group the catalog items by
@@ -102,8 +95,8 @@ export function SendForm({
     onSuccess: (data) => {
       setText("");
       if (!data.appended) {
-        // Flip into live mode immediately; snapshot/batch.state stay the
-        // source of truth from here on (UX-DR12).
+        // Flip into live mode immediately; snapshot/batch.state stay the source
+        // of truth from here on (UX-DR12).
         seedFromBatch(data);
       }
     },
@@ -157,147 +150,101 @@ export function SendForm({
     mutation.mutate({ text, gate_id: gateId });
   }
 
-  // --- Reusable controls, defined ONCE so every layout below shares the same
-  // bindings (no duplicated state/handlers). Used by the original render and
-  // the distill variants alike, so nothing orphans on discard. ---
-  const bannerEl = banner ? <Alert status="danger">{banner}</Alert> : null;
-
-  // Active-gate chip (UX-DR9 / prefijo-chip token): name · value.
-  const gateChip = (
-    <div className="flex flex-wrap items-center gap-2">
-      <LabelCaps>Gate activo</LabelCaps>
-      <MonoChip>
-        {live.gateName} · {live.gateValue}
-      </MonoChip>
-      {/* No select to anchor to while live → speaks as an operation Alert. */}
-      {selectError && (
-        <Alert className="w-full" status="danger">
-          {selectError}
-        </Alert>
-      )}
-    </div>
+  const categoryOptions = useMemo(
+    () => categories.map((name) => ({ id: name, label: name })),
+    [categories],
+  );
+  const gateOptions = useMemo(
+    () =>
+      gatesInCategory.map((g) => ({
+        id: String(g.id),
+        label: g.name,
+        mono: g.value,
+      })),
+    [gatesInCategory],
   );
 
-  const categorySelect = (
-    <Select
-      className="w-full"
-      isDisabled={isLive}
-      isInvalid={selectError !== null && categoryKey == null}
-      placeholder="Elige una categoría"
-      selectedKey={categoryKey}
-      onSelectionChange={(key) => {
-        setCategoryKey(key == null ? null : String(key));
-        setGateKey(null); // changing category resets the gate pick
-        if (selectError) setSelectError(null);
-      }}
-    >
-      <Label>Categoría</Label>
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      {selectError !== null && categoryKey == null && (
-        <FieldError>{selectError}</FieldError>
-      )}
-      <Select.Popover>
-        <ListBox>
-          {categories.map((name) => (
-            <ListBox.Item key={name} id={name} textValue={name}>
-              {name}
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
-    </Select>
-  );
-
-  const gateSelect = (
-    <Select
-      className="w-full"
-      isDisabled={isLive || categoryKey == null}
-      isInvalid={selectError !== null && categoryKey != null}
-      placeholder="Elige un gate"
-      selectedKey={gateKey}
-      onSelectionChange={(key) => {
-        setGateKey(key == null ? null : String(key));
-        if (selectError) setSelectError(null);
-      }}
-    >
-      <Label>Gate</Label>
-      <Select.Trigger>
-        <Select.Value />
-        <Select.Indicator />
-      </Select.Trigger>
-      {selectError !== null && categoryKey != null && (
-        <FieldError>{selectError}</FieldError>
-      )}
-      <Select.Popover>
-        <ListBox>
-          {gatesInCategory.map((g) => (
-            <ListBox.Item
-              key={g.id}
-              id={String(g.id)}
-              textValue={`${g.name} ${g.value}`}
-            >
-              <span>{g.name}</span>{" "}
-              <span className="font-mono text-muted">{g.value}</span>
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
-    </Select>
-  );
-
-  const linesField = (
-    <TextField
-      className="flex flex-col gap-1"
-      isInvalid={textError !== null}
-      name="lines"
-      value={text}
-      onChange={(v) => {
-        setText(v);
-        if (textError) setTextError(null);
-      }}
-    >
-      <Label>Líneas</Label>
-      <TextArea className="min-h-40 font-mono" placeholder="Pega tus líneas" />
-      {textError && <FieldError>{textError}</FieldError>}
-    </TextField>
-  );
-
-  // The commit action uses SOLID violet (--accent, white text ~4.6:1, WCAG AA).
-  // The brand gradient is reserved for the two TEXT-FREE moments. Appending
-  // while 'stopping' is rejected server-side — disable here too.
-  const submitButton = (
-    <Button
-      isDisabled={mutation.isPending || live.state === "stopping"}
-      type="submit"
-      variant="primary"
-    >
-      {mutation.isPending ? "Enviando…" : "Enviar"}
-    </Button>
-  );
-
-  // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote plate of
-  // the cockpit; legendAs="h2" keeps a heading in the outline.
   return (
-    <SectionCard className="flex flex-col gap-4" legend="Nuevo lote" legendAs="h2">
-      {bannerEl}
-      <Form className="flex flex-col gap-4" onSubmit={onSubmit}>
+    // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote plate of
+    // the cockpit; legendAs="h2" keeps a heading in the outline.
+    <SectionCard
+      className="flex flex-col gap-4"
+      legend="Nuevo lote"
+      legendAs="h2"
+    >
+      {banner && <Notice status="danger">{banner}</Notice>}
+      <form className="flex flex-col gap-3.5" onSubmit={onSubmit}>
         {isLive ? (
-          gateChip
+          // Active-gate chip (UX-DR9): name · value.
+          <div className="flex flex-wrap items-center gap-2">
+            <LabelCaps>Gate activo</LabelCaps>
+            <MonoChip>
+              {live.gateName} · {live.gateValue}
+            </MonoChip>
+            {selectError && (
+              <Notice className="w-full" status="danger">
+                {selectError}
+              </Notice>
+            )}
+          </div>
         ) : (
           // Stacked vertical selects (ui-polish-spec §4.5): inside the cockpit
           // column there is no side-by-side; the shared selectError anchors to
-          // the guilty select via isInvalid + FieldError.
+          // the guilty select.
           <div className="flex flex-col gap-3">
-            {categorySelect}
-            {gateSelect}
+            <Select
+              error={
+                selectError !== null && categoryKey == null ? selectError : null
+              }
+              label="Categoría"
+              options={categoryOptions}
+              placeholder="Elige una categoría"
+              value={categoryKey}
+              onChange={(key) => {
+                setCategoryKey(key);
+                setGateKey(null); // changing category resets the gate pick
+                if (selectError) setSelectError(null);
+              }}
+            />
+            <Select
+              disabled={categoryKey == null}
+              error={
+                selectError !== null && categoryKey != null ? selectError : null
+              }
+              label="Gate"
+              options={gateOptions}
+              placeholder="Elige un gate"
+              value={gateKey}
+              onChange={(key) => {
+                setGateKey(key);
+                if (selectError) setSelectError(null);
+              }}
+            />
           </div>
         )}
-        {linesField}
-        {submitButton}
-      </Form>
+        <Area
+          error={textError}
+          label="Líneas"
+          placeholder="Pega tus líneas"
+          rows={5}
+          value={text}
+          onChange={(v) => {
+            setText(v);
+            if (textError) setTextError(null);
+          }}
+        />
+        {/* The commit action wears the brand gradient (a text-free-ish commit
+            moment); appending while 'stopping' is rejected server-side. */}
+        <Btn
+          full
+          disabled={mutation.isPending || live.state === "stopping"}
+          icon="send"
+          type="submit"
+          variant="primary"
+        >
+          {mutation.isPending ? "Enviando…" : "Enviar"}
+        </Btn>
+      </form>
     </SectionCard>
   );
 }

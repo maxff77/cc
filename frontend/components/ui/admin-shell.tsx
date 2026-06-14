@@ -1,20 +1,24 @@
 "use client";
 
-// Admin chrome (ui-polish-spec §2.9): header strip structurally identical to
-// ClientNav's (brand, inline nav, logout — the ONE home of the admin logout
-// handler) over a max-w-5xl main with PageHeader. Both admin pages mount
-// their two-zone grid inside.
+// Admin chrome (ui-polish-spec §2.9 / Ranger-X handoff `Chrome`): header strip
+// structurally identical to ClientNav's (shield Mark + gradient wordmark, nav
+// tabs with brand-gradient underline, theme toggle, logout — the ONE home of
+// the admin logout handler) over a max-w-6xl main with PageHeader. Both admin
+// pages mount their two-zone grid inside.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
-import { Button } from "@heroui/react";
 
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
+import { Mark } from "@/components/ui/logo";
+import { Btn } from "@/components/ui/btn";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { RxBackdrop } from "@/components/ui/rx-backdrop";
 
 // AdminShell only ever renders for admin/owner (middleware gates /admin/*),
-// so Envío + Historial are always shown — they are staff's path BACK to the
-// sender (owner/admins send too: 3-tier priority owner > admin > client).
+// so Envío + Historial are always shown — staff's path BACK to the sender
+// (owner/admins send too: 3-tier priority owner > admin > client).
 const ITEMS = [
   { href: "/", label: "Envío", ownerOnly: false },
   { href: "/sessions", label: "Historial", ownerOnly: false },
@@ -46,43 +50,59 @@ export function AdminShell({
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3 lg:px-6">
-        <div className="flex items-center gap-6">
+    <div className="relative flex min-h-screen flex-col">
+      <RxBackdrop />
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-border bg-[color-mix(in_oklch,var(--background)_82%,transparent)] px-4 py-3 backdrop-blur-md lg:px-6">
+        <div className="flex min-w-0 items-center gap-6">
           <Link
-            className="font-mono text-lg font-bold tracking-[-0.03em] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="rx-focus flex shrink-0 items-center gap-2.5"
             href="/admin/users"
           >
-            CC
+            <Mark size={28} />
+            <span className="gradient-text font-display text-xl font-extrabold italic leading-none tracking-[0.01em]">
+              RANGER-X
+            </span>
           </Link>
           <nav className="flex items-center gap-1">
             {ITEMS.filter((item) => !item.ownerOnly || gatesVisible).map(
-              (item) => (
-                <Link
-                  key={item.href}
-                  className={clsx(
-                    "rounded px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                    pathname === item.href ||
-                      pathname.startsWith(item.href + "/")
-                      ? "bg-surface-tertiary text-foreground"
-                      : "text-muted",
-                  )}
-                  href={item.href}
-                >
-                  {item.label}
-                </Link>
-              ),
+              (item) => {
+                const active =
+                  pathname === item.href ||
+                  pathname.startsWith(item.href + "/");
+
+                return (
+                  <Link
+                    key={item.href}
+                    className={clsx(
+                      "rx-focus relative rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
+                      active
+                        ? "bg-surface-tertiary text-foreground"
+                        : "text-muted hover:text-foreground",
+                    )}
+                    href={item.href}
+                  >
+                    {item.label}
+                    {active && (
+                      <span
+                        aria-hidden
+                        className="brand-fill absolute inset-x-3 -bottom-[13px] h-0.5 rounded"
+                      />
+                    )}
+                  </Link>
+                );
+              },
             )}
           </nav>
         </div>
-        <Button size="sm" variant="secondary" onPress={logout}>
-          Cerrar sesión
-        </Button>
+        <div className="flex shrink-0 items-center gap-2.5">
+          <ThemeToggle />
+          <Btn size="sm" variant="secondary" onClick={logout}>
+            Cerrar sesión
+          </Btn>
+        </div>
       </header>
 
-      {/* Wider frame (max-w-6xl) + fluid gutters: gives the inner two-zone
-          grid more room on desktop and comfortable margins on mobile. */}
-      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 lg:px-8">
+      <main className="relative z-[1] mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 lg:px-8">
         <div className="flex flex-col gap-6">
           <PageHeader actions={actions} title={title} />
           {children}

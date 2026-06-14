@@ -1,47 +1,114 @@
 "use client";
 
-// Progress ring + flank metrics (UX-DR3): HeroUI ProgressCircle ~128px,
-// accent stroke while sending / warning while paused or stopping (AC 2 —
-// "vivo pero no enviando" wears warning; 'stopping' has no DESIGN.md token,
-// recorded decision), center % + fraction; flank shows EXACTLY three
-// metrics — enviadas · en cola / ETA / CC nuevas. No other stats (UX-DR21).
-// While paused the ETA LABEL becomes "ETA al reanudar"; the VALUE keeps the
-// last honest estimate (UX-DR14 — never a fake-precise countdown).
+// Progress ring + flank metrics (UX-DR3 / Ranger-X handoff `ProgressRing`):
+// a native SVG ring with a cyan→accent→magenta gradient stroke + neon glow
+// (the glow scales with --glow), accent while sending / solid warning while
+// paused or stopping (AC 2 — "vivo pero no enviando" wears warning; 'stopping'
+// has no DESIGN token, recorded decision). Center % + fraction; flank shows
+// EXACTLY three metrics — enviadas · en cola / ETA / CC nuevas (UX-DR21).
 import type { LiveBatchState } from "@/lib/ws";
 
-import { ProgressCircle } from "@heroui/react";
+import { useId } from "react";
+import clsx from "clsx";
 
 import { Metric, formatEta } from "@/components/batch/metric";
+
+const SIZE = 144;
+const R = 58;
+const C = 2 * Math.PI * R;
+
+// The bare ring SVG, shared by every ring state. `idle` paints only the muted
+// track + an em-dash; otherwise the gradient (or warning) arc fills to percent.
+function Ring({
+  percent,
+  sent,
+  total,
+  idle,
+  tone = "accent",
+}: {
+  percent: number;
+  sent?: number;
+  total?: number;
+  idle?: boolean;
+  tone?: "accent" | "warning";
+}) {
+  const gid = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const offset = C - (percent / 100) * C;
+  const stroke =
+    tone === "warning" ? "var(--warning)" : `url(#ring-grad-${gid})`;
+
+  return (
+    <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
+      <svg
+        height={SIZE}
+        style={{ transform: "rotate(-90deg)" }}
+        viewBox={`0 0 ${SIZE} ${SIZE}`}
+        width={SIZE}
+      >
+        <defs>
+          <linearGradient id={`ring-grad-${gid}`} x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--cyan)" />
+            <stop offset="55%" stopColor="var(--accent)" />
+            <stop offset="100%" stopColor="var(--magenta)" />
+          </linearGradient>
+        </defs>
+        <circle
+          cx="72"
+          cy="72"
+          fill="none"
+          r={R}
+          stroke="var(--surface-tertiary)"
+          strokeWidth="9"
+        />
+        {!idle && (
+          <circle
+            cx="72"
+            cy="72"
+            fill="none"
+            r={R}
+            stroke={stroke}
+            strokeDasharray={C}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            strokeWidth="9"
+            style={{
+              transition: "stroke-dashoffset .6s cubic-bezier(.2,.7,.2,1)",
+              filter: "drop-shadow(0 0 calc(7px * var(--glow)) var(--accent))",
+            }}
+          />
+        )}
+      </svg>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+        <span
+          className={clsx(
+            "font-mono text-[28px] font-extrabold leading-none tracking-[-0.03em] tabular-nums",
+            idle ? "text-muted" : "text-foreground",
+          )}
+        >
+          {idle ? "—" : `${percent}%`}
+        </span>
+        {!idle && total !== undefined && (
+          <span className="mt-1.5 font-mono text-xs text-muted tabular-nums">
+            {sent} / {total}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function ProgressRing({ live }: { live: LiveBatchState }) {
   const percent =
     live.total > 0 ? Math.round((live.sent / live.total) * 100) : 0;
 
   return (
-    // justify-between gap-4 (ui-polish-spec §4.3): justify-center gap-8
-    // overflowed the 300px cockpit column.
-    <section className="flex items-center justify-between gap-4 py-4">
-      <div className="relative">
-        <ProgressCircle
-          aria-label="Progreso del lote"
-          color={live.state === "sending" ? "accent" : "warning"}
-          value={percent}
-        >
-          <ProgressCircle.Track className="size-32">
-            <ProgressCircle.TrackCircle />
-            <ProgressCircle.FillCircle />
-          </ProgressCircle.Track>
-        </ProgressCircle>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="font-mono text-[26px] font-extrabold leading-none tracking-[-0.03em] tabular-nums">
-            {percent}%
-          </span>
-          <span className="mt-1 font-mono text-xs text-muted tabular-nums">
-            {live.sent} / {live.total}
-          </span>
-        </div>
-      </div>
-
+    <section className="flex items-center justify-between gap-4 py-2">
+      <Ring
+        percent={percent}
+        sent={live.sent}
+        tone={live.state === "sending" ? "accent" : "warning"}
+        total={live.total}
+      />
       <div className="flex flex-col gap-3">
         <Metric
           label="Enviadas · En cola"
@@ -59,13 +126,9 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
 
 // Completion moment (P2): the ONE sanctioned success-pulse — shown for a few
 // seconds on the active→idle transition before the ring reverts to the idle
-// em-dash, so a successful finish has a peak-end payoff instead of a silent
-// return to "—". Control-room calm: a single gradient ring + the run totals,
-// no confetti. The gradient is the brand .gradient-moment (a clipped ring, not
-// a fill on letters); prefers-reduced-motion drops the pulse (motion-safe).
-// Same footprint as the live/idle ring → zero layout jump when it appears or
-// reverts. Totals are snapshotted by the caller at the transition (the store
-// resets `sent`/`total` to 0 the instant it goes idle).
+// em-dash. Control-room calm: a single gradient ring + the run totals. The
+// gradient lives on the RING (a clipped shape, never on letters);
+// prefers-reduced-motion drops the pulse (motion-safe).
 export interface RunSummary {
   sent: number;
   ccCaptured: number;
@@ -82,22 +145,14 @@ function formatDuration(seconds: number): string {
 
 export function CompletionRing({ summary }: { summary: RunSummary }) {
   return (
-    <section className="flex flex-col items-center gap-3 py-4">
+    <section className="flex flex-col items-center gap-3 py-2">
       <div className="relative">
-        {/* The gradient ring is the success pulse: a .gradient-moment disc
-            masked to a ring by an inset surface circle — the brand fill clipped
-            to a shape (never background-clip on text). motion-safe gates the
-            pulse so reduced-motion gets a calm STATIC gradient ring; the
-            appear/revert is an instant conditional swap (no animation), the
-            sanctioned reduced-motion fallback. */}
-        <div className="size-32 rounded-full p-[3px]">
+        <div className="p-[3px]" style={{ width: SIZE, height: SIZE }}>
           <div className="gradient-moment size-full rounded-full motion-safe:animate-pulse">
             <div className="flex size-full items-center justify-center rounded-full bg-surface">
-              {/* Solid success glyph — the gradient lives on the RING (a fill on
-                  a shape), never clipped to the letters (hard ban). */}
               <span
                 aria-hidden
-                className="text-[26px] font-extrabold leading-none tracking-[-0.03em] text-success"
+                className="text-[28px] font-extrabold leading-none tracking-[-0.03em] text-success"
               >
                 ✓
               </span>
@@ -120,26 +175,13 @@ export function CompletionRing({ summary }: { summary: RunSummary }) {
   );
 }
 
-// Idle placeholder (ui-polish-spec §4.2): the ring renders at 0 with the
-// default muted track and a mono em-dash center — same footprint as the live
-// ring, zero layout jump when the lote starts. The invitation sentence
-// (verbatim copy) sits below.
+// Idle placeholder (ui-polish-spec §4.2): the ring renders at 0 with the muted
+// track + a mono em-dash center — same footprint as the live ring, zero layout
+// jump when the lote starts. The invitation sentence sits below.
 export function IdleRing() {
   return (
-    <section className="flex flex-col items-center gap-3 py-4">
-      <div className="relative">
-        <ProgressCircle aria-label="Sin lote activo" value={0}>
-          <ProgressCircle.Track className="size-32">
-            <ProgressCircle.TrackCircle />
-            <ProgressCircle.FillCircle />
-          </ProgressCircle.Track>
-        </ProgressCircle>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <span className="font-mono text-[26px] font-extrabold leading-none tracking-[-0.03em] text-muted tabular-nums">
-            —
-          </span>
-        </div>
-      </div>
+    <section className="flex flex-col items-center gap-3 py-2">
+      <Ring idle percent={0} />
       <p className="text-center text-sm text-muted">
         Pega tus líneas y elige un gate.
       </p>

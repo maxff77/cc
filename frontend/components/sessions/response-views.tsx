@@ -1,26 +1,22 @@
 "use client";
 
-// Dual Completa/Filtrada views (Story 3.2) — AC 1 "same components,
-// recomposed": ONE panel (header/badge + scrollable list + empty state)
-// instantiated per view; on mobile the views are segmented HeroUI Tabs (the
-// tab strip carries the labels + badges), on desktop two side-by-side panels
-// with label-caps headers. Props-driven on purpose (rows + counts in, no
-// store reads inside): Story 3.3's Historial detail reuses these panels
-// verbatim. Export (Story 3.5): each panel takes an optional `exportPath` —
-// when present, a `↓ .txt` footer link downloads the view via fetch+blob; no
-// prop, no footer (zero dead buttons). On mobile the link lives in the
-// panel footer INSIDE each Tabs.Panel, not in the tab strip (recorded
-// deviation from DESIGN: the strip would force controlled Tabs just to know
-// which view to export; the spine — one per view, both sections — is met).
+// Dual/triple Completa·Filtrada views (Story 3.2) — "same components,
+// recomposed": ONE native panel (header/badge + scrollable list + empty state)
+// instantiated per view. Desktop: three side-by-side panels (Ranger-X handoff
+// ResultPanel grid). Mobile: native segmented tabs carrying the labels + badges.
+// Props-driven (rows + counts in, no store reads inside) so Story 3.3's
+// Historial detail reuses these panels verbatim. Export (Story 3.5): each panel
+// takes an optional `exportPath` — present ⇒ a `↓ .txt` footer downloads the
+// view via fetch+blob; absent ⇒ no footer (zero dead buttons).
 import type { CcRow, ResponseRow } from "@/lib/ws";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { Card, Tabs } from "@heroui/react";
 import clsx from "clsx";
 
 import { ApiError, downloadFile } from "@/lib/api";
 import { CountBadge } from "@/components/ui/count-badge";
 import { LabelCaps } from "@/components/ui/label-caps";
+import { Icon } from "@/components/ui/icon";
 import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
 
 // Empty states — copy VERBATIM (EXPERIENCE.md): no fake rows, badges at 0.
@@ -28,9 +24,10 @@ const EMPTY_COMPLETA = "Aún no hay respuestas.";
 const EMPTY_FILTRADA_CON = "Aún no hay respuestas con ✅.";
 const EMPTY_FILTRADA = "Aún no hay datos CC: capturados.";
 
-// A pane counts as "at the bottom" within this many px — generous enough to
-// absorb sub-row scroll jitter without unpinning.
 const BOTTOM_THRESHOLD_PX = 24;
+// Tall internal scroll on desktop columns; capped on the stacked mobile tabs.
+const COLUMN_LIST = "max-h-[calc(100vh-220px)]";
+const TAB_LIST = "max-h-72";
 
 interface RowData extends DataRowProps {
   key: string;
@@ -56,10 +53,9 @@ function completaRows(responses: ResponseRow[]): RowData[] {
 
 function filtradaRows(cc: CcRow[], total: number): RowData[] {
   // No glyph and no timestamp — Filtrada rows are data, not states; the left
-  // slot is the 001-style insertion index (parity with filtrada.txt).
-  // Offset by the authoritative total: the lists ship only the LAST rows
-  // (snapshot capped server-side), so the array position misnumbers rows
-  // whenever the cap kicked in. Identity when nothing was trimmed.
+  // slot is the 001-style insertion index (parity with filtrada.txt). Offset by
+  // the authoritative total: the lists ship only the LAST rows (snapshot
+  // capped), so the array position misnumbers rows whenever the cap kicked in.
   return cc.map((row, index) => ({
     key: row.key,
     left: String(total - cc.length + index + 1).padStart(3, "0"),
@@ -69,8 +65,8 @@ function filtradaRows(cc: CcRow[], total: number): RowData[] {
 }
 
 // Scrollable row list with auto-scroll pinning (AC 4): follow new rows ONLY
-// when the pane was already at the bottom; scrolled away, the view stays
-// pinned where the operator left it (legacy rule, literal).
+// when the pane was already at the bottom; scrolled away, the view stays pinned
+// where the operator left it (legacy rule, literal).
 function PanelList({
   rows,
   emptyText,
@@ -92,7 +88,7 @@ function PanelList({
   return (
     <div
       ref={listRef}
-      className={clsx("min-h-0 overflow-y-auto", className)}
+      className={clsx("rx-scroll min-h-0 flex-1 overflow-y-auto", className)}
       onScroll={() => {
         const el = listRef.current;
 
@@ -120,10 +116,8 @@ function PanelList({
   );
 }
 
-// Footer export link (Story 3.5) — plain button on purpose (consola
-// density; the DESIGN calls it a "footer export link" and a plain <button>
-// skips verifying HeroUI variant typings — 3.3 lesson). Pending and error
-// are local: a failed download never breaks the panel.
+// Footer export link (Story 3.5) — plain button (console density). Pending and
+// error are local: a failed download never breaks the panel.
 function ExportLink({ path }: { path: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +125,7 @@ function ExportLink({ path }: { path: string }) {
   return (
     <>
       <button
-        className="font-mono text-[11px] text-accent disabled:opacity-50"
+        className="rx-focus inline-flex items-center gap-1.5 font-mono text-[11.5px] text-accent disabled:opacity-50"
         disabled={pending}
         type="button"
         onClick={async () => {
@@ -150,17 +144,15 @@ function ExportLink({ path }: { path: string }) {
           }
         }}
       >
-        {pending ? "Descargando…" : "↓ .txt"}
+        <Icon name="download" size={13} />
+        {pending ? "Descargando…" : ".txt"}
       </button>
       {error && <span className="text-[11px] text-danger">{error}</span>}
     </>
   );
 }
 
-// One-line set-relationship legend so the three panels don't read as a memory
-// tax: "Aprobadas" and "Datos CC" are both subsets of "Todas las respuestas"
-// (the first is the ✅-only replies; the second is the CC: data extracted from
-// them). text-muted, body-sized — context, not a control.
+// One-line set-relationship legend (kept for Historial detail callers).
 export function ResponseViewsLegend({ className }: { className?: string }) {
   return (
     <p className={clsx("text-xs text-muted", className)}>
@@ -172,10 +164,9 @@ export function ResponseViewsLegend({ className }: { className?: string }) {
   );
 }
 
-// THE panel — HeroUI Card forced FLAT (Flat-Plate doctrine: bg-surface +
-// 1px border, zero elevation in BOTH themes), optional LabelCaps header (the
-// mobile tabs carry the label/badge instead) and optional `↓ .txt` export
-// footer (Story 3.5; no path ⇒ no footer).
+// THE panel — native rack plate (Flat-Plate doctrine: bg-surface + 1px border,
+// zero elevation in BOTH themes), optional LabelCaps header (mobile tabs carry
+// the label/badge instead) and optional `↓ .txt` export footer.
 function ResponsePanel({
   header,
   count,
@@ -195,43 +186,26 @@ function ResponsePanel({
   listClassName?: string;
   className?: string;
 }) {
-  // HeroUI Card (compound) instead of the hand-rolled <section>: variant
-  // "default" gives the bg-surface body. We neutralize the card's own
-  // p-4/gap-3/overflow-visible/32px-radius to console density (utilities
-  // layer wins over the .card component layer) and re-add the header/footer
-  // separators per slot. `shadow-none` forces the Flat-Plate look in BOTH
-  // themes: .card relies on shadow-surface for its edge, which only happens
-  // to read flat in dark (--surface-shadow nulled to transparent) but LIFTS
-  // in light — the explicit `border border-border` is the sole edge.
-  // `min-w-0` on the root is the actual fix for the grid overflow — without
-  // it the long mono rows blow the 1fr track wide and `truncate` never bites.
   return (
-    <Card
+    <div
       className={clsx(
-        "flex min-w-0 flex-col gap-0 overflow-hidden rounded-lg border border-border p-0 shadow-none",
+        "flex min-w-0 flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface",
         className,
       )}
-      variant="default"
     >
       {header && (
-        <Card.Header className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <LabelCaps className="leading-4">{header}</LabelCaps>
+        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+          <LabelCaps className="tracking-[0.12em]">{header}</LabelCaps>
           <CountBadge tone={countTone} value={count} />
-        </Card.Header>
+        </div>
       )}
-      <Card.Content className="min-h-0 p-0">
-        <PanelList
-          className={listClassName}
-          emptyText={emptyText}
-          rows={rows}
-        />
-      </Card.Content>
+      <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
       {exportPath && (
-        <Card.Footer className="justify-between border-t border-border px-3 py-2">
+        <div className="border-t border-border px-3 py-2">
           <ExportLink path={exportPath} />
-        </Card.Footer>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -256,17 +230,15 @@ export function CompletaPanel({
       count={total}
       emptyText={EMPTY_COMPLETA}
       exportPath={exportPath}
-      header={header ? "Todas las respuestas" : undefined}
+      header={header ? "Completa" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses)}
     />
   );
 }
 
-// "Filtrada con response" (full text of only the ✅ revisions). SAME row
-// shape as Completa — full text + the ✅ glyph — just the status-filtered
-// subset. Props-driven like its siblings: callers pass the full `responses`
-// list and the authoritative ok total; the panel filters to status === "ok".
+// "Filtrada con respuesta" (full text of only the ✅ revisions). SAME row shape
+// as Completa — full text + the ✅ glyph — just the status-filtered subset.
 export function FiltradaConResponsePanel({
   responses,
   total,
@@ -289,7 +261,7 @@ export function FiltradaConResponsePanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA_CON}
       exportPath={exportPath}
-      header={header ? "Aprobadas (✅)" : undefined}
+      header={header ? "Filtrada con respuesta" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses.filter((row) => row.status === "ok"))}
     />
@@ -318,16 +290,67 @@ export function FiltradaPanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA}
       exportPath={exportPath}
-      header={header ? "Datos CC extraídos" : undefined}
+      header={header ? "Filtrada sin respuesta" : undefined}
       listClassName={listClassName}
       rows={filtradaRows(cc, total)}
     />
   );
 }
 
-// Mobile recomposition: segmented Completa | Filtrada tabs (DESIGN token
-// `dual-view-tabs`), each with its live count badge; the lists keep a capped
-// height with internal scroll so the cockpit form stays reachable.
+interface ResponseViewsProps {
+  responses: ResponseRow[];
+  cc: CcRow[];
+  responsesTotal: number;
+  responsesOkTotal: number;
+  ccTotal: number;
+  exportPathCompleta?: string;
+  exportPathFiltradaCompleta?: string;
+  exportPathFiltrada?: string;
+  className?: string;
+}
+
+// Desktop recomposition: three side-by-side panels (handoff ResultPanel grid),
+// each with its header + live count badge and tall internal scroll.
+export function ResponseColumns({
+  responses,
+  cc,
+  responsesTotal,
+  responsesOkTotal,
+  ccTotal,
+  exportPathCompleta,
+  exportPathFiltradaCompleta,
+  exportPathFiltrada,
+  className,
+}: ResponseViewsProps) {
+  return (
+    <div className={clsx("grid grid-cols-3 gap-5", className)}>
+      <CompletaPanel
+        exportPath={exportPathCompleta}
+        listClassName={COLUMN_LIST}
+        responses={responses}
+        total={responsesTotal}
+      />
+      <FiltradaConResponsePanel
+        exportPath={exportPathFiltradaCompleta}
+        listClassName={COLUMN_LIST}
+        responses={responses}
+        total={responsesOkTotal}
+      />
+      <FiltradaPanel
+        cc={cc}
+        exportPath={exportPathFiltrada}
+        listClassName={COLUMN_LIST}
+        total={ccTotal}
+      />
+    </div>
+  );
+}
+
+// Mobile recomposition: native segmented Completa | Aprobadas | Datos CC tabs,
+// each with its live count badge; the lists keep a capped height with internal
+// scroll so the cockpit form stays reachable.
+type TabId = "completa" | "con-response" | "sin-response";
+
 export function ResponseTabs({
   responses,
   cc,
@@ -338,68 +361,76 @@ export function ResponseTabs({
   exportPathFiltradaCompleta,
   exportPathFiltrada,
   className,
-}: {
-  responses: ResponseRow[];
-  cc: CcRow[];
-  responsesTotal: number;
-  responsesOkTotal: number;
-  ccTotal: number;
-  exportPathCompleta?: string;
-  exportPathFiltradaCompleta?: string;
-  exportPathFiltrada?: string;
-  className?: string;
-}) {
+}: ResponseViewsProps) {
+  const [tab, setTab] = useState<TabId>("completa");
+
+  const TABS: { id: TabId; label: string; count: number; tone?: "success" }[] =
+    [
+      { id: "completa", label: "Completa", count: responsesTotal },
+      {
+        id: "con-response",
+        label: "Con respuesta",
+        count: responsesOkTotal,
+        tone: "success",
+      },
+      {
+        id: "sin-response",
+        label: "Sin respuesta",
+        count: ccTotal,
+        tone: "success",
+      },
+    ];
+
   return (
-    <Tabs className={className}>
-      <Tabs.ListContainer>
-        <Tabs.List aria-label="Respuestas capturadas">
-          <Tabs.Tab id="completa">
-            <span className="flex items-center gap-2">
-              Todas <CountBadge value={responsesTotal} />
-            </span>
-            <Tabs.Indicator />
-          </Tabs.Tab>
-          <Tabs.Tab id="con-response">
-            <span className="flex items-center gap-2">
-              Aprobadas <CountBadge tone="success" value={responsesOkTotal} />
-            </span>
-            <Tabs.Indicator />
-          </Tabs.Tab>
-          <Tabs.Tab id="sin-response">
-            <span className="flex items-center gap-2">
-              Datos CC <CountBadge tone="success" value={ccTotal} />
-            </span>
-            <Tabs.Indicator />
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs.ListContainer>
-      <Tabs.Panel id="completa">
-        <CompletaPanel
-          exportPath={exportPathCompleta}
-          header={false}
-          listClassName="max-h-72"
-          responses={responses}
-          total={responsesTotal}
-        />
-      </Tabs.Panel>
-      <Tabs.Panel id="con-response">
-        <FiltradaConResponsePanel
-          exportPath={exportPathFiltradaCompleta}
-          header={false}
-          listClassName="max-h-72"
-          responses={responses}
-          total={responsesOkTotal}
-        />
-      </Tabs.Panel>
-      <Tabs.Panel id="sin-response">
-        <FiltradaPanel
-          cc={cc}
-          exportPath={exportPathFiltrada}
-          header={false}
-          listClassName="max-h-72"
-          total={ccTotal}
-        />
-      </Tabs.Panel>
-    </Tabs>
+    <div className={className}>
+      <div className="flex gap-1 rounded-[var(--radius-field)] border border-border bg-surface-secondary p-1">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            aria-selected={tab === t.id}
+            className={clsx(
+              "rx-focus flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-2 font-display text-[13px] font-semibold transition-colors",
+              tab === t.id
+                ? "bg-surface-tertiary text-foreground"
+                : "text-muted hover:text-foreground",
+            )}
+            role="tab"
+            type="button"
+            onClick={() => setTab(t.id)}
+          >
+            {t.label} <CountBadge tone={t.tone} value={t.count} />
+          </button>
+        ))}
+      </div>
+      <div className="mt-3">
+        {tab === "completa" && (
+          <CompletaPanel
+            exportPath={exportPathCompleta}
+            header={false}
+            listClassName={TAB_LIST}
+            responses={responses}
+            total={responsesTotal}
+          />
+        )}
+        {tab === "con-response" && (
+          <FiltradaConResponsePanel
+            exportPath={exportPathFiltradaCompleta}
+            header={false}
+            listClassName={TAB_LIST}
+            responses={responses}
+            total={responsesOkTotal}
+          />
+        )}
+        {tab === "sin-response" && (
+          <FiltradaPanel
+            cc={cc}
+            exportPath={exportPathFiltrada}
+            header={false}
+            listClassName={TAB_LIST}
+            total={ccTotal}
+          />
+        )}
+      </div>
+    </div>
   );
 }

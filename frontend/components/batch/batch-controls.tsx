@@ -1,22 +1,21 @@
 "use client";
 
 // Pause/Resume/Stop controls (Story 2.3). Single-tap, server-confirmed
-// (UX-DR12/UX-DR5): pressing fires REST and the surface changes ONLY when
-// the resulting `batch.state` event lands — zero optimistic jumps. Detener
-// acts instantly, no confirmation modal (AC 4 — confirm is reserved for
-// Eliminar, Epic 3). Visible set follows the state machine verbatim:
-// sending → Pausar+Detener · paused → Reanudar+Detener · stopping → the
-// frozen pair, disabled · waiting → Detener only (Story 4.2: nothing to
-// pause yet — Detener leaves the admission queue; mirrors the backend's
-// 409 batch_waiting) · idle → nothing.
+// (UX-DR12/UX-DR5): pressing fires REST and the surface changes ONLY when the
+// resulting `batch.state` event lands — zero optimistic jumps. Detener acts
+// instantly, no confirmation modal (AC 4 — confirm is reserved for Eliminar).
+// Visible set follows the state machine verbatim: sending → Pausar+Detener ·
+// paused → Reanudar+Detener · stopping → frozen, disabled · waiting → Detener
+// only (Story 4.2) · idle → nothing.
 import type { LiveBatchState } from "@/lib/ws";
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Alert, Button } from "@heroui/react";
 
 import { api, ApiError } from "@/lib/api";
 import { SectionCard } from "@/components/ui/section-card";
+import { Btn } from "@/components/ui/btn";
+import { Notice } from "@/components/ui/notice";
 
 type ControlAction = "pause" | "resume" | "stop";
 
@@ -30,8 +29,6 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
     // onSuccess deliberately does NOT touch the store: the resulting
     // `batch.state` event is the single source of truth (AC 1).
     onError: (err) => {
-      // 409/404 carry the server's Spanish message; the next
-      // batch.state/snapshot reconciles the surface on its own.
       setError(
         err instanceof ApiError
           ? err.message
@@ -46,11 +43,8 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
   const isDisabled = mutation.isPending || live.state === "stopping";
 
   return (
-    // Rack instrument (ui-polish-spec §4.1/§4.4): SectionCard with a live
-    // state rail; controls use HeroUI variants + text-color only — the
-    // solid success fill on Reanudar is the system's ONE recorded exception.
     <SectionCard
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-2.5"
       legend="Controles"
       rail={
         live.state === "sending"
@@ -60,37 +54,40 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
             : "none"
       }
     >
-      <div className="flex gap-3">
+      <div className="flex gap-2.5">
         {live.state === "paused" ? (
           // Reanudar — the ONLY solid control (DESIGN.md control-button).
-          <Button
-            className="flex-1 bg-success text-success-foreground"
-            isDisabled={isDisabled}
-            variant="primary"
-            onPress={() => mutation.mutate("resume")}
+          <Btn
+            full
+            disabled={isDisabled}
+            icon="play"
+            variant="success"
+            onClick={() => mutation.mutate("resume")}
           >
             Reanudar
-          </Button>
+          </Btn>
         ) : live.state === "waiting" ? null : ( // waiting: Detener only (4.2)
-          <Button
-            className="flex-1 text-warning"
-            isDisabled={isDisabled}
-            variant="secondary"
-            onPress={() => mutation.mutate("pause")}
+          <Btn
+            full
+            disabled={isDisabled}
+            icon="pause"
+            variant="warning"
+            onClick={() => mutation.mutate("pause")}
           >
             Pausar
-          </Button>
+          </Btn>
         )}
-        <Button
-          className="flex-1 text-danger"
-          isDisabled={isDisabled}
-          variant="secondary"
-          onPress={() => mutation.mutate("stop")}
+        <Btn
+          full
+          disabled={isDisabled}
+          icon="stop"
+          variant="danger"
+          onClick={() => mutation.mutate("stop")}
         >
           Detener
-        </Button>
+        </Btn>
       </div>
-      {error && <Alert status="danger">{error}</Alert>}
+      {error && <Notice status="danger">{error}</Notice>}
     </SectionCard>
   );
 }
