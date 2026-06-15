@@ -817,6 +817,8 @@ export interface components {
             role: string;
             /** Tenant Id */
             tenant_id: number;
+            /** Expires At */
+            expires_at?: string | null;
         };
         /** RenameSessionRequest */
         RenameSessionRequest: {

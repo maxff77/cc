@@ -4,6 +4,8 @@ Implements the error contract from ``app.errors`` and sets the opaque
 server-side session cookie (see Dev Notes / architecture for exact flags).
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +41,9 @@ class MeResponse(BaseModel):
     email: str
     role: str
     tenant_id: int
+    # Plan deadline for the client header badge. Null for owner/admin (they
+    # carry no plan); serialized to ISO 8601 for the frontend.
+    expires_at: datetime | None = None
 
 
 class LoginResponse(MeResponse):
@@ -159,6 +164,7 @@ async def login(
         email=user.email,
         role=user.role,
         tenant_id=user.tenant_id,
+        expires_at=user.expires_at,
         home_path=(
             "/change-password"
             if user.must_change_password
@@ -192,7 +198,11 @@ async def logout(
 async def me(user: User = Depends(get_current_user)) -> MeResponse:
     """Return the authenticated user; 401 when unauthenticated."""
     return MeResponse(
-        id=user.id, email=user.email, role=user.role, tenant_id=user.tenant_id
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        tenant_id=user.tenant_id,
+        expires_at=user.expires_at,
     )
 
 

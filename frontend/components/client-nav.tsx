@@ -20,9 +20,11 @@ import { Mark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
+import { PlanBadge } from "@/components/ui/plan-badge";
 
 interface Me {
   role: string;
+  expires_at: string | null;
 }
 
 type NavLink = { href: string; label: string };
@@ -189,6 +191,11 @@ export function ClientNav() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
+          {/* Always-visible plan status (clients only): days left + tone.
+              Shown on every client screen, desktop and mobile. */}
+          {!isStaff && (
+            <PlanBadge expiresAt={me.data?.expires_at ?? null} />
+          )}
           {/* Permanent seller/support contact (clients only) — reachable any
               time. Desktop only here; mobile gets it in the bottom nav below. */}
           {!isStaff && (

@@ -151,3 +151,35 @@ async def test_staff_never_expires(created: set[str], role: str) -> None:
         res = await client.get("/api/auth/me")
         assert res.status_code == 200, res.text
         assert res.json()["role"] == role
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_me_exposes_expires_at_for_client(created: set[str]) -> None:
+    """/me returns the client's plan deadline (ISO 8601) for the header badge."""
+    future = datetime.now(UTC) + timedelta(days=30)
+    user = await _seed("client", expires_at=future)
+    created.add(user.email)
+
+    async with _client() as client:
+        await login(client, user.email)
+        res = await client.get("/api/auth/me")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["expires_at"] is not None
+        assert datetime.fromisoformat(body["expires_at"]) == future
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("role", ["owner", "admin"])
+async def test_me_expires_at_is_null_for_staff(
+    created: set[str], role: str
+) -> None:
+    """owner/admin carry no plan → /me exposes expires_at = null (no badge)."""
+    user = await _seed(role, expires_at=None)
+    created.add(user.email)
+
+    async with _client() as client:
+        await login(client, user.email)
+        res = await client.get("/api/auth/me")
+        assert res.status_code == 200, res.text
+        assert res.json()["expires_at"] is None
