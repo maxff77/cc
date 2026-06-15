@@ -42,8 +42,11 @@ async def resolve_ws_user(session: AsyncSession, token: str | None) -> User | No
     """Mirror of ``deps._resolve_session_user`` returning ``None`` on failure.
 
     No revocation side effects here: a just-expired/blocked user simply fails
-    the handshake — their next HTTP request runs the one-shot revocation
-    (1.4/1.5 semantics stay owned by the HTTP chain).
+    the handshake, and an already-open socket is closed within ``_REAUTH_SECONDS``
+    by the re-auth tick below — this expiry check gates the socket regardless of
+    the HTTP chain. Blocking is still hard-revoked over HTTP; plan expiry is no
+    longer revoked there (it is a repeatable 403 the client recovers from on
+    renewal), but that does not widen this socket's exposure window.
     """
     if not token:
         return None

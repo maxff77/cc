@@ -43,10 +43,11 @@ async function toApiError(res: Response): Promise<ApiError> {
     body = { code: "unknown_error", message: "Ocurrió un error inesperado." };
   }
 
-  // Total lockout (Story 1.4): the backend answers 403 plan_expired exactly
-  // ONCE — it revokes the session as it does — so whichever call consumes it
-  // must route to the lockout page instead of surfacing a per-page error.
-  // (Skip when already there: the /expired page itself probes /me.)
+  // Plan lockout (Story 1.4): the backend answers 403 plan_expired on EVERY
+  // request (repeatable — the session is NOT revoked, so the /expired page can
+  // poll /me and auto-recover the client on renewal). Any consuming call routes
+  // to the lockout page instead of surfacing a per-page error. Skip when already
+  // there: the /expired page probes /me itself and branches on the error code.
   if (
     res.status === 403 &&
     body.code === "plan_expired" &&

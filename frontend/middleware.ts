@@ -7,12 +7,14 @@ const SESSION_COOKIE = "cc_session";
 
 // Edge middleware can't reach Postgres, so it gates on session-cookie PRESENCE
 // (cheap) and then asks the backend /api/auth/me for the authoritative
-// identity/role + plan state on real navigations. That same /me round-trip is
-// the auth check that triggers backend session revocation on expiry
-// (Story 1.4), so the redirect and the invalidation happen together:
+// identity/role + plan state on real navigations. The /me round-trip is also
+// the auth check that revokes a BLOCKED user's session (Story 1.4/1.5); plan
+// expiry no longer revokes (it returns a repeatable 403 the client recovers
+// from on renewal), so for expiry the redirect carries no invalidation:
 //   - no cookie               → /login
-//   - prefetch                → continue (must not burn the one-shot 403)
-//   - 403 code=plan_expired   → /expired (and delete the stale cookie)
+//   - prefetch                → continue (don't fire a redirect speculatively)
+//   - 403 code=plan_expired   → /expired (KEEP the cookie — repeatable 403;
+//                               /expired polls /me to auto-recover on renewal)
 //   - 401 / other 403         → /login   (and delete the stale cookie)
 //   - backend unreachable/5xx → not authoritative: continue, except /admin/*
 //                               where the role gate fails closed to /login
@@ -23,11 +25,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Link prefetches re-run middleware. The expiry 403 is ONE-SHOT (the backend
-  // revokes the session as it answers), so a speculative prefetch must never
-  // be its consumer: let prefetches through on cookie presence alone — the
-  // real navigation that follows re-runs middleware and gets the redirect.
-  // This also keeps hover/viewport prefetching from multiplying backend load.
+  // Link prefetches re-run middleware. Let prefetches through on cookie
+  // presence alone — a speculative prefetch shouldn't fire a redirect, and
+  // skipping the /me round-trip keeps hover/viewport prefetching from
+  // multiplying backend load. (plan_expired is a repeatable 403 now, so even if
+  // a prefetch consumed it nothing is lost; the real navigation re-runs and
+  // gets the redirect.)
   const isPrefetch =
     request.headers.has("next-router-prefetch") ||
     request.headers.get("purpose") === "prefetch" ||
@@ -77,20 +80,19 @@ export async function middleware(request: NextRequest) {
     return backendDownResponse();
   }
 
-  // Expired plan: backend has just revoked the session and returned 403
-  // plan_expired. Redirect to the public /expired page and drop the now-stale
-  // cookie so later navigations don't bounce to /login on a revoked token.
+  // Expired plan: backend returned 403 plan_expired. Redirect to the public
+  // /expired page but KEEP the cookie — plan_expired is a repeatable 403 (the
+  // backend no longer revokes the session on expiry), and /expired polls /me to
+  // auto-recover the client the moment an admin renews the plan. Deleting the
+  // cookie would strip the identity that poll needs. The session can do nothing
+  // while expired (every gated call 403s) and dies on its own at SESSION_TTL.
   if (res.status === 403) {
     const body = (await res.json().catch(() => null)) as {
       code?: string;
     } | null;
 
     if (body?.code === "plan_expired") {
-      const redirect = NextResponse.redirect(new URL("/expired", request.url));
-
-      redirect.cookies.delete(SESSION_COOKIE);
-
-      return redirect;
+      return NextResponse.redirect(new URL("/expired", request.url));
     }
 
     // Forced password change (Story 1.6): the session is VALID — the user

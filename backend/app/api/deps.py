@@ -46,11 +46,17 @@ async def _resolve_session_user(request: Request, session: AsyncSession) -> User
     if user.is_blocked:
         await _revoke_own_session(token)
         raise not_authenticated()
-    # Lazy, auth-time plan expiry (AC1/AC3): the FIRST request after a client's
-    # plan lapses revokes their session and returns 403 plan_expired; any later
-    # request with the now-revoked cookie falls into the 401 branch above.
+    # Plan expiry (AC1/AC3): a client whose plan has lapsed gets a REPEATABLE
+    # 403 plan_expired on every request — the session is NOT revoked, mirroring
+    # the must_change_password gate in get_current_user. Keeping the session
+    # alive is what lets an admin's renewal auto-recover the client: their open
+    # /expired tab polls /me, the 403 flips to 200 the instant the plan is
+    # renewed, and the page re-enters them with no manual re-login (the /expired
+    # screen has no logout/login affordance of its own). The expired session can
+    # still DO nothing — every gated endpoint 403s — and it dies naturally at
+    # SESSION_TTL. Contrast the is_blocked branch above, which DOES hard-revoke
+    # (a deliberate, irreversible lockout).
     if plans_service.is_plan_expired(user):
-        await _revoke_own_session(token)
         raise plan_expired()
     return user
 
@@ -61,10 +67,11 @@ async def get_current_user(
 ) -> User:
     """``_resolve_session_user`` + the forced-password-change gate (Story 1.6).
 
-    Gate order: blocked → expired → flag. Unlike those two, the flag gate does
-    NOT revoke the session (it is legitimate — the user needs it to complete
-    the change) and the 403 is repeatable (not one-shot like ``plan_expired``),
-    so middleware/prefetch consumption is harmless.
+    Gate order: blocked → expired → flag. Only the blocked gate hard-revokes
+    the session (a deliberate lockout); the expired and flag gates leave it
+    intact and return a REPEATABLE 403 the user recovers from in place — a plan
+    renewal for ``plan_expired``, completing the change-password flow for the
+    flag — so middleware/prefetch consumption is harmless for both.
     """
     user = await _resolve_session_user(request, session)
     if user.must_change_password:
