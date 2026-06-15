@@ -3,8 +3,12 @@
 // Envío surface (Story 2.2; controls + FloodWait notice since 2.3; live response
 // views since 3.2). Live state is driven ONLY by the WS store (UX-DR12 — no
 // optimistic state beyond the server-confirmed POST seed). Layout (Ranger-X
-// handoff): a sticky 320px cockpit (ring → session → controls → form) beside the
-// three result panels — side-by-side on desktop, segmented tabs on phone/tablet.
+// handoff): a 320px cockpit column (ring → session → controls → form) that
+// scrolls within a viewport-height grid, beside the three result panels —
+// side-by-side on desktop, segmented tabs on phone/tablet. The grid is capped to
+// the viewport on lg so the page never grows into a runaway scroll; each pane
+// scrolls on its own. The right panels keep their own internal scroll
+// (response-views), so the right column stays uncapped here.
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -106,10 +110,12 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
-      {/* Master — ring, session, controls, form. Pinned on wide screens so live
-          state stays in view while the panels scroll. */}
-      <div className="flex flex-col gap-4 lg:sticky lg:top-6">
+    <div className="grid gap-5 lg:h-[calc(100dvh-7.5rem)] lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden">
+      {/* Master — ring, session, controls, form. On wide screens the grid is
+          capped to the viewport (≈ chrome offset) and each column scrolls on its
+          own, so the page itself never grows into a runaway scroll. Below lg the
+          page flows normally (no height cap). */}
+      <div className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto rx-scroll lg:pr-1">
         {/* Waiting (4.2): the queue position replaces the ring — a 0% ring
             would read as a silent stall. Idle renders the ring at 0 so starting
             a lote causes no layout jump. */}

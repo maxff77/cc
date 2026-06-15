@@ -57,8 +57,10 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
       <div className="flex gap-2.5">
         {live.state === "paused" ? (
           // Reanudar — the ONLY solid control (DESIGN.md control-button).
+          // flex-1 (basis-0), NOT `full` (w-full): two w-full buttons + Btn's
+          // base shrink-0 each claim 100% and refuse to shrink → overflow.
           <Btn
-            full
+            className="flex-1"
             disabled={isDisabled}
             icon="play"
             variant="success"
@@ -68,7 +70,7 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
           </Btn>
         ) : live.state === "waiting" ? null : ( // waiting: Detener only (4.2)
           <Btn
-            full
+            className="flex-1"
             disabled={isDisabled}
             icon="pause"
             variant="warning"
@@ -78,7 +80,7 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
           </Btn>
         )}
         <Btn
-          full
+          className="flex-1"
           disabled={isDisabled}
           icon="stop"
           variant="danger"
