@@ -8,7 +8,7 @@ Everything below is the one-time first install on the VPS (37.27.12.92).
 
 ## 1. DNS
 
-Production subdomain: **`cc.lohari.com.mx`**.
+Production subdomain: **`ranger-x.lohari.com.mx`**.
 
 In the DNS panel for `lohari.com.mx`, create an A record:
 
@@ -136,7 +136,7 @@ or overwrite `/etc/caddy/Caddyfile` — add the cc site as a separate
 
 ```bash
 sudo cp /srv/cc/deploy/Caddyfile /etc/caddy/cc.caddy
-sudo sed -i 's/{$CC_DOMAIN}/cc.lohari.com.mx/' /etc/caddy/cc.caddy
+sudo sed -i 's/{$CC_DOMAIN}/ranger-x.lohari.com.mx/' /etc/caddy/cc.caddy
 grep -q 'import cc.caddy' /etc/caddy/Caddyfile \
     || echo 'import cc.caddy' | sudo tee -a /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile
@@ -165,10 +165,10 @@ systemctl status cc-core cc-web
 
 ## 11. Smoke test (AC5)
 
-1. Open `https://cc.lohari.com.mx` → redirected to `/login`; check the
+1. Open `https://ranger-x.lohari.com.mx` → redirected to `/login`; check the
    padlock (valid certificate).
 2. Log in as the owner → lands on home.
-3. `curl -s -o /dev/null -w '%{http_code}\n' https://cc.lohari.com.mx/api/health`
+3. `curl -s -o /dev/null -w '%{http_code}\n' https://ranger-x.lohari.com.mx/api/health`
    → `200` (uvicorn answering over HTTPS through Caddy).
 4. Try a wrong password → inline Spanish error on the login form.
 

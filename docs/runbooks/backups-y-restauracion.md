@@ -74,7 +74,7 @@ sudo cat "$last" | sudo docker exec -i lohari-postgres pg_restore \
 sudo docker exec lohari-postgres psql -U postgres -d cc \
     -c 'SELECT count(*) FROM users;' -c 'SELECT version_num FROM alembic_version;'
 sudo systemctl start cc-core
-curl -s -o /dev/null -w '%{http_code}\n' https://cc.lohari.com.mx/api/health  # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://ranger-x.lohari.com.mx/api/health  # 200
 ```
 
 Se pierde lo escrito entre el último backup y el incidente (RPO ≤ 24 h).

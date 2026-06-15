@@ -47,7 +47,7 @@ jobs:
           # The services restart at the end of deploy.sh — give uvicorn/next
           # up to 60s to come back before declaring the deploy broken.
           for i in $(seq 1 12); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://cc.lohari.com.mx/api/health || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://ranger-x.lohari.com.mx/api/health || true)
             echo "attempt $i: GET /api/health -> $code"
             [ "$code" = "200" ] && exit 0
             sleep 5

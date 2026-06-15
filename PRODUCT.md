@@ -15,7 +15,7 @@ Context for both: focused, repetitive, real-time work — often long sessions, s
 
 ## Product Purpose
 
-Ranger-X Check is a multi-tenant Telegram forwarder (SaaS). Clients submit lines; the platform sends them through one shared Telegram user account to a checker bot, paced and round-robined fairly across tenants, then captures the ✅/❌ replies and attributes each back to its originating line and tenant. Two derived views — **Completa** (every captured reply revision) and **Filtrada** (deduplicated `CC:` data). Success = batches send reliably, state is never ambiguous, replies are correctly attributed, and the shared account is protected from bans. The product is currently live at cc.lohari.com.mx as "cc"; it is being rebranded to **Ranger-X Check**.
+Ranger-X Check is a multi-tenant Telegram forwarder (SaaS). Clients submit lines; the platform sends them through one shared Telegram user account to a checker bot, paced and round-robined fairly across tenants, then captures the ✅/❌ replies and attributes each back to its originating line and tenant. Two derived views — **Completa** (every captured reply revision) and **Filtrada** (deduplicated `CC:` data). Success = batches send reliably, state is never ambiguous, replies are correctly attributed, and the shared account is protected from bans. The product is currently live at ranger-x.lohari.com.mx as "cc"; it is being rebranded to **Ranger-X Check**.
 
 ## Brand Personality
 
