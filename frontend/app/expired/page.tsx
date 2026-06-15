@@ -12,7 +12,7 @@ import { ApiError, api } from "@/lib/api";
 // beyond the contact buttons and the manual login fallback. The copy is verbatim
 // from the AC and matches the backend `plan_expired` message by design.
 const MESSAGE =
-  "Tu plan venció. Escríbenos por WhatsApp o Telegram y lo reactivamos.";
+  "Tu plan venció. Escríbenos por Telegram y lo reactivamos.";
 
 // How often the lockout page re-checks whether the plan was renewed. Light load:
 // only a handful of clients are ever locked out at once and /me is a cheap call.

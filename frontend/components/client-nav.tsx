@@ -14,6 +14,7 @@ import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { siteConfig } from "@/config/site";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
@@ -118,6 +119,10 @@ export function ClientNav() {
       : role === "admin"
         ? [...ITEMS, ...ADMIN_ITEMS]
         : ITEMS;
+  // The support contact is for clients to reach the seller/support; staff ARE
+  // the seller, so the link is hidden for them (also keeps the mobile bottom
+  // nav at 3 items for clients — staff's 5 cross-links + Soporte would wrap).
+  const isStaff = role === "owner" || role === "admin";
 
   async function logout() {
     try {
@@ -184,6 +189,24 @@ export function ClientNav() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
+          {/* Permanent seller/support contact (clients only) — reachable any
+              time. Desktop only here; mobile gets it in the bottom nav below. */}
+          {!isStaff && (
+            <Btn
+              className="hidden lg:inline-flex"
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                window.open(
+                  siteConfig.contact.telegram,
+                  "_blank",
+                  "noopener,noreferrer",
+                )
+              }
+            >
+              Soporte
+            </Btn>
+          )}
           <ThemeToggle />
           <Btn size="sm" variant="secondary" onClick={logout}>
             Cerrar sesión
@@ -194,6 +217,18 @@ export function ClientNav() {
       {/* Mobile: fixed bottom nav (the cockpit never scrolls away). */}
       <nav className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-around border-t border-border bg-background pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden">
         {items("flex-1 text-center")}
+        {/* Always-on support contact on mobile, clients only (header link is
+            desktop-only). Hidden for staff so their nav doesn't overflow. */}
+        {!isStaff && (
+          <a
+            className="rx-focus relative flex-1 rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
+            href={siteConfig.contact.telegram}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Soporte
+          </a>
+        )}
       </nav>
     </>
   );

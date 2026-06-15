@@ -3,11 +3,12 @@ export type SiteConfig = typeof siteConfig;
 export const siteConfig = {
   name: "Ranger-X Check",
   description: "Plataforma de envíos por Telegram.",
-  // External reactivation channels shown on the blocked-account notice (AC4)
-  // and, later, the /expired page (Story 1.4). PLACEHOLDERS — Richard swaps
-  // these for the real links at deploy time.
+  // Single seller/support Telegram contact, shown to clients on login, the
+  // /expired lockout, and the persistent "Soporte" link in the client header.
+  // One source of truth — change the handle here (redeploy) and every surface
+  // follows. Telegram-only by decision (WhatsApp dropped).
   contact: {
-    whatsapp: "https://wa.me/0000000000", // TODO(Richard): real WhatsApp link
-    telegram: "https://t.me/your_handle", // TODO(Richard): real Telegram link
+    telegram: "https://t.me/yesterWhite", // full link for href
+    handle: "yesterWhite", // bare handle; UI shows `@${handle}`
   },
 };

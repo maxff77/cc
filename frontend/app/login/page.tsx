@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { siteConfig } from "@/config/site";
 import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
@@ -26,7 +27,7 @@ interface LoginResponse {
 const COPY: Record<string, string> = {
   invalid_credentials: "Correo o contraseña incorrectos.",
   account_blocked:
-    "Tu cuenta está bloqueada. Escríbenos por WhatsApp o Telegram para reactivarla.",
+    "Tu cuenta está bloqueada. Escríbenos por Telegram para reactivarla.",
   too_many_attempts: "Demasiados intentos. Espera unos minutos.",
 };
 
@@ -178,11 +179,11 @@ export default function LoginPage() {
               <LabelCaps>Soporte Telegram</LabelCaps>
               <a
                 className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
-                href="https://t.me/yesterWhite"
+                href={siteConfig.contact.telegram}
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                @yesterWhite
+                @{siteConfig.contact.handle}
               </a>
             </p>
           </form>

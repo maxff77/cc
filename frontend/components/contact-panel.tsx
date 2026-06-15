@@ -9,7 +9,6 @@ import { Notice } from "@/components/ui/notice";
 import { Btn } from "@/components/ui/btn";
 
 const CHANNELS = [
-  { label: "WhatsApp", href: siteConfig.contact.whatsapp },
   { label: "Telegram", href: siteConfig.contact.telegram },
 ] as const;
 
