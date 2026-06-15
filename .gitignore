@@ -27,6 +27,8 @@ respuestas_bn_*.txt
 # Datos de fuerza bruta
 brute_progreso.json
 brute_resultados.txt
+enum_state*.json
+enum_hits*.txt
 
 # Archivo de pausa
 .pause

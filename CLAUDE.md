@@ -13,7 +13,7 @@ If a request describes "the app", "the UI", "Completa/Filtrada", "sessions", "ga
 
 ## Project overview
 
-A multi-tenant Telegram message forwarder (SaaS). Clients paste lines; the backend sends them through a **single shared Telegram user account** (Telethon/MTProto, not a bot) to a target chat, paced and round-robined fairly across tenants. The target is a checker bot whose ✅/❌ replies are captured, attributed back to the originating line/tenant, and stored. Two derived views: **Completa** (every captured reply revision, ✅ and ❌) and **Filtrada** (the deduplicated `CC:` data extracted from replies).
+A multi-tenant Telegram message forwarder (SaaS). Clients paste lines; the backend sends them through a **single shared Telegram user account** (Telethon/MTProto, not a bot) to a target chat, paced and round-robined fairly across tenants. The target is a checker bot whose ✅/❌ replies are captured, attributed back to the originating line/tenant, and stored. Two derived views: **Completa** (every captured reply revision, ✅ and ❌) and **Filtrada**.
 
 Owner/admin curate a global **gate** catalog (the prefixes, formerly called "prefijos"); clients pick a gate per batch. Plans expire and lock out clients; a **watchdog** latches a global pause on Telegram session loss or reply-rate collapse to protect the shared account from bans.
 

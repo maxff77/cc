@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import { siteConfig } from "@/config/site";
 import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
@@ -175,26 +174,16 @@ export default function LoginPage() {
               {submitting ? "Entrando…" : "Iniciar sesión"}
             </Btn>
 
-            <p className="m-0 text-center text-sm text-muted">
-              ¿Problemas para entrar? Escríbenos por{" "}
+            <p className="m-0 flex items-center justify-center gap-2">
+              <LabelCaps>Soporte Telegram</LabelCaps>
               <a
-                className="text-accent hover:underline"
-                href={siteConfig.contact.whatsapp}
+                className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
+                href="https://t.me/yesterWhite"
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                WhatsApp
-              </a>{" "}
-              o{" "}
-              <a
-                className="text-accent hover:underline"
-                href={siteConfig.contact.telegram}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                Telegram
+                @yesterWhite
               </a>
-              .
             </p>
           </form>
         </div>
