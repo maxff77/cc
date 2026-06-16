@@ -127,7 +127,7 @@ async def test_reconciler_recovers_a_dropped_reply(
     our_id = await _sent_message_id(user.tenant_id)
 
     text = "✅ Aprobada CC: 4111 Status aprobada"
-    reconciler_gateway.incoming = [(1001, our_id, text)]
+    reconciler_gateway.incoming = [(0, 1001, our_id, text)]
 
     fed = await reconciler.reconcile_once()
     assert fed == 1
@@ -152,7 +152,7 @@ async def test_reconciler_ignores_replies_to_other_sends(
     await _post_batch(http, "uno", gate["id"])
     await _drain_worker()
     # reply_to points at an id we never sent → outside the awaiting set.
-    reconciler_gateway.incoming = [(2002, 999_999, "✅ unrelated")]
+    reconciler_gateway.incoming = [(0, 2002, 999_999, "✅ unrelated")]
 
     fed = await reconciler.reconcile_once()
     assert fed == 0
@@ -184,7 +184,7 @@ async def test_reconciler_refeed_already_captured_is_a_noop(
     assert len(_captured(events)) == 1
 
     # The line is now answered → not awaiting → no Telegram call at all.
-    reconciler_gateway.incoming = [(1003, our_id, text)]
+    reconciler_gateway.incoming = [(0, 1003, our_id, text)]
     fed = await reconciler.reconcile_once()
     assert fed == 0
     assert reconciler_gateway.recent_incoming_calls == 0
@@ -359,3 +359,67 @@ def test_reconcile_enqueue_does_not_feed_watchdog(
     capture.enqueue(reply)  # the LIVE path DOES feed it (contrast)
     assert calls["n"] == 1
     capture._queue.get_nowait()
+
+
+# --- 🔒 Per-chat message-id collision (the multi-target regression) -----------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_same_message_id_in_two_chats_attributes_independently(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+) -> None:
+    """🔒 Regression for the lost-replies incident: supergroup message ids are
+    PER-CHAT, so two sends to two destinations can share an id. A bot reply in
+    each chat (both quoting the colliding id) must attribute to ITS OWN line —
+    keying on message_id alone collapsed both onto one line and left the other
+    forever "awaiting", which read as ~58% of replies lost."""
+    http, user = client_user
+    await _post_batch(http, "uno\ndos", gate["id"])
+    await _drain_worker()  # two sends; send_log ids 1 and 2 in fake chat 0
+
+    # Force the collision the single-fake-chat worker can't produce: both
+    # lines' sends now carry message_id 50, but in DIFFERENT chats (111 / 222).
+    async with async_session_factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(SendLog)
+                    .where(SendLog.tenant_id == user.tenant_id)
+                    .order_by(SendLog.line_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 2
+        rows[0].chat_id, rows[0].message_id = 111, 50
+        rows[1].chat_id, rows[1].message_id = 222, 50
+        line_a, line_b = rows[0].line_id, rows[1].line_id
+        await session.commit()
+
+    # One reply per chat, BOTH replying to the colliding id 50.
+    await capture.process_incoming(
+        IncomingReply(
+            chat_id=111,
+            message_id=900,
+            reply_to_msg_id=50,
+            text="✅ CC: 4111 Status a",
+            edited=False,
+        )
+    )
+    await capture.process_incoming(
+        IncomingReply(
+            chat_id=222,
+            message_id=901,
+            reply_to_msg_id=50,
+            text="✅ CC: 5222 Status b",
+            edited=False,
+        )
+    )
+
+    a = await _full_rows(900)
+    b = await _full_rows(901)
+    assert len(a) == 1 and a[0].line_id == line_a
+    assert len(b) == 1 and b[0].line_id == line_b
+    assert line_a != line_b  # NOT collapsed onto one line

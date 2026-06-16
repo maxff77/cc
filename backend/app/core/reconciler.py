@@ -14,9 +14,10 @@ the target chat's recent inbound messages, and re-feeds any reply addressed to
 one of those sends through the EXISTING ``capture.process_incoming`` path. That
 path is already idempotent (text-equality dedup + the ``uq_responses_session_cc``
 unique index), so re-injecting an already-captured reply is a no-op — the
-reconciler only ever fills gaps, never duplicates. The scan is TARGETED
-(``reply_to_msg_id`` must be in the awaiting set), so attribution always
-succeeds and the unmatched bucket is never inflated.
+reconciler only ever fills gaps, never duplicates. The scan is TARGETED on the
+``(chat_id, reply_to_msg_id)`` pair (message ids are per-chat — it must match an
+awaiting send IN ITS OWN chat), so attribution always succeeds and the
+unmatched bucket is never inflated.
 
 Account safety mirrors the worker: the scan is SKIPPED while the watchdog is
 paused, the gateway is not ready, or a FloodWait window is open (a history read
@@ -61,9 +62,7 @@ async def reconcile_once() -> int:
     """
     within = datetime.now(UTC) - timedelta(hours=_RECONCILE_WINDOW_HOURS)
     async with async_session_factory() as session:
-        awaiting = await send_log_repo.awaiting_sent_message_ids(
-            session, within=within
-        )
+        awaiting = await send_log_repo.awaiting_sent_keys(session, within=within)
         if not awaiting:
             return 0
         # Sends too old to drive the scan are NOT silently dropped (I/O matrix:
@@ -85,9 +84,16 @@ async def reconcile_once() -> int:
         )
         return 0
 
-    floor_id = min(awaiting)
+    # Per-chat floors: message ids are per-chat, so each destination is scanned
+    # newest-first down to ITS OWN oldest awaiting id (a single global floor
+    # would force scanning a busy chat down to a tiny id from another chat).
+    floors: dict[int, int] = {}
+    for chat_id, message_id in awaiting:
+        current = floors.get(chat_id)
+        if current is None or message_id < current:
+            floors[chat_id] = message_id
     try:
-        inbound = await gateway.recent_incoming(floor_id, _MAX_SCAN_PER_TARGET)
+        inbound = await gateway.recent_incoming(floors, _MAX_SCAN_PER_TARGET)
     except FloodWaitError as e:
         # A read can FloodWait too — feed the SAME governor + global no-send
         # window the worker uses (🔒 protect the shared account), then back off.
@@ -103,14 +109,18 @@ async def reconcile_once() -> int:
         return 0
 
     fed = 0
-    for message_id, reply_to_msg_id, text in inbound:
-        if reply_to_msg_id in awaiting:
+    for chat_id, message_id, reply_to_msg_id, text in inbound:
+        # Targeted on the (chat_id, reply_to) PAIR — a reply addressed to one of
+        # our awaiting sends IN ITS OWN chat (so attribution always succeeds and
+        # the bare id never matches the wrong supergroup).
+        if (chat_id, reply_to_msg_id) in awaiting:
             capture.reconcile_enqueue(
                 IncomingReply(
                     message_id=message_id,
                     reply_to_msg_id=reply_to_msg_id,
                     text=text,
                     edited=False,
+                    chat_id=chat_id,
                 )
             )
             fed += 1

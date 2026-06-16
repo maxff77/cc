@@ -37,15 +37,19 @@ class FakeGateway:
     each ``send`` pops+raises one before succeeding (e.g. a
     ``FloodWaitError(request=None, capture=0)`` once, then success).
 
-    ``recent_outgoing`` (Story 2.5 boot reconciliation) returns the
-    programmable ``outgoing`` list of ``(message_id, text)`` newest-first, or
-    raises ``recent_outgoing_error`` when one is set.
+    ``send`` returns ``(chat_id, message_id)``; ``send_chat_id`` (default 0 —
+    the single-id-space sentinel) is the chat every send is attributed to, so
+    a test exercising per-chat collisions can flip it between sends.
 
-    ``recent_incoming`` (reply reconciler) returns the programmable
-    ``incoming`` list of ``(message_id, reply_to_msg_id, text)`` filtered to
-    ids ``>= floor_id``, or raises ``recent_incoming_error`` when set;
-    ``recent_incoming_calls`` counts invocations (a pass with nothing awaiting
-    must NOT call it).
+    ``recent_outgoing`` (Story 2.5 boot reconciliation) returns the programmable
+    ``outgoing`` list of ``(chat_id, message_id, text)`` newest-first, or raises
+    ``recent_outgoing_error`` when one is set.
+
+    ``recent_incoming`` (reply reconciler) returns the programmable ``incoming``
+    list of ``(chat_id, message_id, reply_to_msg_id, text)`` filtered to chats
+    present in ``floors`` with ``message_id >= floors[chat_id]``, or raises
+    ``recent_incoming_error`` when set; ``recent_incoming_calls`` counts
+    invocations (a pass with nothing awaiting must NOT call it).
     """
 
     def __init__(self) -> None:
@@ -53,9 +57,10 @@ class FakeGateway:
         self.target_ok = True
         self.sent: list[str] = []
         self.errors: list[Exception] = []
-        self.outgoing: list[tuple[int, str]] = []
+        self.send_chat_id = 0
+        self.outgoing: list[tuple[int, int, str]] = []
         self.recent_outgoing_error: Exception | None = None
-        self.incoming: list[tuple[int, int | None, str]] = []
+        self.incoming: list[tuple[int, int, int | None, str]] = []
         self.recent_incoming_error: Exception | None = None
         self.recent_incoming_calls = 0
         self._next_id = 0
@@ -64,25 +69,29 @@ class FakeGateway:
     def ready(self) -> bool:
         return self.authorized and self.target_ok
 
-    async def send(self, text: str) -> int:
+    async def send(self, text: str) -> tuple[int, int]:
         if self.errors:
             raise self.errors.pop(0)
         self.sent.append(text)
         self._next_id += 1
-        return self._next_id
+        return (self.send_chat_id, self._next_id)
 
-    async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
+    async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, int, str]]:
         if self.recent_outgoing_error is not None:
             raise self.recent_outgoing_error
         return list(self.outgoing[:limit])
 
     async def recent_incoming(
-        self, floor_id: int, limit: int
-    ) -> list[tuple[int, int | None, str]]:
+        self, floors: dict[int, int], limit: int
+    ) -> list[tuple[int, int, int | None, str]]:
         self.recent_incoming_calls += 1
         if self.recent_incoming_error is not None:
             raise self.recent_incoming_error
-        return [m for m in self.incoming if m[0] >= floor_id][:limit]
+        return [
+            m
+            for m in self.incoming
+            if m[0] in floors and m[1] >= floors[m[0]]
+        ][:limit]
 
 
 def unique_email(role: str, *, prefix: str = "test") -> str:

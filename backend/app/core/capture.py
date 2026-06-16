@@ -82,6 +82,13 @@ class IncomingReply:
     reply_to_msg_id: int | None
     text: str
     edited: bool
+    # Marked peer id of the chat this message lives in. Load-bearing for
+    # attribution: message ids are per-chat, not account-global, so the key is
+    # the (chat_id, message_id) PAIR (and (chat_id, reply_to_msg_id) → send_log).
+    # Production ALWAYS sets it (the bridge from event.chat_id, the reconciler
+    # from history); the ``0`` default is the single-id-space sentinel tests
+    # (and any pre-multi-target path) rely on.
+    chat_id: int = 0
     # Attribution attempts consumed so far (the send→record race retry) — NOT
     # part of the bridge contract: retries re-enqueue via dataclasses.replace.
     attempts: int = 0
@@ -258,6 +265,7 @@ async def process_incoming(reply: IncomingReply) -> None:
     async with async_session_factory() as session:
         attributed = await attribution.resolve(
             session,
+            chat_id=reply.chat_id,
             message_id=reply.message_id,
             reply_to_msg_id=reply.reply_to_msg_id,
         )
@@ -297,7 +305,7 @@ async def process_incoming(reply: IncomingReply) -> None:
         clean_text = redact_reply_text(reply.text)
 
         previous = await responses_repo.last_full_revision(
-            session, reply.message_id
+            session, chat_id=reply.chat_id, message_id=reply.message_id
         )
         if previous is not None and previous.text == clean_text:
             return  # edition with no real change (legacy parity) — total no-op
@@ -325,6 +333,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             capture_session_id=attributed.capture_session_id,
             batch_id=attributed.batch_id,
             line_id=attributed.line_id,
+            chat_id=reply.chat_id,
             message_id=reply.message_id,
             status=status,
             text=clean_text,
@@ -337,6 +346,7 @@ async def process_incoming(reply: IncomingReply) -> None:
                 capture_session_id=attributed.capture_session_id,
                 batch_id=attributed.batch_id,
                 line_id=attributed.line_id,
+                chat_id=reply.chat_id,
                 message_id=reply.message_id,
                 values=extract_cc(clean_text),
             )

@@ -330,31 +330,34 @@ async def step() -> bool:
 
     # 2. Send — in-place retry on the SAME line, no DB session held. The
     #    state re-check inside may yield to a pause (release) or stop (abort);
-    #    the retry cap may give up ("failed").
+    #    the retry cap may give up ("failed"). Success is the tagged tuple
+    #    ("sent", chat_id, message_id) — chat_id namespaces the per-chat id.
     result = await _send_with_retries(tenant_id, batch_id, text)
-    if isinstance(result, str):
-        if result == "release":
-            await _release_line(tenant_id, batch_id, line_id)
-        else:  # "abort"
-            await _abort_line(tenant_id, batch_id, line_id)
+    if result == "release":
+        await _release_line(tenant_id, batch_id, line_id)
         return False
-    if isinstance(result, tuple):
-        kind, info = result
-        if kind == "session_lost":
-            # The Telegram session died (Story 4.1): the line NEVER went out —
-            # hand it back intact (release, not 'failed': it is not a bad
-            # line), then latch the global pause + owner alert. The batch
-            # stays 'sending' in the DB and resumes where it was once the
-            # owner explicitly resumes.
-            await _release_line(tenant_id, batch_id, line_id)
-            await watchdog.session_lost(info)
-            return False
-        # ("failed", code) — the cap was hit
-        await _record_failed(tenant_id, batch_id, line_id, position, text, info)
+    if result == "abort":
+        await _abort_line(tenant_id, batch_id, line_id)
+        return False
+    tag = result[0]
+    if tag == "session_lost":
+        # The Telegram session died (Story 4.1): the line NEVER went out —
+        # hand it back intact (release, not 'failed': it is not a bad
+        # line), then latch the global pause + owner alert. The batch
+        # stays 'sending' in the DB and resumes where it was once the
+        # owner explicitly resumes.
+        await _release_line(tenant_id, batch_id, line_id)
+        await watchdog.session_lost(result[1])
+        return False
+    if tag == "failed":  # the cap was hit
+        await _record_failed(tenant_id, batch_id, line_id, position, text, result[1])
         return True
 
     # 3. Record + emit ("sent") — retries forever until the DB takes it.
-    await _record_sent(tenant_id, batch_id, line_id, position, text, result)
+    _, chat_id, message_id = result
+    await _record_sent(
+        tenant_id, batch_id, line_id, position, text, chat_id, message_id
+    )
     return True
 
 
@@ -364,9 +367,11 @@ async def _record_sent(
     line_id: int,
     position: int,
     text: str,
+    chat_id: int,
     message_id: int,
 ) -> None:
-    """Post-send record phase: 'sent' + ``message_id`` on the intent (AC 2/5).
+    """Post-send record phase: 'sent' + ``(chat_id, message_id)`` on the intent
+    (AC 2/5).
 
     Retries FOREVER until the transaction commits — this IS the fail-stop of
     AC 5: a sent-but-unrecorded line blocks any further send ("no attribution
@@ -384,7 +389,9 @@ async def _record_sent(
                 if recorded is None:  # batch deleted mid-send (tenant removed)
                     return
                 await batches_repo.mark_sent(session, recorded)
-                await send_log_repo.set_message_id(session, line_id, message_id)
+                await send_log_repo.set_message_id(
+                    session, line_id, chat_id, message_id
+                )
                 batch = await _locked_batch(session, batch_id)
                 if batch is not None:
                     if batch.state == batches_repo.STATE_STOPPING:
@@ -420,10 +427,12 @@ async def _record_sent(
     # the global pause right here when the window collapsed.
     await watchdog.note_sent()
     logger.info(
-        "event=line_sent tenant=%s batch=%s line=%s message_id=%s tenant_total=%s",
+        "event=line_sent tenant=%s batch=%s line=%s chat_id=%s message_id=%s "
+        "tenant_total=%s",
         tenant_id,
         batch_id,
         line_id,
+        chat_id,
         message_id,
         _sent_by_tenant[tenant_id],
     )
@@ -560,8 +569,12 @@ def _fail_code(exc: BaseException) -> str:
 
 async def _send_with_retries(
     tenant_id: int, batch_id: int, text: str
-) -> int | tuple[Literal["failed", "session_lost"], str] | Literal["release", "abort"]:
-    """Deliver ``text`` (→ its Telegram message id) — or yield/give up.
+) -> (
+    tuple[Literal["sent"], int, int]
+    | tuple[Literal["failed", "session_lost"], str]
+    | Literal["release", "abort"]
+):
+    """Deliver ``text`` (→ ``("sent", chat_id, message_id)``) — or yield/give up.
 
     The batch state is re-read at the TOP of every iteration AND inside every
     retry wait (``_wait_respecting_state`` deadline loop):
@@ -586,7 +599,8 @@ async def _send_with_retries(
         if state != batches_repo.STATE_SENDING:
             return "abort"
         try:
-            return await gateway.send(text)
+            chat_id, message_id = await gateway.send(text)
+            return ("sent", chat_id, message_id)
         except FloodWaitError as e:
             # Governor + GLOBAL no-send window: every FloodWait raises the
             # pacing floor AND opens the window the worker respects before
@@ -754,7 +768,7 @@ async def _boot_recovery() -> None:
 
         # The lifespan connects the gateway BEFORE run_worker (main.py), so
         # its readiness is known here.
-        candidates: list[tuple[int, str]] = []
+        candidates: list[tuple[int, int, str]] = []  # (chat_id, message_id, text)
         verified = False
         if gateway.ready:
             try:
@@ -771,35 +785,41 @@ async def _boot_recovery() -> None:
                 "— re-queueing without verification"
             )
 
-        used: set[int] = set()
+        used: set[tuple[int, int]] = set()
         if verified and candidates:
             async with async_session_factory() as session:
-                used = await send_log_repo.used_message_ids(
-                    session, [message_id for message_id, _ in candidates]
+                used = await send_log_repo.used_message_pairs(
+                    session, [(chat_id, mid) for chat_id, mid, _ in candidates]
                 )
 
         for line_id, batch_id, tenant_id, line_text in stuck_data:
-            match_id: int | None = None
+            match_pair: tuple[int, int] | None = None
             if verified:
                 # iter_messages lists newest first — the newest match wins.
-                for message_id, message_text in candidates:
-                    if message_id not in used and message_text == line_text:
-                        match_id = message_id
+                # Match the (chat_id, message_id) PAIR: the id alone collides
+                # across the per-chat destination sequences.
+                for chat_id, message_id, message_text in candidates:
+                    if (chat_id, message_id) not in used and (
+                        message_text == line_text
+                    ):
+                        match_pair = (chat_id, message_id)
                         break
             async with async_session_factory() as session:
                 line = await session.get(BatchLine, line_id)
                 if line is None:
                     continue
-                if match_id is not None:
+                if match_pair is not None:
                     await batches_repo.mark_sent(session, line)
                     # Idempotent get-or-create FIRST (deferred 2-5 :616): a
                     # line left 'sending' by a pre-2.5 crash has NO intent row
                     # and set_message_id is a bare UPDATE that would silently
                     # no-op — leaving the confirmed line unattributable for
-                    # 3.1 and its message_id invisible to used_message_ids.
+                    # 3.1 and its message_id invisible to used_message_pairs.
                     await send_log_repo.record_intent(session, line)
-                    await send_log_repo.set_message_id(session, line_id, match_id)
-                    used.add(match_id)
+                    await send_log_repo.set_message_id(
+                        session, line_id, match_pair[0], match_pair[1]
+                    )
+                    used.add(match_pair)
                     # Same batch finalization as the step's record phase.
                     batch = await _locked_batch(session, batch_id)
                     if batch is not None:

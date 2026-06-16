@@ -192,8 +192,9 @@ class SendTarget(Base):
 
     Resolution state is NOT a column: it is transient (depends on the live
     Telethon session) and derived from the gateway at read time. Hard-deletable
-    — nothing references a target historically (``send_log`` has no chat_id; the
-    ``message_id`` alone attributes replies), so retiring config leaves no orphan.
+    — nothing references a target historically, so retiring config leaves no
+    orphan. (Attribution keys on ``send_log(chat_id, message_id)``, never on a
+    ``send_targets`` row.)
     """
 
     __tablename__ = "send_targets"
@@ -321,21 +322,32 @@ class SendLog(Base):
     """Write-ahead record of one send attempt per line (Story 2.5).
 
     Written by the send worker (2.5), read by capture/attribution (3.1):
-    ``reply_to_msg_id → send_log → tenant/batch/line``. One row per LINE
-    (``uq_send_log_line_id``) — retries of the same line REUSE the row; the
-    intent is recorded in the SAME transaction as the 'sending' claim (BEFORE
-    calling Telegram) and ``message_id`` is filled in after delivery, so a
-    crash between send and record cannot create orphan replies. A row with
-    ``message_id`` NULL means "attempted, delivery unconfirmed" — boot
-    reconciliation resolves it. ``message_id`` is BigInteger: Telegram ids may
-    outgrow int4 over time.
+    ``(chat_id, reply_to_msg_id) → send_log → tenant/batch/line``. One row per
+    LINE (``uq_send_log_line_id``) — retries of the same line REUSE the row;
+    the intent is recorded in the SAME transaction as the 'sending' claim
+    (BEFORE calling Telegram) and ``chat_id``/``message_id`` are filled in after
+    delivery, so a crash between send and record cannot create orphan replies.
+    A row with ``message_id`` NULL means "attempted, delivery unconfirmed" —
+    boot reconciliation resolves it.
+
+    🔒 ``message_id`` is NOT account-global: supergroups/channels each carry
+    their OWN per-chat message-id sequence (starting at 1), so the SAME id is
+    reused across the multi-destination send targets. ``chat_id`` (the marked
+    peer id of the destination the line was sent to) namespaces it — attribution
+    matches on the (chat_id, message_id) PAIR, never message_id alone, or a
+    bot reply mis-attributes across chats/tenants. ``chat_id`` is NULL on rows
+    written before this fix (unrecoverable — the destination wasn't recorded).
+    Both are BigInteger: supergroup ids (``-100…``) and Telegram message ids
+    outgrow int4.
     """
 
     __tablename__ = "send_log"
     __table_args__ = (
         UniqueConstraint("line_id", name="uq_send_log_line_id"),
-        # The hot attribution lookup of Story 3.1 (reply_to_msg_id → row).
+        # Legacy single-column index (kept; still serves message_id scans).
         Index("ix_send_log_message_id", "message_id"),
+        # The hot attribution lookup: (chat_id, reply_to_msg_id) → row.
+        Index("ix_send_log_chat_message", "chat_id", "message_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -348,6 +360,9 @@ class SendLog(Base):
     line_id: Mapped[int] = mapped_column(
         ForeignKey("batch_lines.id", ondelete="CASCADE")
     )
+    # Marked peer id of the destination this line was sent to — namespaces the
+    # per-chat message_id (see the class docstring). NULL = pre-fix row.
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -403,9 +418,12 @@ class Response(Base):
     filtered/deduped rows)"), discriminated by ``kind``:
     - ``'full'``: one revision of a bot reply — ``text`` is the whole reply,
       ``status`` is ``'ok'`` (✅) or ``'rejected'`` (❌). The LATEST 'full' row
-      per ``message_id`` (via ``ix_responses_message_id``) IS the durable
-      per-message state of AC 5 — it replaces the legacy in-memory dict, so
-      edit dedup survives restarts and ``catch_up`` replays.
+      per ``(chat_id, message_id)`` (via ``ix_responses_chat_message``) IS the
+      durable per-message state of AC 5 — it replaces the legacy in-memory
+      dict, so edit dedup survives restarts and ``catch_up`` replays. ``chat_id``
+      is part of the key because message ids are per-chat, not account-global
+      (see ``SendLog``): keying on message_id alone would collapse two distinct
+      replies that share an id across two supergroups.
     - ``'cc'``: one session-new extracted CC value — ``text`` is the VALUE,
       ``status`` is NULL. Per-session dedup is DB-enforced by the partial
       unique index ``uq_responses_session_cc`` (FR17: Story 3.4's "continuar"
@@ -418,9 +436,11 @@ class Response(Base):
 
     __tablename__ = "responses"
     __table_args__ = (
-        # The per-message_id state lookup of AC 5 (same width as
-        # send_log.message_id).
+        # Legacy single-column index (kept).
         Index("ix_responses_message_id", "message_id"),
+        # The per-message state lookup of AC 5, namespaced per chat (message
+        # ids are per-chat, not account-global — see SendLog).
+        Index("ix_responses_chat_message", "chat_id", "message_id"),
         # Session-scoped CC dedup, guaranteed by Postgres — not just by code.
         Index(
             "uq_responses_session_cc",
@@ -444,6 +464,9 @@ class Response(Base):
     line_id: Mapped[int | None] = mapped_column(
         ForeignKey("batch_lines.id", ondelete="SET NULL"), nullable=True
     )
+    # Marked peer id of the chat the reply arrived in — namespaces message_id
+    # (per-chat, not account-global). NULL on rows written before this fix.
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     message_id: Mapped[int] = mapped_column(BigInteger)
     # 'full' (complete revision) | 'cc' (filtered datum) — plain String, no
     # DB enum (2.2 decision).

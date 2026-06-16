@@ -369,7 +369,7 @@ async def test_boot_reconciliation_confirms_matching_outgoing(
     http, _ = client_user
     batch_id = await _post_batch(http, "uno", gate["id"])
     line_id = await _claim_with_intent(batch_id)  # crash mid-send, line went out
-    fake_gateway.outgoing = [(99, f"{gate['value']} uno")]
+    fake_gateway.outgoing = [(0, 99, f"{gate['value']} uno")]
 
     await send_worker._boot_recovery()
 
@@ -389,7 +389,7 @@ async def test_boot_reconciliation_requeues_without_match(
     http, _ = client_user
     batch_id = await _post_batch(http, "uno", gate["id"])
     await _claim_with_intent(batch_id)  # crash mid-send, line never went out
-    fake_gateway.outgoing = [(99, "otra cosa")]
+    fake_gateway.outgoing = [(0, 99, "otra cosa")]
 
     await send_worker._boot_recovery()
 
@@ -428,7 +428,7 @@ async def test_boot_reconciliation_ignores_already_attributed_message_ids(
     fake_gateway: FakeGateway,
 ) -> None:
     """An old outgoing message with IDENTICAL text whose id is already in
-    send_log must not confirm a NEW line (used_message_ids filter)."""
+    send_log must not confirm a NEW line (used_message_pairs filter)."""
     http, _ = client_user
     # Two lines keep the batch LIVE after the first send (a drained batch
     # completes and the append below would start a fresh one).
@@ -445,7 +445,7 @@ async def test_boot_reconciliation_ignores_already_attributed_message_ids(
     await _claim_with_intent(batch_id, position=2)
 
     # The only candidate is line 0's already-attributed message.
-    fake_gateway.outgoing = [(1, f"{gate['value']} uno")]
+    fake_gateway.outgoing = [(0, 1, f"{gate['value']} uno")]
     await send_worker._boot_recovery()
 
     lines = await _lines_of(batch_id)

@@ -420,7 +420,9 @@ async def test_rejected_then_ok_transition(
     assert captured[1][2]["previous_status"] == "rejected"
     # The per-message current state is the LATEST revision.
     async with async_session_factory() as session:
-        latest = await responses_repo.last_full_revision(session, 1004)
+        latest = await responses_repo.last_full_revision(
+            session, chat_id=0, message_id=1004
+        )
         assert latest is not None and latest.status == "ok"
 
 
@@ -923,7 +925,7 @@ async def test_boot_recovery_confirm_creates_missing_intent_row(
         await batches_repo.mark_sending(session, line)  # NO record_intent
         await session.commit()
         line_id = line.id
-    fake_gateway.outgoing = [(99, f"{gate['value']} uno")]
+    fake_gateway.outgoing = [(0, 99, f"{gate['value']} uno")]
 
     await send_worker._boot_recovery()
 

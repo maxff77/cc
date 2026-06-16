@@ -6,12 +6,13 @@ requests. ``tenant_id`` is NEVER taken from a request here: the capture
 pipeline runs outside requests and derives it from ``send_log`` (or from a
 previous ``responses`` row).
 
-ASSUMES one Telegram account for the lifetime of the data: both lookups key
-on the ACCOUNT-GLOBAL message-id sequence (``send_log.message_id`` and
-``responses.message_id``). Re-authenticating ``anon.session`` as a DIFFERENT
-account restarts that sequence — stale rows would then attribute new replies
-to other tenants. The re-auth runbook MUST wipe that state first
-(``scripts/telegram_auth.py`` prints the step).
+ASSUMES one Telegram account for the lifetime of the data: both lookups key on
+``(chat_id, message_id)`` — the message-id sequence is per-CHAT (supergroups
+reuse ids across destinations), so ``chat_id`` (the marked peer id) namespaces
+it. Re-authenticating ``anon.session`` as a DIFFERENT account restarts those
+sequences — stale rows would then attribute new replies to other tenants. The
+re-auth runbook MUST wipe that state first (``scripts/telegram_auth.py`` prints
+the step).
 """
 
 from dataclasses import dataclass
@@ -37,16 +38,20 @@ class Attribution:
 
 
 async def resolve(
-    session: AsyncSession, *, message_id: int, reply_to_msg_id: int | None
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    message_id: int,
+    reply_to_msg_id: int | None,
 ) -> Attribution | None:
     """Resolve a bot message to its owner. Resolution order (AC 4/5/7):
 
-    1. A previous ``responses`` row for this ``message_id`` → reuse its full
-       attribution. EDITS keep their attribution this way even if something
-       deletes the ``send_log`` row (AC 5: "message_id is preserved so
-       attribution holds").
-    2. ``reply_to_msg_id`` → ``send_log`` → the batch's bound capture session.
-       A pre-3.1 batch (``capture_session_id`` NULL) resolves via
+    1. A previous ``responses`` row for this ``(chat_id, message_id)`` → reuse
+       its full attribution. EDITS keep their attribution this way even if
+       something deletes the ``send_log`` row (AC 5: "message_id is preserved
+       so attribution holds").
+    2. ``(chat_id, reply_to_msg_id)`` → ``send_log`` → the batch's bound capture
+       session. A pre-3.1 batch (``capture_session_id`` NULL) resolves via
        ``resolve_for_backfill`` with the batch's own gate snapshots, and the
        binding is BACKFILLED (recorded decision: late replies to old batches
        are not lost). The backfill NEVER changes which session is active
@@ -54,8 +59,15 @@ async def resolve(
        else gets an INACTIVE fallback — activation stays an API-only act.
     3. Nothing matched → ``None`` (the caller logs it to the
        unmatched-replies bucket, AC 7).
+
+    🔒 Both lookups key on ``chat_id`` because Telegram message ids are
+    per-chat, not account-global: with multi-destination sending the same id
+    is reused across supergroups, so a bare-id match would attribute a reply to
+    the wrong chat's line — and across tenants is a data leak.
     """
-    previous = await responses_repo.last_full_revision(session, message_id)
+    previous = await responses_repo.last_full_revision(
+        session, chat_id=chat_id, message_id=message_id
+    )
     if previous is not None:
         return Attribution(
             tenant_id=previous.tenant_id,
@@ -66,7 +78,9 @@ async def resolve(
 
     if reply_to_msg_id is None:
         return None
-    record = await send_log_repo.get_by_message_id(session, reply_to_msg_id)
+    record = await send_log_repo.get_by_chat_and_message_id(
+        session, chat_id, reply_to_msg_id
+    )
     if record is None:
         return None
     batch = await session.get(Batch, record.batch_id)

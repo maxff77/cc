@@ -162,8 +162,9 @@ async def test_recent_outgoing_aggregates_across_targets() -> None:
     gw = _gw(_FakeClient(history=history))
     await gw.reload_targets([(1, "a"), (2, "b")])
     out = await gw.recent_outgoing(limit=10)
-    # outgoing-only, deduped by account-global id, newest-first.
-    assert out == [(106, "y"), (105, "x")]
+    # outgoing-only, deduped per (chat_id, id), newest-first; each tuple carries
+    # its chat_id (peer 1 / peer 2) since ids are per-chat, not account-global.
+    assert out == [(2, 106, "y"), (1, 105, "x")]
 
 
 # --- repo + boot seed (DB) ---------------------------------------------------

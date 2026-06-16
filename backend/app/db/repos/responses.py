@@ -2,15 +2,15 @@
 
 TENANT-SCOPED writes (``tenant_id`` is explicit on every insert) — reads used
 by the capture pipeline run outside any request (the documented worker-style
-exception, see repos/batches.py): ``last_full_revision`` is keyed on the
-GLOBAL ``message_id`` (Telegram ids are account-wide; the row carries the
-tenant the caller trusts), and ``cc_count`` on a capture-session id the
-caller already resolved tenant-scoped.
+exception, see repos/batches.py): ``last_full_revision`` is keyed on
+``(chat_id, message_id)`` (Telegram ids are per-CHAT, not account-wide — see
+``SendLog``; the row carries the tenant the caller trusts), and ``cc_count`` on
+a capture-session id the caller already resolved tenant-scoped.
 
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Response
@@ -34,17 +34,24 @@ CC_MAX_CHARS = 600
 
 
 async def last_full_revision(
-    session: AsyncSession, message_id: int
+    session: AsyncSession, *, chat_id: int, message_id: int
 ) -> Response | None:
-    """Latest 'full' revision for ``message_id`` (via ``ix_responses_message_id``).
+    """Latest 'full' revision for ``(chat_id, message_id)`` (via
+    ``ix_responses_chat_message``).
 
-    This IS the durable per-message_id state of AC 5: it replaces the legacy
+    This IS the durable per-message state of AC 5: it replaces the legacy
     in-memory dict — survives restarts and dedups the replays ``catch_up``
-    re-delivers after a disconnection.
+    re-delivers after a disconnection. Keyed on the PAIR because message ids
+    are per-chat (supergroups reuse ids), so the bare id would collapse two
+    distinct replies that share an id across two destinations.
     """
     stmt = (
         select(Response)
-        .where(Response.message_id == message_id, Response.kind == KIND_FULL)
+        .where(
+            Response.chat_id == chat_id,
+            Response.message_id == message_id,
+            Response.kind == KIND_FULL,
+        )
         .order_by(Response.id.desc())
         .limit(1)
     )
@@ -58,6 +65,7 @@ async def add_full(
     capture_session_id: int,
     batch_id: int | None,
     line_id: int | None,
+    chat_id: int,
     message_id: int,
     status: str,
     text: str,
@@ -68,6 +76,7 @@ async def add_full(
         capture_session_id=capture_session_id,
         batch_id=batch_id,
         line_id=line_id,
+        chat_id=chat_id,
         message_id=message_id,
         kind=KIND_FULL,
         status=status,
@@ -85,6 +94,7 @@ async def add_new_cc(
     capture_session_id: int,
     batch_id: int | None,
     line_id: int | None,
+    chat_id: int,
     message_id: int,
     values: list[str],
 ) -> list[str]:
@@ -124,6 +134,7 @@ async def add_new_cc(
                 capture_session_id=capture_session_id,
                 batch_id=batch_id,
                 line_id=line_id,
+                chat_id=chat_id,
                 message_id=message_id,
                 kind=KIND_CC,
                 status=None,
@@ -179,22 +190,26 @@ async def responded_message_count(
     """Number of ANSWERED lines in this session — the denominator of the
     "esperando respuesta" counter.
 
-    ``Response.message_id`` is the attributed reply's id (the checker bot edits
-    ONE reply per line, so every ✅/❌ revision of a line shares it).
-    ``COUNT(DISTINCT message_id)`` therefore collapses all revisions of a line
-    to one → the count of lines that received at least one ✅/❌. If a line ever
-    drew two DISTINCT reply messages it would over-count, but that only pushes
-    ``sent − responded`` below zero where the caller's ``max(0, …)`` already
-    pins it to the correct 0 (an answered line is never "awaiting"). Runs over
-    ``ix_responses_message_id``."""
-    stmt = (
-        select(func.count(distinct(Response.message_id)))
-        .select_from(Response)
+    ``(chat_id, Response.message_id)`` identifies the attributed reply (the
+    checker bot edits ONE reply per line, so every ✅/❌ revision of a line
+    shares the pair). ``COUNT(DISTINCT (chat_id, message_id))`` therefore
+    collapses all revisions of a line to one → the count of lines that received
+    at least one ✅/❌. The PAIR (not the bare id) is the key because message ids
+    are per-chat: two answered lines in two supergroups can share an id, and
+    counting the id alone would under-count answered lines (over-counting
+    awaiting). If a line ever drew two DISTINCT reply messages it would
+    over-count, but the caller's ``max(0, …)`` already pins that to 0. Runs over
+    ``ix_responses_chat_message``."""
+    distinct_msgs = (
+        select(Response.chat_id, Response.message_id)
         .where(
             Response.capture_session_id == capture_session_id,
             Response.kind == KIND_FULL,
         )
+        .distinct()
+        .subquery()
     )
+    stmt = select(func.count()).select_from(distinct_msgs)
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 

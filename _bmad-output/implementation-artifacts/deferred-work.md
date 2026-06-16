@@ -87,6 +87,37 @@ Fix options (separate, focused change): inject/fake the clock for the flood wind
 
 - LOW — `frontend/app/expired/page.tsx`: the `/me` recovery poll runs every 10s for as long as the lockout tab stays open, with no `document.visibilityState` gate and no max-poll cap, so a forgotten/backgrounded tab keeps hitting the backend indefinitely. Largely mitigated already — browsers clamp background `setInterval` to ~once/minute, the spec accepted the load as light ("only a handful of clients are ever locked out at once"), and the poll stops on unmount. Fix if it ever matters: pause on `visibilitychange` (hidden) and resume on focus, and/or back off the interval after N attempts. Not worth the added complexity at current scale.
 
+## Per-chat message-id attribution fix (2026-06-16)
+
+Incident: a 300-line batch captured only ~69 of 300 replies (sessions 24–27 each
+~200–295 sends with NO captured reply), even at a 5s interval and with the reply
+reconciler deployed. Root cause: multi-target sending (2026-06-13) added 26
+**supergroup** destinations (CC1–CC26) alongside the bot. A supergroup's
+`message_id` sequence is **per-chat** (starts at 1), NOT account-global — so the
+same id (20, 28, 50…) is reused across every group (confirmed in prod: 347
+colliding ids, worst reused 20×; lines with 20–36 "full" responses each from
+collisions). Attribution keyed on `message_id` alone via `get_by_message_id().
+limit(1)`, so a reply's `reply_to_msg_id` resolved to an arbitrary wrong line;
+originating lines stayed "awaiting" → looked like mass loss. The reconciler
+inherited the same broken key + a single global `floor_id`, recovering nothing.
+
+Fix (migration `b7d3f9a2c1e8`): attribution keys on the **(chat_id, message_id)
+pair** end-to-end — `send_log.chat_id` + `responses.chat_id` columns (+ composite
+indexes), `gateway.send → (chat_id, message_id)`, `recent_outgoing`/
+`recent_incoming` carry chat_id (per-chat floors in the reconciler), `_bridge`
+passes `event.chat_id`, and `get_by_chat_and_message_id`/`used_message_pairs`/
+`awaiting_sent_keys`/`last_full_revision`/`responded_message_count` are all
+pair-keyed. Regression test:
+`test_reconciler.py::test_same_message_id_in_two_chats_attributes_independently`.
+
+- **Not backfillable:** pre-fix `send_log`/`responses` rows have `chat_id` NULL —
+  the destination each old send went to was never recorded and round-robin's
+  cursor is process memory, so the existing lost replies (the ~231 of session 27,
+  etc.) cannot be recovered. Forward-only. `awaiting_sent_keys` excludes NULL
+  chat_id rows so the reconciler never wastes a scan on unrecoverable history.
+- LOW — `responses.line_id` / the per-row `NOT EXISTS` in `awaiting_sent_keys`
+  stay unindexed (pre-existing). Fine at the 45s cadence.
+
 ## Reply reconciler review (deferred 2026-06-15)
 
 - LOW — perpetually-unanswered / stuck-⏳ lines keep driving a history scan every `_RECONCILE_INTERVAL_SECONDS` (~45s) for the whole `_RECONCILE_WINDOW_HOURS` (72h) window, since nothing ever writes a `full` response to clear them from `awaiting_sent_message_ids`. Bounded (floor_id + `_MAX_SCAN_PER_TARGET=3000`, self-heals when the line ages out) and the count is now surfaced via `beyond_window=` in the pass log, but a continuous backlog means near-full per-target scans every 45s. Fix if read-load ever matters: per-line attempt cap (give up after N passes), or exclude lines whose batch reached a terminal state AND is past a short grace period. Intentional tradeoff at current scale — `backend/app/core/reconciler.py`, `backend/app/db/repos/send_log.py:awaiting_sent_message_ids`.

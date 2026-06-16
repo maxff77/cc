@@ -3,16 +3,18 @@
 DELIBERATELY UNSCOPED — like the worker section of repos/batches.py, this is
 NOT the gates/users global exception nor a handler-facing module: every row is
 written by ``core.send_worker`` (which runs outside any request and serves all
-tenants) and read by Story 3.1's capture/attribution (``get_by_message_id``).
-``tenant_id``/``batch_id`` are copied from the line so attribution never needs
-a join back.
+tenants) and read by Story 3.1's capture/attribution
+(``get_by_chat_and_message_id``). ``tenant_id``/``batch_id`` are copied from
+the line so attribution never needs a join back.
 
-ASSUMES one Telegram account for the lifetime of the data: ``message_id`` is
-the ACCOUNT-GLOBAL sequence — re-authenticating ``anon.session`` as another
-account restarts it, and a stale row whose id collides with a new reply's
-``reply_to_msg_id`` would mis-attribute it across tenants. The re-auth
-runbook must wipe this state first (``scripts/telegram_auth.py`` prints the
-mandatory step).
+ASSUMES one Telegram account for the lifetime of the data, and keys attribution
+on the ``(chat_id, message_id)`` PAIR: the message-id sequence is per-CHAT
+(supergroup/channel destinations each start at 1 and reuse ids), so the bare id
+is NOT unique across the multi-target send set — ``chat_id`` (the marked peer
+id) namespaces it. Re-authenticating ``anon.session`` as another account
+restarts those sequences; a stale row whose pair collides with a new reply
+would mis-attribute it across tenants. The re-auth runbook must wipe this state
+first (``scripts/telegram_auth.py`` prints the mandatory step).
 
 Pure ORM, flush not commit — callers own the transaction.
 """
@@ -20,7 +22,7 @@ Pure ORM, flush not commit — callers own the transaction.
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine, Response, SendLog
@@ -51,83 +53,94 @@ async def record_intent(session: AsyncSession, line: BatchLine) -> SendLog:
 
 
 async def set_message_id(
-    session: AsyncSession, line_id: int, message_id: int
+    session: AsyncSession, line_id: int, chat_id: int, message_id: int
 ) -> None:
-    """Confirm delivery: fill ``message_id`` on the line's intent row.
+    """Confirm delivery: fill ``chat_id`` + ``message_id`` on the line's intent.
 
     A plain UPDATE keyed on ``line_id`` — idempotent, so the fail-stop record
     retry (worker, Task 6) can safely re-run it after a partially lost commit.
+    Both are written together: attribution needs the PAIR (the id is per-chat).
     """
     await session.execute(
         update(SendLog)
         .where(SendLog.line_id == line_id)
-        .values(message_id=message_id)
+        .values(chat_id=chat_id, message_id=message_id)
     )
 
 
-async def get_by_message_id(
-    session: AsyncSession, message_id: int
+async def get_by_chat_and_message_id(
+    session: AsyncSession, chat_id: int, message_id: int
 ) -> SendLog | None:
-    """The hot attribution lookup of Story 3.1: ``reply_to_msg_id`` → row.
+    """The hot attribution lookup of Story 3.1: ``(chat_id, reply_to_msg_id)``
+    → row.
 
-    Runs over ``ix_send_log_message_id``. The returned row carries
-    ``tenant_id``/``batch_id``/``line_id`` denormalized — attribution resolves
-    the exact tenant, batch and line with no join.
+    Keyed on the PAIR (over ``ix_send_log_chat_message``) because message ids
+    are per-chat, not account-global — a bare-id match would return a row from
+    the wrong supergroup. The returned row carries ``tenant_id``/``batch_id``/
+    ``line_id`` denormalized — attribution resolves the exact tenant, batch and
+    line with no join.
     """
     stmt = (
-        select(SendLog).where(SendLog.message_id == message_id).limit(1)
+        select(SendLog)
+        .where(SendLog.chat_id == chat_id, SendLog.message_id == message_id)
+        .limit(1)
     )
     return (await session.execute(stmt)).scalars().first()
 
 
-async def used_message_ids(
-    session: AsyncSession, candidate_ids: Iterable[int]
-) -> set[int]:
-    """Subset of ``candidate_ids`` already attributed to some line.
+async def used_message_pairs(
+    session: AsyncSession, candidate_pairs: Iterable[tuple[int, int]]
+) -> set[tuple[int, int]]:
+    """Subset of ``(chat_id, message_id)`` pairs already attributed to a line.
 
     Boot reconciliation filter: an old outgoing message with identical text
-    whose id is already recorded in send_log must not confirm a NEW line.
+    whose pair is already recorded in send_log must not confirm a NEW line.
+    Keyed on the pair (the id alone collides across chats).
     """
-    ids = list(candidate_ids)
-    if not ids:
+    pairs = list(candidate_pairs)
+    if not pairs:
         return set()
     rows = (
         await session.execute(
-            select(SendLog.message_id).where(SendLog.message_id.in_(ids))
+            select(SendLog.chat_id, SendLog.message_id).where(
+                tuple_(SendLog.chat_id, SendLog.message_id).in_(pairs)
+            )
         )
-    ).scalars()
-    return {message_id for message_id in rows if message_id is not None}
+    ).all()
+    return {(c, m) for c, m in rows if c is not None and m is not None}
 
 
-async def awaiting_sent_message_ids(
+async def awaiting_sent_keys(
     session: AsyncSession, *, within: datetime
-) -> set[int]:
+) -> set[tuple[int, int]]:
     """Delivered sends still missing a captured reply — the reply reconciler's
     work-list (recovers replies the Telethon update stream dropped).
 
-    A row qualifies when ALL hold: ``message_id`` is filled (delivery
-    confirmed — a NULL is an unconfirmed attempt, not awaiting), its batch was
-    created since ``within`` (bounds the reconciler's history scan; older sends
-    are treated as lost-for-good and stop driving it), and NO 'full' response
-    row exists for its line (the line never received a ✅/❌). ``message_id`` is
-    the ACCOUNT-GLOBAL id a bot reply's ``reply_to_msg_id`` points back at, so
-    the returned set is matched directly against scanned inbound replies.
-    The hot filter runs over ``ix_send_log_message_id``; the per-row ``NOT
+    Returns ``(chat_id, message_id)`` PAIRS. A row qualifies when ALL hold:
+    ``chat_id``/``message_id`` are filled (delivery confirmed — a NULL pair is
+    an unconfirmed attempt or a pre-fix row that can't be reconciled per-chat),
+    its batch was created since ``within`` (bounds the reconciler's history
+    scan; older sends are treated as lost-for-good and stop driving it), and NO
+    'full' response row exists for its line (the line never received a ✅/❌).
+    The pair is what a bot reply's ``(chat_id, reply_to_msg_id)`` points back
+    at, so the returned set is matched directly against scanned inbound replies.
+    The hot filter runs over ``ix_send_log_chat_message``; the per-row ``NOT
     EXISTS`` on ``responses.line_id`` is unindexed (acceptable: this runs once
     per ~45s reconciler pass, not on any request path).
     """
     answered = _answered_full_exists()
     stmt = (
-        select(SendLog.message_id)
+        select(SendLog.chat_id, SendLog.message_id)
         .join(Batch, Batch.id == SendLog.batch_id)
         .where(
+            SendLog.chat_id.is_not(None),
             SendLog.message_id.is_not(None),
             Batch.created_at >= within,
             ~answered,
         )
     )
-    rows = (await session.execute(stmt)).scalars()
-    return {message_id for message_id in rows if message_id is not None}
+    rows = (await session.execute(stmt)).all()
+    return {(c, m) for c, m in rows if c is not None and m is not None}
 
 
 def _answered_full_exists():  # type: ignore[no-untyped-def]
@@ -148,13 +161,14 @@ async def count_awaiting_beyond_window(
 
     Surfaced (not silently dropped) so a growing tail of permanently-lost
     replies is visible to the owner: the reconciler folds this count into its
-    pass log. Mirror of ``awaiting_sent_message_ids`` with the window flipped.
+    pass log. Mirror of ``awaiting_sent_keys`` with the window flipped.
     """
     stmt = (
         select(func.count())
         .select_from(SendLog)
         .join(Batch, Batch.id == SendLog.batch_id)
         .where(
+            SendLog.chat_id.is_not(None),
             SendLog.message_id.is_not(None),
             Batch.created_at < within,
             ~_answered_full_exists(),

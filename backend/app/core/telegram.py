@@ -287,17 +287,21 @@ class TelegramGateway:
                 reply_to_msg_id=int(reply_to) if reply_to is not None else None,
                 text=event.raw_text or "",
                 edited=edited,
+                chat_id=int(event.chat_id),
             )
         )
 
-    async def send(self, text: str) -> int:
-        """Send ``text`` to the resolved target; return the Telegram message id.
+    async def send(self, text: str) -> tuple[int, int]:
+        """Send ``text`` to the resolved target; return ``(chat_id, message_id)``.
 
-        The id feeds ``send_log`` (Story 2.5 write-ahead → Story 3.1
-        attribution). ``FloodWaitError`` propagates to the worker (the worker
-        owns retry policy); an auth-loss error is converted to the domain
-        ``SessionLostError`` (Story 4.1) after flipping ``authorized`` off so
-        new ``POST /api/batches`` 503 on their own.
+        The PAIR feeds ``send_log`` (Story 2.5 write-ahead → Story 3.1
+        attribution). ``chat_id`` (the destination's marked peer id) is
+        load-bearing: message ids are per-chat, not account-global, so a reply
+        attributes on the (chat_id, message_id) pair — the bare id collides
+        across supergroup destinations. ``FloodWaitError`` propagates to the
+        worker (the worker owns retry policy); an auth-loss error is converted
+        to the domain ``SessionLostError`` (Story 4.1) after flipping
+        ``authorized`` off so new ``POST /api/batches`` 503 on their own.
         """
         # Snapshot the list (a concurrent reload_targets rebinds it): one send
         # works against one consistent view.
@@ -311,7 +315,7 @@ class TelegramGateway:
         # so a FloodWait retries the SAME chat. This NEVER changes pacing — the
         # global interval is the scheduler's; this only picks WHICH chat.
         idx = self._send_index % len(entities)
-        entity, _ = entities[idx]
+        entity, peer_id = entities[idx]
         try:
             # parse_mode=None (2.5 deferred fix): delivered text must equal
             # line.text BYTE-FOR-BYTE — Telethon's default markdown rendering
@@ -326,24 +330,28 @@ class TelegramGateway:
             logger.error("event=session_lost source=send error=%s: %s", type(e).__name__, e)
             raise SessionLostError(f"{type(e).__name__}: {e}") from e
         self._send_index = idx + 1
-        return int(message.id)
+        return (int(peer_id), int(message.id))
 
-    async def recent_outgoing(self, limit: int = 50) -> list[tuple[int, str]]:
-        """Recent messages WE sent to the target, newest first: ``(id, text)``.
+    async def recent_outgoing(
+        self, limit: int = 50
+    ) -> list[tuple[int, int, str]]:
+        """Recent messages WE sent, newest first: ``(chat_id, message_id, text)``.
 
         Story 2.5 boot reconciliation: a line a crash left in 'sending' is
         confirmed against these instead of blindly re-queued (never
-        double-sent). Raises when the client isn't ready — the caller owns
-        the fallback (telethon stays confined to this module).
+        double-sent). ``chat_id`` is carried because message ids are per-chat,
+        not account-global — boot recovery confirms on the (chat_id, id) pair,
+        and dedup is per (chat_id, id) so the same id in two supergroups is not
+        collapsed. Raises when the client isn't ready — the caller owns the
+        fallback (telethon stays confined to this module).
         """
         entities = self._entities  # snapshot vs a concurrent reload rebind
         if self.client is None or not entities:
             raise RuntimeError("telegram gateway not ready")
         try:
             # Aggregate recent OUTGOING messages across ALL destinations
-            # (round-robin spreads our sends over them). message_id is
-            # account-global, so dedup by id + sort newest-first reproduces the
-            # shape boot reconciliation expects from a single chat.
+            # (round-robin spreads our sends over them). Dedup by (chat_id, id):
+            # ids are per-chat, so the bare id is NOT unique across targets.
             # Plain history + client-side ``m.out`` filter (2.5 deferred fix):
             # ``from_user="me"`` switches Telethon to messages.Search, whose
             # weaker consistency can miss a message sent seconds before a crash
@@ -351,9 +359,10 @@ class TelegramGateway:
             # so the comparison sees what was sent, never a markdown render.
             # Bot replies interleave ~1:1, so scan a wider raw window per chat
             # and stop once ``limit`` OUTGOING are found in it.
-            seen: set[int] = set()
-            merged: list[tuple[int, str]] = []
-            for entity, _ in entities:
+            seen: set[tuple[int, int]] = set()
+            merged: list[tuple[int, int, str]] = []
+            for entity, peer_id in entities:
+                chat_id = int(peer_id)
                 kept = 0
                 async for message in self.client.iter_messages(
                     entity, limit=limit * 4
@@ -361,10 +370,10 @@ class TelegramGateway:
                     if not message.out:
                         continue
                     mid = int(message.id)
-                    if mid in seen:
+                    if (chat_id, mid) in seen:
                         continue
-                    seen.add(mid)
-                    merged.append((mid, message.raw_text or ""))
+                    seen.add((chat_id, mid))
+                    merged.append((chat_id, mid, message.raw_text or ""))
                     kept += 1
                     if kept >= limit:
                         break
@@ -380,24 +389,28 @@ class TelegramGateway:
                 e,
             )
             raise SessionLostError(f"{type(e).__name__}: {e}") from e
-        merged.sort(key=lambda t: t[0], reverse=True)
+        # Newest-first by id (best-effort across per-chat sequences) — boot
+        # recovery's "newest match wins" only matters within one chat anyway.
+        merged.sort(key=lambda t: t[1], reverse=True)
         return merged
 
     async def recent_incoming(
-        self, floor_id: int, limit: int
-    ) -> list[tuple[int, int | None, str]]:
-        """Inbound (bot) messages from the target(s), newest-first down to
-        ``floor_id`` — the reply reconciler's history scan that recovers
-        replies the live update stream dropped (catch_up gaps, missed edits).
+        self, floors: dict[int, int], limit: int
+    ) -> list[tuple[int, int, int | None, str]]:
+        """Inbound (bot) messages from the awaiting target chats, newest-first —
+        the reply reconciler's history scan that recovers replies the live
+        update stream dropped (catch_up gaps, missed edits).
 
-        Mirror of ``recent_outgoing``: aggregates across destinations, dedups
-        by the account-global id, keeps only messages we did NOT send (``not
-        out``), and STOPS once an id falls below ``floor_id``. A bot reply's id
-        is always greater than the send it answers (it is sent later on the
-        account-global sequence), so ``floor_id = min(awaiting sends)`` bounds
-        the scan to the relevant window; ``limit`` is a hard per-target safety
-        cap on the raw scan. ``raw_text`` (never ``text``) so the comparison
-        sees the literal message, never a markdown render — same as
+        ``floors`` maps ``chat_id → floor_id`` (the oldest awaiting send id IN
+        THAT CHAT). The scan is PER-CHAT because message ids are per-chat, not
+        account-global: each destination is scanned newest-first down to ITS own
+        floor and a chat with nothing awaiting is skipped entirely (a single
+        global floor would force scanning a busy chat down to another chat's
+        tiny id). A bot reply's id is always greater than the send it answers
+        within the same chat, so the per-chat floor bounds each scan exactly;
+        ``limit`` is a hard per-target safety cap on the raw scan. Returns
+        ``(chat_id, message_id, reply_to_msg_id, raw_text)``; dedup is per
+        (chat_id, id). ``raw_text`` (never ``text``) — same as
         ``recent_outgoing``. Auth-loss converts to the domain
         ``SessionLostError`` exactly like the other hot reads.
         """
@@ -405,21 +418,26 @@ class TelegramGateway:
         if self.client is None or not entities:
             raise RuntimeError("telegram gateway not ready")
         try:
-            seen: set[int] = set()
-            merged: list[tuple[int, int | None, str]] = []
-            for entity, _ in entities:
+            seen: set[tuple[int, int]] = set()
+            merged: list[tuple[int, int, int | None, str]] = []
+            for entity, peer_id in entities:
+                chat_id = int(peer_id)
+                floor_id = floors.get(chat_id)
+                if floor_id is None:
+                    continue  # nothing awaiting in this chat — don't scan it
                 async for message in self.client.iter_messages(
                     entity, limit=limit
                 ):
                     mid = int(message.id)
                     if mid < floor_id:
                         break  # newest-first: nothing older can match
-                    if message.out or mid in seen:
+                    if message.out or (chat_id, mid) in seen:
                         continue
-                    seen.add(mid)
+                    seen.add((chat_id, mid))
                     reply_to = message.reply_to_msg_id
                     merged.append(
                         (
+                            chat_id,
                             mid,
                             int(reply_to) if reply_to is not None else None,
                             message.raw_text or "",
@@ -433,7 +451,7 @@ class TelegramGateway:
                 e,
             )
             raise SessionLostError(f"{type(e).__name__}: {e}") from e
-        merged.sort(key=lambda t: t[0], reverse=True)
+        merged.sort(key=lambda t: t[1], reverse=True)
         return merged
 
     async def disconnect(self) -> None:
