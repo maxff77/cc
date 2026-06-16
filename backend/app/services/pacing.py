@@ -20,9 +20,12 @@ from app.core.scheduler import scheduler
 from app.db.repos import system_settings as system_settings_repo
 
 INTERVAL_KEY = "send_interval_seconds"
-# Safe range for the shared account. The 2.0s floor is the anti-ban barrier
-# (below it FloodWaits/bans escalate); 30.0s mirrors the governor ceiling.
-INTERVAL_MIN = 2.0
+# Range for the shared account. The 2.0s anti-ban floor was REMOVED on owner
+# request (testing): the lower bound is now 0.0s, so the owner can set any
+# interval down to zero. WARNING: below ~2s FloodWaits/bans escalate on the
+# shared MTProto account and a ban hits every tenant — this is a deliberate
+# owner override, not a safe default. 30.0s still mirrors the governor ceiling.
+INTERVAL_MIN = 0.0
 INTERVAL_MAX = 30.0
 
 

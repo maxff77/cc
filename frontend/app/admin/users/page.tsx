@@ -550,10 +550,11 @@ interface IntervalOut {
 }
 
 const INTERVAL_KEY = ["admin-interval"] as const;
-const INTERVAL_MIN = 2;
+// Anti-ban floor removed on owner request (testing): lower bound is now 0.
+const INTERVAL_MIN = 0;
 const INTERVAL_MAX = 30;
 
-// Decimal-aware gate (0.5s steps allowed); backend re-enforces 2..30.
+// Decimal-aware gate (0.5s steps allowed); backend re-enforces 0..30.
 function isValidInterval(value: string): boolean {
   const v = value.trim();
   const n = Number(v);
@@ -616,8 +617,9 @@ function SendIntervalCard() {
     <SectionCard legend="Intervalo de envío" legendAs="h2">
       <p className="mb-3 text-sm leading-relaxed text-muted">
         Segundos entre cada mensaje en la cuenta compartida. Bajarlo acelera el
-        envío pero AUMENTA el riesgo de baneo de Telegram — el piso de{" "}
-        {INTERVAL_MIN}s protege la cuenta. Aplica en vivo, sin reinicio.
+        envío pero AUMENTA el riesgo de baneo de Telegram. El piso de seguridad
+        fue retirado: puedes bajarlo hasta 0s — úsalo con cuidado. Aplica en
+        vivo, sin reinicio.
       </p>
 
       {banner && (

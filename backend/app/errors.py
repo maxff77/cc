@@ -378,5 +378,5 @@ def invalid_send_interval() -> AppError:
     return AppError(
         status_code=400,
         code="invalid_send_interval",
-        message="Indica un intervalo entre 2 y 30 segundos.",
+        message="Indica un intervalo entre 0 y 30 segundos.",
     )

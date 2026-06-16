@@ -54,12 +54,13 @@ async def _set_interval(owner_client: AsyncClient, seconds: float) -> None:
 
 def test_parse_interval_accepts_valid_including_bounds() -> None:
     assert pacing_service._parse_interval("4.0") == 4.0
-    assert pacing_service._parse_interval("2") == 2.0  # min inclusive
+    assert pacing_service._parse_interval("0") == 0.0  # min inclusive (floor removed)
+    assert pacing_service._parse_interval("1.9") == 1.9  # below old 2s floor, now valid
     assert pacing_service._parse_interval("30") == 30.0  # max inclusive
 
 
 def test_parse_interval_rejects_garbage_and_out_of_range() -> None:
-    for bad in (None, "", "abc", "1.9", "30.1", "100", "-3"):
+    for bad in (None, "", "abc", "30.1", "100", "-3"):
         assert pacing_service._parse_interval(bad) is None
 
 
@@ -91,12 +92,25 @@ async def test_interval_put_persists_and_applies_to_scheduler(
 @pytest.mark.asyncio(loop_scope="session")
 async def test_interval_put_rejects_out_of_bounds(ctx: dict[str, object]) -> None:
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
-    for bad in (1.9, 30.1, 0):
+    for bad in (-0.1, 30.1, -3):
         res = await owner_client.put(
             "/api/admin/interval", json={"interval_seconds": bad}
         )
         assert res.status_code == 400, bad
         assert res.json()["code"] == "invalid_send_interval"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_interval_put_accepts_zero_floor_removed(ctx: dict[str, object]) -> None:
+    """Anti-ban floor removed on owner request: 0 (and sub-2s values) now pass."""
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+    for ok in (0, 0.5, 1.9):
+        res = await owner_client.put(
+            "/api/admin/interval", json={"interval_seconds": ok}
+        )
+        assert res.status_code == 200, ok
+        assert res.json()["interval_seconds"] == ok
+        assert scheduler.floor == ok
 
 
 @pytest.mark.asyncio(loop_scope="session")
