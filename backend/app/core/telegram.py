@@ -383,6 +383,59 @@ class TelegramGateway:
         merged.sort(key=lambda t: t[0], reverse=True)
         return merged
 
+    async def recent_incoming(
+        self, floor_id: int, limit: int
+    ) -> list[tuple[int, int | None, str]]:
+        """Inbound (bot) messages from the target(s), newest-first down to
+        ``floor_id`` — the reply reconciler's history scan that recovers
+        replies the live update stream dropped (catch_up gaps, missed edits).
+
+        Mirror of ``recent_outgoing``: aggregates across destinations, dedups
+        by the account-global id, keeps only messages we did NOT send (``not
+        out``), and STOPS once an id falls below ``floor_id``. A bot reply's id
+        is always greater than the send it answers (it is sent later on the
+        account-global sequence), so ``floor_id = min(awaiting sends)`` bounds
+        the scan to the relevant window; ``limit`` is a hard per-target safety
+        cap on the raw scan. ``raw_text`` (never ``text``) so the comparison
+        sees the literal message, never a markdown render — same as
+        ``recent_outgoing``. Auth-loss converts to the domain
+        ``SessionLostError`` exactly like the other hot reads.
+        """
+        entities = self._entities  # snapshot vs a concurrent reload rebind
+        if self.client is None or not entities:
+            raise RuntimeError("telegram gateway not ready")
+        try:
+            seen: set[int] = set()
+            merged: list[tuple[int, int | None, str]] = []
+            for entity, _ in entities:
+                async for message in self.client.iter_messages(
+                    entity, limit=limit
+                ):
+                    mid = int(message.id)
+                    if mid < floor_id:
+                        break  # newest-first: nothing older can match
+                    if message.out or mid in seen:
+                        continue
+                    seen.add(mid)
+                    reply_to = message.reply_to_msg_id
+                    merged.append(
+                        (
+                            mid,
+                            int(reply_to) if reply_to is not None else None,
+                            message.raw_text or "",
+                        )
+                    )
+        except _AUTH_LOSS_ERRORS as e:
+            self.authorized = False
+            logger.error(
+                "event=session_lost source=recent_incoming error=%s: %s",
+                type(e).__name__,
+                e,
+            )
+            raise SessionLostError(f"{type(e).__name__}: {e}") from e
+        merged.sort(key=lambda t: t[0], reverse=True)
+        return merged
+
     async def disconnect(self) -> None:
         """Disconnect on shutdown (no-op when never connected)."""
         if self.client is not None:

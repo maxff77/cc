@@ -31,6 +31,7 @@ from app.api.targets import router as targets_router
 from app.api.watchdog import router as watchdog_router
 from app.api.ws import router as ws_router
 from app.core import capture
+from app.core.reconciler import run_reconciler
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
 from app.core.watchdog import watchdog
@@ -66,13 +67,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await watchdog.load_persisted()
     worker_task = asyncio.create_task(run_worker())
     capture_task = asyncio.create_task(capture.run_capture())
+    # Reply reconciler: a periodic safety net that recovers bot replies the
+    # live Telethon update stream dropped (catch_up gaps, missed edits) by
+    # re-reading chat history into the SAME idempotent capture path.
+    reconciler_task = asyncio.create_task(run_reconciler())
     yield
     worker_task.cancel()
     capture_task.cancel()
+    reconciler_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
     with contextlib.suppress(asyncio.CancelledError):
         await capture_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await reconciler_task
     await gateway.disconnect()
     await engine.dispose()
 

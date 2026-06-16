@@ -18,11 +18,13 @@ Pure ORM, flush not commit — callers own the transaction.
 """
 
 from collections.abc import Iterable
+from datetime import datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Batch, BatchLine, SendLog
+from app.db.models import Batch, BatchLine, Response, SendLog
+from app.db.repos.responses import KIND_FULL
 
 
 async def record_intent(session: AsyncSession, line: BatchLine) -> SendLog:
@@ -95,6 +97,70 @@ async def used_message_ids(
         )
     ).scalars()
     return {message_id for message_id in rows if message_id is not None}
+
+
+async def awaiting_sent_message_ids(
+    session: AsyncSession, *, within: datetime
+) -> set[int]:
+    """Delivered sends still missing a captured reply — the reply reconciler's
+    work-list (recovers replies the Telethon update stream dropped).
+
+    A row qualifies when ALL hold: ``message_id`` is filled (delivery
+    confirmed — a NULL is an unconfirmed attempt, not awaiting), its batch was
+    created since ``within`` (bounds the reconciler's history scan; older sends
+    are treated as lost-for-good and stop driving it), and NO 'full' response
+    row exists for its line (the line never received a ✅/❌). ``message_id`` is
+    the ACCOUNT-GLOBAL id a bot reply's ``reply_to_msg_id`` points back at, so
+    the returned set is matched directly against scanned inbound replies.
+    The hot filter runs over ``ix_send_log_message_id``; the per-row ``NOT
+    EXISTS`` on ``responses.line_id`` is unindexed (acceptable: this runs once
+    per ~45s reconciler pass, not on any request path).
+    """
+    answered = _answered_full_exists()
+    stmt = (
+        select(SendLog.message_id)
+        .join(Batch, Batch.id == SendLog.batch_id)
+        .where(
+            SendLog.message_id.is_not(None),
+            Batch.created_at >= within,
+            ~answered,
+        )
+    )
+    rows = (await session.execute(stmt)).scalars()
+    return {message_id for message_id in rows if message_id is not None}
+
+
+def _answered_full_exists():  # type: ignore[no-untyped-def]
+    """Correlated ``EXISTS`` — a 'full' response for the outer ``SendLog`` line
+    (shared by the awaiting work-list and its beyond-window counter)."""
+    return (
+        select(Response.id)
+        .where(Response.line_id == SendLog.line_id, Response.kind == KIND_FULL)
+        .exists()
+    )
+
+
+async def count_awaiting_beyond_window(
+    session: AsyncSession, *, within: datetime
+) -> int:
+    """Delivered-but-unanswered sends OLDER than ``within`` — the ones the
+    reconciler's bounded scan deliberately leaves behind.
+
+    Surfaced (not silently dropped) so a growing tail of permanently-lost
+    replies is visible to the owner: the reconciler folds this count into its
+    pass log. Mirror of ``awaiting_sent_message_ids`` with the window flipped.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(SendLog)
+        .join(Batch, Batch.id == SendLog.batch_id)
+        .where(
+            SendLog.message_id.is_not(None),
+            Batch.created_at < within,
+            ~_answered_full_exists(),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def sent_count_for_session(

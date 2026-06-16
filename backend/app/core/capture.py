@@ -127,6 +127,17 @@ def enqueue(reply: IncomingReply) -> None:
     _queue.put_nowait(reply)
 
 
+def reconcile_enqueue(reply: IncomingReply) -> None:
+    """Reply-reconciler entry point. Like ``enqueue`` but does NOT feed the
+    reply-rate watchdog: a reconciled reply is HISTORICAL (re-read from chat
+    history to recover a dropped update), so counting it as a live "bot is
+    alive" signal would falsify the watchdog — the exact reason
+    ``send_worker._boot_recovery`` never calls ``watchdog.note_sent()`` for
+    reconciled sends. The single consumer then attributes/persists/emits it
+    identically, idempotently (an already-captured reply is a total no-op)."""
+    _queue.put_nowait(reply)
+
+
 def hold_until_boot() -> None:
     """Lifespan: pause consumption until the worker's boot recovery confirms
     the message ids a crash left unconfirmed (replies buffer meanwhile)."""

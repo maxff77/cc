@@ -40,6 +40,12 @@ class FakeGateway:
     ``recent_outgoing`` (Story 2.5 boot reconciliation) returns the
     programmable ``outgoing`` list of ``(message_id, text)`` newest-first, or
     raises ``recent_outgoing_error`` when one is set.
+
+    ``recent_incoming`` (reply reconciler) returns the programmable
+    ``incoming`` list of ``(message_id, reply_to_msg_id, text)`` filtered to
+    ids ``>= floor_id``, or raises ``recent_incoming_error`` when set;
+    ``recent_incoming_calls`` counts invocations (a pass with nothing awaiting
+    must NOT call it).
     """
 
     def __init__(self) -> None:
@@ -49,6 +55,9 @@ class FakeGateway:
         self.errors: list[Exception] = []
         self.outgoing: list[tuple[int, str]] = []
         self.recent_outgoing_error: Exception | None = None
+        self.incoming: list[tuple[int, int | None, str]] = []
+        self.recent_incoming_error: Exception | None = None
+        self.recent_incoming_calls = 0
         self._next_id = 0
 
     @property
@@ -66,6 +75,14 @@ class FakeGateway:
         if self.recent_outgoing_error is not None:
             raise self.recent_outgoing_error
         return list(self.outgoing[:limit])
+
+    async def recent_incoming(
+        self, floor_id: int, limit: int
+    ) -> list[tuple[int, int | None, str]]:
+        self.recent_incoming_calls += 1
+        if self.recent_incoming_error is not None:
+            raise self.recent_incoming_error
+        return [m for m in self.incoming if m[0] >= floor_id][:limit]
 
 
 def unique_email(role: str, *, prefix: str = "test") -> str:
