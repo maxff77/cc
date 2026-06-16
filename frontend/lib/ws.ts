@@ -105,6 +105,12 @@ export interface LiveBatchState {
   // Real total of ✅ 'full' revisions — the "Filtrada con response" badge
   // (the rows the panel filters out of `responses` by status === "ok").
   responsesOkTotal: number;
+  // Delivered lines still without a ✅/❌ reply ("esperando respuesta") —
+  // session-scoped like the totals above: it survives the idle reset and
+  // seedFromBatch, resets only on a session change/clear. Authoritative from
+  // the backend (snapshot/session.active rebuild it, batch.progress climbs it
+  // on each send, response.captured drops it) — ASSIGNED, never delta-summed.
+  awaitingReply: number;
   // Epoch ms when the FloodWait window ends; null = no active notice. Set by
   // `flood.wait`, cleared by any signal that sending flows again (AC 6).
   floodUntil: number | null;
@@ -161,6 +167,8 @@ interface SnapshotData {
   responses_total: number;
   // "Filtrada con response": total of ✅ 'full' revisions.
   responses_ok_total: number;
+  // "Esperando respuesta": delivered lines without a ✅/❌ yet (session-scoped).
+  awaiting_reply: number;
   // Story 4.1: the watchdog latch — a reconnected tab rebuilds the
   // global-pause banner from the snapshot alone (snapshot-first).
   watchdog: {
@@ -178,6 +186,8 @@ interface ProgressData {
   failed: number;
   total: number;
   eta_seconds: number;
+  // Fires after every send/fail → carries the live "esperando respuesta".
+  awaiting_reply: number;
 }
 
 // Tenant-scoped `batch.line_failed` (Story 2.5, AC 4): a line the retry cap
@@ -214,6 +224,8 @@ interface ResponseCapturedData {
   text: string;
   new_cc: string[];
   cc_total: number;
+  // Recomputed after this reply persists: a message's first ✅/❌ drops it.
+  awaiting_reply: number;
   captured_at: string;
 }
 
@@ -260,6 +272,7 @@ interface SessionActiveData {
   cc_new: number;
   responses_total: number;
   responses_ok_total: number;
+  awaiting_reply: number;
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
 }
@@ -285,6 +298,7 @@ const IDLE: LiveBatchState = {
   cc: [],
   responsesTotal: 0,
   responsesOkTotal: 0,
+  awaitingReply: 0,
   floodUntil: null,
   watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
   queuePosition: null,
@@ -358,6 +372,9 @@ function reduce(event: string, data: unknown) {
         })),
         responsesTotal: d.responses_total,
         responsesOkTotal: d.responses_ok_total,
+        // Authoritative on reconnect — rebuilds the badge from the snapshot
+        // alone (snapshot-first), no client-side drift.
+        awaitingReply: d.awaiting_reply,
         // The snapshot carries no flood info → drop any notice. Honest: after
         // a reconnect the countdown is no longer verifiable.
         floodUntil: null,
@@ -389,6 +406,9 @@ function reduce(event: string, data: unknown) {
         failed: d.failed,
         total: d.total,
         etaSeconds: d.eta_seconds,
+        // Climbs as lines go out (this event fires per send) — assigned, not
+        // summed, so a missed frame self-heals on the next progress/snapshot.
+        awaitingReply: d.awaiting_reply,
         floodUntil: null,
       });
       break;
@@ -441,6 +461,9 @@ function reduce(event: string, data: unknown) {
           ccNew: store.ccNew,
           responsesTotal: store.responsesTotal,
           responsesOkTotal: store.responsesOkTotal,
+          // Survives the idle reset like the totals: late replies keep landing
+          // after the lote drains, so the badge stays honest until answered.
+          awaitingReply: store.awaitingReply,
           // System state, not batch state (4.1): a draining batch never
           // clears the global-pause banner.
           watchdog: store.watchdog,
@@ -482,6 +505,9 @@ function reduce(event: string, data: unknown) {
           ccNew: sessionChanged ? 0 : store.ccNew,
           responsesTotal: sessionChanged ? 0 : store.responsesTotal,
           responsesOkTotal: sessionChanged ? 0 : store.responsesOkTotal,
+          // New session ⇒ nothing awaiting yet; otherwise carry it (the next
+          // progress/snapshot reconciles the exact number anyway).
+          awaitingReply: sessionChanged ? 0 : store.awaitingReply,
           // Resumed sending ⇒ the FloodWait notice self-dismisses (AC 6).
           floodUntil: d.state === "sending" ? null : store.floodUntil,
           // Admission position (4.2): assigned, never guessed — the server
@@ -565,6 +591,10 @@ function reduce(event: string, data: unknown) {
         // client-side sums, which drift on lost frames; assigning reconciles
         // for free. Same number as the snapshot's cc_new.
         ccNew: d.cc_total,
+        // Recomputed server-side after this reply persisted — a message's
+        // first ✅/❌ drops it, a later revision leaves it unchanged. The
+        // session guard above already dropped late replies of an OLD session.
+        awaitingReply: d.awaiting_reply,
       });
       break;
     }
@@ -602,6 +632,8 @@ function reduce(event: string, data: unknown) {
         ccNew: d.cc_new,
         responsesTotal: d.responses_total,
         responsesOkTotal: d.responses_ok_total,
+        // Continuar rebinds to the continued session's authoritative count.
+        awaitingReply: d.awaiting_reply,
       });
       break;
     }
@@ -764,6 +796,7 @@ export function clearSession(sessionId: number) {
     ccNew: 0,
     responsesTotal: 0,
     responsesOkTotal: 0,
+    awaitingReply: 0,
   });
 }
 
@@ -830,6 +863,9 @@ export function seedFromBatch(batch: {
     cc: store.cc,
     responsesTotal: store.responsesTotal,
     responsesOkTotal: store.responsesOkTotal,
+    // Session-scoped: never seeded away (the POST's batch.state/progress
+    // reconciles it). Preserved like the other session totals above.
+    awaitingReply: store.awaitingReply,
     // A global FloodWait window doesn't end because a batch was posted.
     floodUntil: store.floodUntil,
     // System state (4.1) — a new batch never clears the global-pause banner

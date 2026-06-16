@@ -10,7 +10,7 @@ caller already resolved tenant-scoped.
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Response
@@ -169,6 +169,32 @@ async def full_count(
     )
     if status is not None:
         stmt = stmt.where(Response.status == status)
+    count: int = (await session.execute(stmt)).scalar_one()
+    return count
+
+
+async def responded_message_count(
+    session: AsyncSession, capture_session_id: int
+) -> int:
+    """Number of ANSWERED lines in this session — the denominator of the
+    "esperando respuesta" counter.
+
+    ``Response.message_id`` is the attributed reply's id (the checker bot edits
+    ONE reply per line, so every ✅/❌ revision of a line shares it).
+    ``COUNT(DISTINCT message_id)`` therefore collapses all revisions of a line
+    to one → the count of lines that received at least one ✅/❌. If a line ever
+    drew two DISTINCT reply messages it would over-count, but that only pushes
+    ``sent − responded`` below zero where the caller's ``max(0, …)`` already
+    pins it to the correct 0 (an answered line is never "awaiting"). Runs over
+    ``ix_responses_message_id``."""
+    stmt = (
+        select(func.count(distinct(Response.message_id)))
+        .select_from(Response)
+        .where(
+            Response.capture_session_id == capture_session_id,
+            Response.kind == KIND_FULL,
+        )
+    )
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 

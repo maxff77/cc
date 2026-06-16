@@ -19,10 +19,10 @@ Pure ORM, flush not commit — callers own the transaction.
 
 from collections.abc import Iterable
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import BatchLine, SendLog
+from app.db.models import Batch, BatchLine, SendLog
 
 
 async def record_intent(session: AsyncSession, line: BatchLine) -> SendLog:
@@ -95,3 +95,27 @@ async def used_message_ids(
         )
     ).scalars()
     return {message_id for message_id in rows if message_id is not None}
+
+
+async def sent_count_for_session(
+    session: AsyncSession, capture_session_id: int
+) -> int:
+    """Lines DELIVERED (``message_id`` filled) across EVERY batch of a capture
+    session — the numerator of the "esperando respuesta" counter.
+
+    Joins ``batches`` on ``capture_session_id`` so it spans the session's
+    batches, not just the live one (legacy "counters never reset" — the
+    session, not the batch, owns the tally). A NULL ``message_id`` is an
+    attempted-but-unconfirmed send and is excluded: only real deliveries can be
+    awaiting a reply. Runs over ``ix_send_log_message_id``.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(SendLog)
+        .join(Batch, Batch.id == SendLog.batch_id)
+        .where(
+            Batch.capture_session_id == capture_session_id,
+            SendLog.message_id.is_not(None),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one()

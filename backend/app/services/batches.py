@@ -15,6 +15,7 @@ from app.db.models import Batch, BatchLine
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
+from app.db.repos import send_log as send_log_repo
 
 # Cap on the rows each snapshot list ships (Story 3.2) — a module constant,
 # NOT a setting (2.5 rule: pipeline internals are never configuration). The
@@ -63,6 +64,27 @@ async def _n_effective(session: AsyncSession, batch: Batch) -> int:
     n = await batches_repo.count_active_senders(session)
     n_eff = n if batch.state == batches_repo.STATE_SENDING else n + 1
     return max(1, n_eff)
+
+
+async def awaiting_reply_count(
+    session: AsyncSession, capture_session_id: int | None
+) -> int:
+    """Lines delivered in this capture session that have NO ✅/❌ reply yet.
+
+    ``delivered − distinct-answered`` over the whole session (counters never
+    reset between batches). Clamped at ≥0: the subtrahend counts only
+    message_ids that also exist in send_log (attribution links a reply back to
+    a delivered line), so it can never exceed the minuend — the clamp is a
+    belt-and-suspenders guard, not expected to trigger. ``None`` (a batch with
+    no session bound yet) ⇒ 0. A line the bot never answers stays counted
+    (honest "still waiting") — intended, not a leak."""
+    if capture_session_id is None:
+        return 0
+    sent = await send_log_repo.sent_count_for_session(session, capture_session_id)
+    responded = await responses_repo.responded_message_count(
+        session, capture_session_id
+    )
+    return max(0, sent - responded)
 
 
 def state_data(
@@ -126,6 +148,12 @@ async def progress_data(session: AsyncSession, batch: Batch) -> dict:
         "failed": failed,
         "total": sent + queued + failed,
         "eta_seconds": eta_seconds(queued, n_eff),
+        # Session-scoped "esperando respuesta" — fires on every send/fail
+        # (this event does), so the badge climbs live as lines go out. The
+        # frontend ASSIGNS this authoritative number (no client deltas).
+        "awaiting_reply": await awaiting_reply_count(
+            session, batch.capture_session_id
+        ),
     }
 
 
@@ -158,6 +186,9 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
             "cc_new": 0,
             "responses_total": 0,
             "responses_ok_total": 0,
+            # No active session ⇒ nothing can be awaiting a reply (the cockpit
+            # badge stays hidden).
+            "awaiting_reply": 0,
             "responses": [],
             "cc": [],
         }
@@ -174,6 +205,11 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         "responses_ok_total": await responses_repo.full_count(
             session, active.id, status=responses_repo.STATUS_OK
         ),
+        # "Esperando respuesta" — delivered lines without a ✅/❌ yet, session
+        # scoped like the totals above (survives the idle reset, never resets
+        # between batches). Carried in the snapshot AND session.active so a
+        # reconnecting tab rebuilds the badge from the snapshot alone.
+        "awaiting_reply": await awaiting_reply_count(session, active.id),
         "responses": [
             {
                 "id": row.id,

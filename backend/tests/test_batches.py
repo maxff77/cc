@@ -442,6 +442,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "responses_total": 0,
         # "Filtrada con response": total of ✅ revisions.
         "responses_ok_total": 0,
+        # "Esperando respuesta": delivered lines without a reply — 0 idle.
+        "awaiting_reply": 0,
         "responses": [],
         "cc": [],
     }

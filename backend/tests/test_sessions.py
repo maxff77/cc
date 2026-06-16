@@ -397,6 +397,8 @@ async def test_continue_reactivates_by_replacement_and_emits_session_active(
             "cc_new": 1,
             "responses_total": 1,
             "responses_ok_total": 1,
+            # 1 line delivered, its ✅ already captured ⇒ nothing awaiting.
+            "awaiting_reply": 0,
             "responses": [
                 {
                     "id": full_db.id,
@@ -595,6 +597,8 @@ async def test_new_session_forks_active_gate_and_emits_empty_active(
             "cc_new": 0,
             "responses_total": 0,
             "responses_ok_total": 0,
+            # Fresh session, no batch bound yet ⇒ nothing awaiting.
+            "awaiting_reply": 0,
             "responses": [],
             "cc": [],
         },

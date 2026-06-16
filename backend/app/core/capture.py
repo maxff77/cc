@@ -47,6 +47,7 @@ from app.core.redact import redact_reply_text
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
 from app.db.repos import responses as responses_repo
+from app.services import batches as batches_service
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +332,14 @@ async def process_incoming(reply: IncomingReply) -> None:
         cc_total = await responses_repo.cc_count(
             session, attributed.capture_session_id
         )
+        # "Esperando respuesta" recomputed AFTER add_full's flush (so this
+        # reply is already counted as answered): a message's FIRST ✅/❌ drops
+        # the count by one, a later revision of the same message leaves it
+        # unchanged (DISTINCT message_id). Authoritative — the frontend assigns
+        # it, same contract as cc_total.
+        awaiting_reply = await batches_service.awaiting_reply_count(
+            session, attributed.capture_session_id
+        )
         # Capture everything the emission needs BEFORE closing the session.
         tenant_id = attributed.tenant_id
         capture_session_id = attributed.capture_session_id
@@ -361,6 +370,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             "text": clean_text,
             "new_cc": new_cc,
             "cc_total": cc_total,
+            "awaiting_reply": awaiting_reply,
             "captured_at": datetime.now(UTC).isoformat(),
         },
     )

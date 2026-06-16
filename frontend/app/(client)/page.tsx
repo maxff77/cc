@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
+import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
@@ -136,6 +137,7 @@ export default function EnvioPage() {
         <FloodNotice />
         <FailedLines live={live} />
         <PendingLines live={live} />
+        <AwaitingReply live={live} />
 
         {gates.isLoading && (
           <SectionCard legend="Nuevo lote" padding="none">
