@@ -89,7 +89,7 @@ export default function LoginPage() {
       <div className="rx-enter relative z-[1] flex w-full max-w-[460px] flex-col items-center gap-6">
         {/* Brand + tagline */}
         <div className="flex flex-col items-center gap-3">
-          <Logo height={52} />
+          <Logo priority maxWidth={340} />
           <div className="flex items-center gap-2.5">
             <span className="h-px w-5 bg-accent/60" />
             <LabelCaps className="tracking-[0.22em]">

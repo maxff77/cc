@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { siteConfig } from "@/config/site";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
-import { Mark } from "@/components/ui/logo";
+import { Mark, Wordmark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -170,9 +170,7 @@ export function ClientNav() {
             href="/"
           >
             <Mark size={28} />
-            <span className="gradient-text font-display text-xl font-extrabold italic leading-none tracking-[0.01em]">
-              RANGER-X
-            </span>
+            <Wordmark height={22} />
           </Link>
           {/* Desktop: inline nav tabs. */}
           <nav className="hidden items-center gap-1 lg:flex">{items()}</nav>

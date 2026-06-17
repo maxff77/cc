@@ -23,7 +23,7 @@ export function AuthLayout({
     <main className="relative flex min-h-screen items-center justify-center px-5 py-10">
       <RxBackdrop />
       <div className="rx-enter relative z-[1] flex w-full max-w-[420px] flex-col items-center gap-6">
-        <Logo height={44} />
+        <Logo priority maxWidth={300} />
         <div
           className="w-full rounded-[18px] border border-border bg-surface p-7"
           style={{ backgroundImage: "var(--brand-gradient-soft)" }}
