@@ -16,6 +16,7 @@ from app.config import settings
 from app.db.base import get_session
 from app.db.models import User
 from app.db.repos import plans as plans_repo
+from app.db.repos import tenants as tenants_repo
 from app.errors import (
     account_blocked,
     forbidden,
@@ -60,6 +61,11 @@ class MeResponse(BaseModel):
     # no plan_id (owner/admin, or a pre-catalog client). Default None so
     # ``login`` (which does not resolve the plan) keeps its existing shape.
     plan: PlanSummary | None = None
+    # The tenant's credit balance (credits feature). The cockpit shows it and
+    # blocks costed gates client-side when it's 0; the backend stays
+    # authoritative. Default 0 so ``login`` (which doesn't resolve it) keeps its
+    # shape — the cockpit reads the live value from /me + the WS snapshot.
+    credit_balance: int = 0
 
 
 class LoginResponse(MeResponse):
@@ -232,6 +238,7 @@ async def me(
                 antispam_seconds=plan.antispam_seconds,
                 max_lines_per_batch=plan.max_lines_per_batch,
             )
+    credit_balance = await tenants_repo.get_credit_balance(session, user.tenant_id)
     return MeResponse(
         id=user.id,
         email=user.email,
@@ -239,6 +246,7 @@ async def me(
         tenant_id=user.tenant_id,
         expires_at=user.expires_at,
         plan=plan_summary,
+        credit_balance=credit_balance,
     )
 
 

@@ -137,6 +137,7 @@ async def create_batch(
     gate_name: str,
     gate_display_value: str,
     priority: int,
+    gate_credit_cost: int = 0,
     state: str = STATE_SENDING,
 ) -> Batch:
     """Insert and flush a fresh live batch (gate strings snapshotted verbatim).
@@ -145,12 +146,16 @@ async def create_batch(
     defaults to 'sending'; the admission-controlled POST passes 'waiting' when
     the cap is full (Story 4.2). ``gate_display_value`` is the client-visible
     "Comando visible" snapshot (clients render it instead of ``gate_value``).
+    ``gate_credit_cost`` is the gate's per-✅ credit cost snapshotted at start
+    (credits feature) — the capture pipeline charges THIS, so re-pricing the
+    gate never re-charges this batch.
     """
     batch = Batch(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
         gate_display_value=gate_display_value,
+        gate_credit_cost=gate_credit_cost,
         state=state,
         priority=priority,
     )

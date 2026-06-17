@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Response
+from app.db.repos import tenants as tenants_repo
 
 # Row discriminator — plain strings, no DB enum (2.2 decision).
 KIND_FULL = "full"
@@ -85,6 +86,63 @@ async def add_full(
     session.add(response)
     await session.flush()
     return response
+
+
+async def has_ok_revision(
+    session: AsyncSession, *, chat_id: int, message_id: int
+) -> bool:
+    """Does a 'full' revision with status 'ok' already exist for this message?
+
+    Keyed on the ``(chat_id, message_id)`` PAIR (the per-chat message identity,
+    via ``ix_responses_chat_message``) — the same key as ``last_full_revision``.
+    This is the "first ✅" predicate of the credits charge: a message is charged
+    at most once even across a ✅→❌→✅ re-bounce (a transition-based check would
+    double-charge that), so the rule is "no prior ✅ row" rather than "previous
+    state wasn't ✅". MUST be called BEFORE ``add_full`` inserts the new 'ok'
+    row, or it would always find one.
+    """
+    stmt = (
+        select(Response.id)
+        .where(
+            Response.chat_id == chat_id,
+            Response.message_id == message_id,
+            Response.kind == KIND_FULL,
+            Response.status == STATUS_OK,
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
+async def charge_if_first_ok(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    chat_id: int,
+    message_id: int,
+    cost: int,
+) -> int | None:
+    """Debit ``cost`` credits the FIRST time a message reaches ✅; else no-op.
+
+    Returns the tenant's NEW balance when a charge happened, or ``None`` when
+    nothing was charged (free gate ``cost <= 0``, or this message was already
+    charged on an earlier ✅). Idempotent by the ``has_ok_revision`` check, so a
+    capture retry (the whole ``process_incoming`` re-runs after a transient DB
+    failure) never double-charges: if the prior attempt committed, the 'ok' row
+    now exists and this returns ``None``; if it didn't, neither did the debit.
+
+    🔒 Call BEFORE ``add_full`` (the existence check must not see the row being
+    added) and in the SAME transaction (atomic with the persisted revision).
+    Clamps at 0 via ``tenants_repo.add_credits`` — a mid-batch overrun past zero
+    never goes negative, and the response is still persisted by the caller.
+    """
+    if cost <= 0:
+        return None
+    if await has_ok_revision(session, chat_id=chat_id, message_id=message_id):
+        return None
+    return await tenants_repo.add_credits(
+        session, tenant_id, -cost, clamp_zero=True
+    )
 
 
 async def add_new_cc(

@@ -16,6 +16,7 @@ from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
 from app.db.repos import send_log as send_log_repo
+from app.db.repos import tenants as tenants_repo
 
 # Cap on the rows each snapshot list ships (Story 3.2) — a module constant,
 # NOT a setting (2.5 rule: pipeline internals are never configuration). The
@@ -243,6 +244,11 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
     (the 2.2 contract — exact precedent: ``failed_lines``, added in 2.5 for
     the same reason).
     """
+    # Credit balance (credits feature): carried in EVERY snapshot so a
+    # reconnecting cockpit rebuilds the balance display from the snapshot alone
+    # (same snapshot-first contract as the panels). The WS ``credits.updated``
+    # event keeps it live thereafter.
+    credit_balance = await tenants_repo.get_credit_balance(session, tenant_id)
     batch = await batches_repo.get_live_batch(session, tenant_id)
     if batch is None:
         return {
@@ -262,6 +268,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             # global-pause banner from the snapshot alone (snapshot-first).
             "watchdog": watchdog.status(),
             "queue_position": None,
+            "credit_balance": credit_balance,
             **await active_session_data(session, tenant_id),
         }
     sent, queued, failed = await batches_repo.counts(session, batch.id)
@@ -306,5 +313,6 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         # Watchdog slice (Story 4.1) — same rationale as the idle branch.
         "watchdog": watchdog.status(),
         "queue_position": position,
+        "credit_balance": credit_balance,
         **await active_session_data(session, tenant_id),
     }

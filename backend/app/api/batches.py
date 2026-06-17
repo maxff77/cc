@@ -34,6 +34,7 @@ from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import gates as gates_repo
 from app.db.repos import plans as plans_repo
+from app.db.repos import tenants as tenants_repo
 from app.errors import (
     batch_line_limit,
     batch_not_found,
@@ -42,6 +43,7 @@ from app.errors import (
     batch_waiting,
     empty_batch,
     gate_not_found,
+    insufficient_credits,
     sending_paused,
     telegram_unauthorized,
 )
@@ -144,6 +146,10 @@ async def create_or_append_batch(
     # gate_display_value is the client-visible "Comando visible" snapshot.
     gate_value, gate_name = gate.value, gate.name
     gate_display_value = gate.display_value
+    # Per-✅ credit cost of this gate (credits feature): snapshotted onto the
+    # new batch below so re-pricing never re-charges it, and used by the
+    # insufficient_credits guard. 0 ⇒ a free gate (no charge, no balance gate).
+    gate_credit_cost = gate.credit_cost
 
     # FOR UPDATE: serialize the append against the worker's
     # complete_if_drained (which locks the same row) — without it, an append
@@ -163,6 +169,19 @@ async def create_or_append_batch(
         cap = await _plan_line_cap(session, plan_id)
         if cap is not None and len(lines) > cap:
             raise batch_line_limit(cap=cap, attempted=len(lines))
+        # Credit gate (credits feature): a costed gate (credit_cost > 0) needs a
+        # positive balance to START a batch. Free gates (cost 0) are always
+        # allowed — the day-plan is untouched. ONLY clients are metered
+        # (``priority == 0`` — captured before any rollback): owner/admin "house"
+        # tenants never receive a plan grant and would otherwise be locked out of
+        # a costed gate they're testing. The capture charge still clamps their
+        # balance at 0 harmlessly. Balance read fresh from the DB (never off the
+        # session-loaded ``user``: it may be expired by a prior rollback).
+        # Nothing is queued when blocked.
+        if gate_credit_cost > 0 and priority == 0:
+            balance = await tenants_repo.get_credit_balance(session, tenant_id)
+            if balance <= 0:
+                raise insufficient_credits(gate_name=gate_name)
         try:
             # Admission decision (Story 4.2, AC 1/4) under the cap row's FOR
             # UPDATE lock — serialized against concurrent POSTs and the
@@ -182,6 +201,7 @@ async def create_or_append_batch(
                 gate_value=gate_value,
                 gate_name=gate_name,
                 gate_display_value=gate_display_value,
+                gate_credit_cost=gate_credit_cost,
                 priority=priority,
                 state=state,
             )
@@ -280,6 +300,16 @@ async def create_or_append_batch(
         attempted = sent + queued + len(new_lines)
         if attempted > cap:
             raise batch_line_limit(cap=cap, attempted=attempted)
+    # Credit gate on append (credits feature): a costed live batch needs a
+    # positive balance to accept MORE lines — mirrors the create guard so a
+    # client can't keep feeding a costed gate at balance 0. Clients only
+    # (``priority == 0``, like create); owner/admin are never metered. Only when
+    # there are NEW lines (a zero-new append is a harmless no-op). The live batch
+    # carries the cost snapshot taken at its creation.
+    if live.gate_credit_cost > 0 and new_lines and priority == 0:
+        balance = await tenants_repo.get_credit_balance(session, tenant_id)
+        if balance <= 0:
+            raise insufficient_credits(gate_name=live.gate_name)
     appended_lines: list = []
     if new_lines:
         start = await batches_repo.next_position(session, live.id)

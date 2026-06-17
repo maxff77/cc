@@ -33,6 +33,15 @@ class Tenant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    # Per-tenant credit balance (credits feature). Costed gates (``Gate.
+    # credit_cost > 0``) debit this once per captured ✅; plan assignment/renewal
+    # and owner recharge credit it. Lives on the TENANT (not the User) because
+    # the capture pipeline is tenant-keyed — the charge happens outside any
+    # request and needs no tenant→user resolution. Default 0: existing tenants
+    # start at 0 and are simply blocked from costed gates until granted credits.
+    credit_balance: Mapped[int] = mapped_column(
+        server_default=text("0"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -179,6 +188,15 @@ class Gate(Base):
     # from ``value`` on purpose — clients must never see the real command.
     # Required; not unique. Backfilled from ``value`` on existing rows.
     display_value: Mapped[str] = mapped_column(String(80))
+    # Credits charged per captured ✅ for a batch on this gate (credits
+    # feature). 0 (default) ⇒ the gate is free — no charge, no balance gate.
+    # >0 ⇒ each first-✅ on a line of a batch using this gate debits the
+    # tenant's ``credit_balance``, and a tenant at balance 0 is blocked from
+    # starting/appending a batch here. Snapshotted onto ``Batch.gate_credit_cost``
+    # at batch creation so editing this later never re-prices live/old batches.
+    credit_cost: Mapped[int] = mapped_column(
+        server_default=text("0"), nullable=False
+    )
     # Every gate belongs to exactly one category (Story 2.2). RESTRICT: a
     # category cannot be dropped while gates (active OR retired) reference it.
     category_id: Mapped[int] = mapped_column(
@@ -275,6 +293,13 @@ class Batch(Base):
     # THIS (never gate_value) in live + historical views, so an owner editing
     # display_value later never rewrites an old batch's label.
     gate_display_value: Mapped[str] = mapped_column(String(80))
+    # Snapshot of the gate's ``credit_cost`` at batch start (credits feature) —
+    # same denormalize idiom. The capture pipeline charges THIS per first-✅, so
+    # an owner re-pricing the gate never re-prices an in-flight or historical
+    # batch. 0 (default) ⇒ free batch (existing rows backfill to 0).
+    gate_credit_cost: Mapped[int] = mapped_column(
+        server_default=text("0"), nullable=False
+    )
     state: Mapped[str] = mapped_column(String(20))
     # Scheduler priority tier (Story 2.4, generalized): 0=client, 1=admin,
     # 2=owner — higher sends first. Derived from the creator's role at batch
@@ -624,6 +649,13 @@ class Plan(Base):
     duration_days: Mapped[int] = mapped_column()
     antispam_seconds: Mapped[float] = mapped_column(Numeric(6, 2))
     max_lines_per_batch: Mapped[int] = mapped_column()
+    # Credits granted to a tenant when this plan is assigned/renewed (credits
+    # feature). ADDED to the tenant's ``credit_balance`` each time (a renewal
+    # tops up); the owner can also recharge independently. 0 (default) ⇒ a
+    # time-only plan that grants no credits.
+    credits: Mapped[int] = mapped_column(
+        server_default=text("0"), nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=text("true"), nullable=False
     )

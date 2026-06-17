@@ -29,6 +29,9 @@ interface UserOut {
   expires_at: string | null;
   is_blocked: boolean;
   contact: string | null;
+  // The tenant's credit balance (credits feature). Shown in the table; the
+  // owner recharges it via the per-row action.
+  credit_balance: number;
 }
 
 interface UserListResponse {
@@ -272,6 +275,7 @@ export default function AdminUsersPage() {
                       <Th>Rol</Th>
                       <Th>Contacto</Th>
                       <Th>Vence</Th>
+                      <Th align="right">Créditos</Th>
                       <Th>Estado</Th>
                       <Th align="right">Acciones</Th>
                     </tr>
@@ -296,6 +300,13 @@ export default function AdminUsersPage() {
                         <td className="px-3.5 py-3.5 font-mono text-[0.72rem] tabular-nums text-muted">
                           {formatExpiry(u.expires_at)}
                         </td>
+                        <td className="px-3.5 py-3.5 text-right font-mono text-[0.78rem] tabular-nums text-foreground">
+                          {u.role === "client" ? (
+                            u.credit_balance
+                          ) : (
+                            <span className="text-[var(--faint)]">—</span>
+                          )}
+                        </td>
                         <td className="px-3.5 py-3.5">
                           {u.role === "client" ? (
                             u.is_blocked ? (
@@ -318,6 +329,7 @@ export default function AdminUsersPage() {
                                   Sesiones
                                 </Link>
                                 <ClientLifecycleActions
+                                  isOwner={isOwner}
                                   user={u}
                                   onChanged={() =>
                                     queryClient.invalidateQueries({
@@ -813,18 +825,114 @@ function DeleteAdminAction({
 
 function ClientLifecycleActions({
   user,
+  isOwner,
   onChanged,
 }: {
   user: UserOut;
+  isOwner: boolean;
   onChanged: () => void;
 }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       <RenewAction userId={user.id} onChanged={onChanged} />
+      {/* Recharge is owner-only (backend require_owner) — hidden for admins. */}
+      {isOwner && <RechargeCreditsAction user={user} onChanged={onChanged} />}
       <EditContactAction user={user} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
       <ResetPasswordAction user={user} onChanged={onChanged} />
     </div>
+  );
+}
+
+// --- Recharge credits (credits feature, owner only) -----------------------
+// Absolute set: the dialog pre-fills the current balance; the owner types the
+// new total. Mirrors the EditContact dialog shape.
+
+function RechargeCreditsAction({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(String(user.credit_balance));
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<UserOut>(`/api/admin/users/${user.id}/credits`, {
+        credit_balance: Number(value),
+      }),
+    onSuccess: () => {
+      setOpen(false);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => {
+      // invalid_credits (and anything else) carries the server's Spanish copy.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos guardar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  function submit() {
+    if (mutation.isPending) return;
+    if (!/^\d+$/.test(value.trim())) {
+      setError("Indica un número entero ≥ 0.");
+
+      return;
+    }
+    setError(null);
+    mutation.mutate();
+  }
+
+  return (
+    <>
+      <Btn
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          setValue(String(user.credit_balance));
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        Créditos
+      </Btn>
+
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
+        confirmVariant="primary"
+        heading="Recargar créditos"
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={submit}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <div className="flex flex-col gap-3">
+          <Field
+            label="Saldo de créditos"
+            name="credit_balance"
+            placeholder="0"
+            type="number"
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              if (error) setError(null);
+            }}
+          />
+
+          {error && <Notice status="danger">{error}</Notice>}
+        </div>
+      </ConfirmDialog>
+    </>
   );
 }
 

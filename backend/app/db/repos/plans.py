@@ -27,6 +27,7 @@ async def create(
     duration_days: int,
     antispam_seconds: Decimal,
     max_lines_per_batch: int,
+    credits: int = 0,
     is_active: bool = True,
 ) -> Plan:
     """Insert and flush a fresh plan row."""
@@ -36,6 +37,7 @@ async def create(
         duration_days=duration_days,
         antispam_seconds=antispam_seconds,
         max_lines_per_batch=max_lines_per_batch,
+        credits=credits,
         is_active=is_active,
     )
     session.add(plan)

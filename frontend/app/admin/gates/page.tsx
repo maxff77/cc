@@ -25,6 +25,8 @@ interface GateOut {
   name: string;
   // The client-visible "Comando visible" (what every client surface shows).
   display_value: string;
+  // Credits charged per captured ✅ (credits feature). 0 ⇒ free gate.
+  credit_cost: number;
   category_id: number;
   category_name: string;
   created_at: string;
@@ -87,6 +89,18 @@ function validateGateValue(raw: string): string | null {
     return "El gate solo admite un espacio simple, sin tabulaciones ni caracteres invisibles.";
   if (value.length > GATE_VALUE_MAX)
     return `Máximo ${GATE_VALUE_MAX} caracteres.`;
+
+  return null;
+}
+
+// Mirror of the backend gate credit-cost bound (credits feature): a
+// non-negative integer (0 = free gate).
+function validateCreditCost(raw: string): string | null {
+  const t = raw.trim();
+  const n = Number(t);
+
+  if (t === "") return "Ingresá un costo (0 si es gratis).";
+  if (!Number.isInteger(n) || n < 0) return "Debe ser un entero ≥ 0.";
 
   return null;
 }
@@ -234,6 +248,8 @@ export default function AdminGatesPage() {
                           </span>
                           <span className="font-mono text-[11px] text-muted tabular-nums">
                             {formatCreated(g.created_at)}
+                            {g.credit_cost > 0 &&
+                              ` · ${g.credit_cost} créd./✅`}
                           </span>
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1 text-[10px] uppercase tracking-wide text-muted">
@@ -577,10 +593,12 @@ function CreateGateForm({
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [displayValue, setDisplayValue] = useState("");
+  const [creditCost, setCreditCost] = useState("0");
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [displayError, setDisplayError] = useState<string | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -590,12 +608,14 @@ function CreateGateForm({
         value,
         name,
         display_value: displayValue,
+        credit_cost: Number(creditCost),
         category_id: categoryId,
       }),
     onSuccess: () => {
       setName("");
       setValue("");
       setDisplayValue("");
+      setCreditCost("0");
       onCreated();
     },
     onError: (err) => {
@@ -603,6 +623,7 @@ function CreateGateForm({
       // the value field, everything else to the banner.
       if (err instanceof ApiError) {
         if (err.code === "gate_exists") setFieldError(err.message);
+        else if (err.code === "invalid_gate") setCreditError(err.message);
         else if (err.code === "category_not_found")
           setCategoryError(err.message);
         else setBanner(err.message);
@@ -620,18 +641,28 @@ function CreateGateForm({
     setNameError(null);
     setFieldError(null);
     setDisplayError(null);
+    setCreditError(null);
     setCategoryError(null);
     setBanner(null);
     const invalidName = validateGateName(name);
     const invalidValue = validateGateValue(value);
     const invalidDisplay = validateDisplayValue(displayValue);
+    const invalidCredit = validateCreditCost(creditCost);
     const invalidCategory = categoryId === null ? "Elegí una categoría." : null;
 
     if (invalidName) setNameError(invalidName);
     if (invalidValue) setFieldError(invalidValue);
     if (invalidDisplay) setDisplayError(invalidDisplay);
+    if (invalidCredit) setCreditError(invalidCredit);
     if (invalidCategory) setCategoryError(invalidCategory);
-    if (invalidName || invalidValue || invalidDisplay || invalidCategory) return;
+    if (
+      invalidName ||
+      invalidValue ||
+      invalidDisplay ||
+      invalidCredit ||
+      invalidCategory
+    )
+      return;
     mutation.mutate();
   }
 
@@ -683,6 +714,19 @@ function CreateGateForm({
             }}
           />
 
+          <Field
+            required
+            error={creditError}
+            label="Costo en créditos (0 = gratis)"
+            name="credit_cost"
+            placeholder="0"
+            value={creditCost}
+            onChange={(v) => {
+              setCreditCost(v);
+              if (creditError) setCreditError(null);
+            }}
+          />
+
           <CategorySelect
             categories={categories}
             errorMessage={categoryError}
@@ -722,6 +766,7 @@ function EditGateAction({
   const [name, setName] = useState(gate.name);
   const [value, setValue] = useState(gate.value);
   const [displayValue, setDisplayValue] = useState(gate.display_value);
+  const [creditCost, setCreditCost] = useState(String(gate.credit_cost));
   const [categoryId, setCategoryId] = useState<number | null>(gate.category_id);
   const [error, setError] = useState<string | null>(null);
 
@@ -731,6 +776,7 @@ function EditGateAction({
         value,
         name,
         display_value: displayValue,
+        credit_cost: Number(creditCost),
         category_id: categoryId,
       }),
     onSuccess: () => {
@@ -761,6 +807,7 @@ function EditGateAction({
       validateGateName(name) ??
       validateGateValue(value) ??
       validateDisplayValue(displayValue) ??
+      validateCreditCost(creditCost) ??
       (categoryId === null ? "Elegí una categoría." : null);
 
     if (invalid) {
@@ -781,6 +828,7 @@ function EditGateAction({
           setName(gate.name);
           setValue(gate.value);
           setDisplayValue(gate.display_value);
+          setCreditCost(String(gate.credit_cost));
           setCategoryId(gate.category_id);
           setError(null);
           setOpen(true);
@@ -830,6 +878,16 @@ function EditGateAction({
             value={displayValue}
             onChange={(v) => {
               setDisplayValue(v);
+              if (error) setError(null);
+            }}
+          />
+
+          <Field
+            label="Costo en créditos (0 = gratis)"
+            name="credit_cost"
+            value={creditCost}
+            onChange={(v) => {
+              setCreditCost(v);
               if (error) setError(null);
             }}
           />

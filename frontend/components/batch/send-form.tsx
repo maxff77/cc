@@ -26,6 +26,8 @@ export interface GateOut {
   id: number;
   name: string;
   display_value: string;
+  // Credits charged per captured ✅ (credits feature). 0 ⇒ free gate.
+  credit_cost: number;
   category_id: number;
   category_name: string;
   created_at: string;
@@ -133,6 +135,23 @@ export function SendForm({
     return (match ?? gates[0])?.id ?? null;
   }, [isLive, gates, live.gateDisplayValue]);
 
+  // The gate this submit applies to (credits feature): the live batch's gate
+  // when appending, the picked gate otherwise. Its credit_cost drives the
+  // balance display + pre-submit guard. The balance is the WS store's live
+  // value (snapshot + credits.updated keep it current — owner recharge reflects
+  // live, AC).
+  const effectiveGate = useMemo(() => {
+    if (isLive)
+      return (
+        gates.find((g) => g.display_value === live.gateDisplayValue) ?? null
+      );
+
+    return gatesInCategory.find((g) => String(g.id) === gateKey) ?? null;
+  }, [isLive, gates, live.gateDisplayValue, gatesInCategory, gateKey]);
+  const gateCost = effectiveGate?.credit_cost ?? 0;
+  // A costed gate with no balance blocks the send (backend authoritative).
+  const blockedByCredits = gateCost > 0 && live.creditBalance <= 0;
+
   const mutation = useMutation({
     mutationFn: (payload: { text: string; gate_id: number }) =>
       api.post<BatchOut>("/api/batches", payload),
@@ -214,6 +233,17 @@ export function SendForm({
 
       return;
     }
+
+    // Credit guard (credits feature): block a costed gate with no balance before
+    // the request (the backend's insufficient_credits stays authoritative). Free
+    // gates (cost 0) never block.
+    if (blockedByCredits) {
+      setSelectError(
+        `Sin créditos para el gate “${effectiveGate?.name ?? ""}”. Recarga para continuar.`,
+      );
+
+      return;
+    }
     mutation.mutate({ text, gate_id: gateId });
   }
 
@@ -289,6 +319,21 @@ export function SendForm({
             />
           </div>
         )}
+        {/* Credits strip (credits feature): the tenant's live balance + the
+            selected gate's per-✅ cost. Turns into a warning when a costed gate
+            has no balance (the send is blocked). */}
+        <div className="flex items-center justify-between text-[11px]">
+          <span
+            className={live.creditBalance <= 0 ? "text-danger" : "text-muted"}
+          >
+            Créditos: <span className="tabular-nums">{live.creditBalance}</span>
+          </span>
+          {gateCost > 0 && (
+            <span className={blockedByCredits ? "text-danger" : "text-muted"}>
+              {gateCost} créd./✅
+            </span>
+          )}
+        </div>
         <Area
           error={textError}
           label="Líneas"
@@ -304,7 +349,9 @@ export function SendForm({
             moment); appending while 'stopping' is rejected server-side. */}
         <Btn
           full
-          disabled={mutation.isPending || live.state === "stopping"}
+          disabled={
+            mutation.isPending || live.state === "stopping" || blockedByCredits
+          }
           icon="send"
           type="submit"
           variant="primary"

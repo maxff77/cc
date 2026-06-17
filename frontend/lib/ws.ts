@@ -120,6 +120,11 @@ export interface LiveBatchState {
   // FIFO admission position (Story 4.2) — non-null only while `state` is
   // "waiting"; the server assigns it (snapshot + every batch.state).
   queuePosition: number | null;
+  // The tenant's credit balance (credits feature). TENANT-scoped (like the
+  // session fields): it survives the idle reset and seedFromBatch — only the
+  // snapshot or a `credits.updated` event moves it. The cockpit shows it and
+  // blocks costed gates client-side when it's 0.
+  creditBalance: number;
 }
 
 // --- Hand-typed WS payload shapes (mirror backend services/batches.py) ------
@@ -177,6 +182,14 @@ interface SnapshotData {
     detail: string | null;
     paused_at: string | null;
   };
+  // Credits feature: the tenant's balance, carried in every snapshot.
+  credit_balance: number;
+}
+
+// `credits.updated` (credits feature): the tenant's balance changed — a capture
+// charge debited it, or an owner recharge set it. The reducer ASSIGNS it.
+interface CreditsUpdatedData {
+  balance: number;
 }
 
 interface ProgressData {
@@ -302,6 +315,7 @@ const IDLE: LiveBatchState = {
   floodUntil: null,
   watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
   queuePosition: null,
+  creditBalance: 0,
 };
 
 let store: LiveBatchState = IDLE;
@@ -389,7 +403,17 @@ function reduce(event: string, data: unknown) {
         // Admission position (4.2): a tab connecting mid-wait renders its
         // place from the snapshot alone.
         queuePosition: d.queue_position ?? null,
+        // Credits balance (credits feature): authoritative on reconnect.
+        creditBalance: d.credit_balance,
       });
+      break;
+    }
+    case "credits.updated": {
+      const d = data as CreditsUpdatedData;
+
+      // Assigned, never summed — the server is authoritative (a charge or an
+      // owner recharge). Never touches batch/session/state.
+      setStore({ ...store, creditBalance: d.balance });
       break;
     }
     case "batch.progress": {
@@ -467,6 +491,8 @@ function reduce(event: string, data: unknown) {
           // System state, not batch state (4.1): a draining batch never
           // clears the global-pause banner.
           watchdog: store.watchdog,
+          // Tenant-scoped (credits feature): a draining batch never resets it.
+          creditBalance: store.creditBalance,
         });
       } else {
         // A live batch bound to ANOTHER session ⇒ gate change replaced the
@@ -873,5 +899,7 @@ export function seedFromBatch(batch: {
     // System state (4.1) — a new batch never clears the global-pause banner
     // (and the backend rejects the POST while latched anyway).
     watchdog: store.watchdog,
+    // Tenant-scoped (credits feature) — never seeded away.
+    creditBalance: store.creditBalance,
   });
 }

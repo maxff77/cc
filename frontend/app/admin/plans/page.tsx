@@ -30,6 +30,8 @@ interface PlanOut {
   duration_days: number;
   antispam_seconds: number | string;
   max_lines_per_batch: number;
+  // Credits granted on assign/renew (credits feature). 0 ⇒ time-only plan.
+  credits: number;
   is_active: boolean;
   created_at: string;
 }
@@ -101,6 +103,7 @@ interface PlanDraft {
   duration_days: string;
   antispam_seconds: string;
   max_lines_per_batch: string;
+  credits: string;
   is_active: boolean;
 }
 
@@ -110,6 +113,7 @@ const EMPTY_DRAFT: PlanDraft = {
   duration_days: "",
   antispam_seconds: "",
   max_lines_per_batch: "",
+  credits: "0",
   is_active: true,
 };
 
@@ -130,6 +134,8 @@ function validateDraft(
     errors.antispam_seconds = "Indica los segundos (≥ 1).";
   if (!validateIntAtLeast(draft.max_lines_per_batch, 1))
     errors.max_lines_per_batch = "Indica el máximo de líneas (≥ 1).";
+  if (!validateIntAtLeast(draft.credits, 0))
+    errors.credits = "Indica los créditos (entero ≥ 0).";
 
   return errors;
 }
@@ -142,6 +148,7 @@ function draftToPayload(draft: PlanDraft) {
     duration_days: Number(draft.duration_days),
     antispam_seconds: Number(draft.antispam_seconds),
     max_lines_per_batch: Number(draft.max_lines_per_batch),
+    credits: Number(draft.credits),
     is_active: draft.is_active,
   };
 }
@@ -207,7 +214,7 @@ export default function AdminPlansPage() {
                       <span className="font-mono text-[11px] text-muted tabular-nums">
                         {formatPrice(plan.price_usd)} · {plan.duration_days} d ·
                         antispam {formatSeconds(plan.antispam_seconds)} · máx{" "}
-                        {plan.max_lines_per_batch} líneas
+                        {plan.max_lines_per_batch} líneas · {plan.credits} créd.
                       </span>
                       <span className="font-mono text-[11px] text-[var(--faint)] tabular-nums">
                         {formatCreated(plan.created_at)}
@@ -297,6 +304,17 @@ function PlanFields({
           onChange={(v) => onChange("max_lines_per_batch", v)}
         />
       </div>
+
+      <Field
+        required
+        error={errors.credits}
+        label="Créditos incluidos (0 = ninguno)"
+        name="credits"
+        placeholder="0"
+        type="number"
+        value={draft.credits}
+        onChange={(v) => onChange("credits", v)}
+      />
 
       <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
         <input
@@ -438,6 +456,7 @@ function EditPlanAction({
       duration_days: String(plan.duration_days),
       antispam_seconds: String(Number(plan.antispam_seconds)),
       max_lines_per_batch: String(plan.max_lines_per_batch),
+      credits: String(plan.credits),
       is_active: plan.is_active,
     });
     setErrors({});

@@ -31,6 +31,7 @@ from app.api.sessions import (
     session_to_out,
 )
 from app.core import send_worker
+from app.core.broadcaster import broadcaster
 from app.core.redact import redact_reply_text
 from app.core.scheduler import scheduler
 from app.db.base import get_session
@@ -41,6 +42,7 @@ from app.db.repos import gate_categories as gate_categories_repo
 from app.db.repos import gates as gates_repo
 from app.db.repos import plans as plans_repo
 from app.db.repos import responses as responses_repo
+from app.db.repos import tenants as tenants_repo
 from app.db.repos import users as users_repo
 from app.errors import (
     category_exists,
@@ -51,6 +53,8 @@ from app.errors import (
     gate_not_found,
     invalid_admission_cap,
     invalid_contact,
+    invalid_credits,
+    invalid_gate,
     invalid_plan,
     invalid_plan_days,
     invalid_renewal,
@@ -182,13 +186,17 @@ class UserOut(BaseModel):
     expires_at: datetime | None
     is_blocked: bool
     contact: str | None
+    # The tenant's credit balance (credits feature) — shown in the admin users
+    # table and updated by recharge / plan renewal. Lives on the tenant, so it
+    # is passed in rather than read off the ``User`` row.
+    credit_balance: int = 0
 
 
 class UserListResponse(BaseModel):
     items: list[UserOut]
 
 
-def _to_out(user: User) -> UserOut:
+def _to_out(user: User, *, credit_balance: int = 0) -> UserOut:
     return UserOut(
         id=user.id,
         email=user.email,
@@ -197,6 +205,7 @@ def _to_out(user: User) -> UserOut:
         expires_at=user.expires_at,
         is_blocked=user.is_blocked,
         contact=user.contact,
+        credit_balance=credit_balance,
     )
 
 
@@ -211,7 +220,16 @@ async def list_users(
     """
     roles = ["client", "admin"] if actor.role == "owner" else ["client"]
     users = await users_repo.list_by_roles(session, roles)
-    return UserListResponse(items=[_to_out(u) for u in users])
+    # Credit balances in one query (credits feature) — the table shows each
+    # client's balance; a missing tenant defaults to 0.
+    balances = await tenants_repo.get_credit_balances(
+        session, [u.tenant_id for u in users]
+    )
+    return UserListResponse(
+        items=[
+            _to_out(u, credit_balance=balances.get(u.tenant_id, 0)) for u in users
+        ]
+    )
 
 
 @router.post("/users", response_model=UserOut, status_code=201)
@@ -264,7 +282,8 @@ async def create_user(
         contact=_normalize_contact(body.contact) if body.role == "client" else None,
     )
     await session.commit()
-    return _to_out(user)
+    balance = await tenants_repo.get_credit_balance(session, user.tenant_id)
+    return _to_out(user, credit_balance=balance)
 
 
 @router.delete("/users/{user_id}", status_code=204)
@@ -359,6 +378,14 @@ async def renew_plan(
         new_expiry = plans_service.compute_renewed_expiry_from_duration(
             target.expires_at, plan.duration_days
         )
+        # Credit top-up on renewal (credits feature): a catalog-plan renewal
+        # ADDS the plan's credits to the tenant's balance (the package is
+        # granted again). The legacy add-days / set-date renewal modes below
+        # never touch credits.
+        if plan.credits:
+            await tenants_repo.add_credits(
+                session, target.tenant_id, plan.credits
+            )
     elif body.plan_days is not None:
         _validate_plan_days(body.plan_days)
         new_expiry = plans_service.compute_renewed_expiry(
@@ -382,7 +409,8 @@ async def renew_plan(
 
     user = await plans_service.renew_plan(session, target, new_expiry)
     await session.commit()
-    return _to_out(user)
+    balance = await tenants_repo.get_credit_balance(session, user.tenant_id)
+    return _to_out(user, credit_balance=balance)
 
 
 async def _set_blocked(
@@ -392,7 +420,8 @@ async def _set_blocked(
     target = await _require_client_target(session, user_id)
     user = await plans_service.set_blocked(session, target, blocked=blocked)
     await session.commit()
-    return _to_out(user)
+    balance = await tenants_repo.get_credit_balance(session, user.tenant_id)
+    return _to_out(user, credit_balance=balance)
 
 
 @router.post("/users/{user_id}/block", response_model=UserOut)
@@ -433,7 +462,53 @@ async def set_contact(
         session, target, _normalize_contact(body.contact)
     )
     await session.commit()
-    return _to_out(user)
+    balance = await tenants_repo.get_credit_balance(session, user.tenant_id)
+    return _to_out(user, credit_balance=balance)
+
+
+# --- Credit recharge (credits feature) ------------------------------------
+#
+# Owner-only: set a client's credit balance directly. Independent of the plan
+# (which TOPS UP on renewal) — the owner can add/correct credits any time. An
+# absolute set (the UI pre-fills the current balance), not a delta. Emits the
+# same ``credits.updated`` WS event the capture charge does, so a connected
+# cockpit reflects the new balance live.
+
+
+class RechargeCreditsRequest(BaseModel):
+    # The new absolute balance. Bounds-checked in the route (>=0, int4 ceiling)
+    # so a fat-finger value surfaces invalid_credits, not a raw 422/500.
+    credit_balance: int
+
+
+@router.post("/users/{user_id}/credits", response_model=UserOut)
+async def recharge_credits(
+    user_id: int,
+    body: RechargeCreditsRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Set a client's credit balance (credits feature) — owner-only recharge.
+
+    Absolute set (the plan-grant path tops up on renewal instead). Target must
+    be a client; out-of-range value → 400 invalid_credits.
+    """
+    if not 0 <= body.credit_balance <= _PG_INT_MAX:
+        raise invalid_credits()
+    target = await _require_client_target(session, user_id)
+    new_balance = await tenants_repo.set_credit_balance(
+        session, target.tenant_id, body.credit_balance
+    )
+    await session.commit()
+    # Live cockpit update: the client may be connected — push the new balance
+    # (the reducer assigns it). ``new_balance`` is None only if the tenant row
+    # vanished mid-request (the client target lock makes that practically
+    # impossible); fall back to the requested value.
+    resolved = new_balance if new_balance is not None else body.credit_balance
+    await broadcaster.emit(
+        target.tenant_id, "credits.updated", {"balance": resolved}
+    )
+    return _to_out(target, credit_balance=resolved)
 
 
 # --- Password reset (Story 1.6) -------------------------------------------
@@ -537,6 +612,10 @@ class CreateGateRequest(BaseModel):
     name: str
     display_value: str
     category_id: int
+    # Credits charged per captured ✅ for this gate (credits feature). 0 ⇒ free.
+    # Bounds-checked in the route (invalid_gate), not here, to surface the
+    # {code, message} contract instead of a pydantic 422.
+    credit_cost: int = 0
 
     @field_validator("value")
     @classmethod
@@ -559,6 +638,7 @@ class UpdateGateRequest(BaseModel):
     name: str
     display_value: str
     category_id: int
+    credit_cost: int = 0
 
     @field_validator("value")
     @classmethod
@@ -576,6 +656,15 @@ class UpdateGateRequest(BaseModel):
         return _validate_gate_display_value(v)
 
 
+def _validate_gate_credit_cost(credit_cost: int) -> None:
+    """Gate credit-cost bounds (credits feature): 0 (free) .. int4 ceiling.
+
+    Surfaced as invalid_gate (400) — same route-level idiom as
+    ``_validate_plan_fields``."""
+    if not 0 <= credit_cost <= _PG_INT_MAX:
+        raise invalid_gate("El costo en créditos no puede ser negativo.")
+
+
 class GateOut(BaseModel):
     """Owner-facing gate shape — carries the real ``value`` (owner-only). The
     public catalog router uses ``PublicGateOut`` (no ``value``) instead."""
@@ -584,6 +673,7 @@ class GateOut(BaseModel):
     value: str
     name: str
     display_value: str
+    credit_cost: int
     category_id: int
     category_name: str
     created_at: datetime
@@ -605,6 +695,7 @@ def gate_to_out(gate: Gate) -> GateOut:
         value=gate.value,
         name=gate.name,
         display_value=gate.display_value,
+        credit_cost=gate.credit_cost,
         category_id=gate.category_id,
         category_name=gate.category.name,
         created_at=gate.created_at,
@@ -638,6 +729,7 @@ async def create_gate(
     session: AsyncSession = Depends(get_session),
 ) -> GateOut:
     """Add a gate to the catalog; duplicate ACTIVE value → 409 gate_exists."""
+    _validate_gate_credit_cost(body.credit_cost)
     category = await _require_category(session, body.category_id)
     if await gates_repo.get_active_by_value(session, body.value) is not None:
         raise gate_exists()
@@ -647,6 +739,7 @@ async def create_gate(
             value=body.value,
             name=body.name,
             display_value=body.display_value,
+            credit_cost=body.credit_cost,
             category_id=category.id,
         )
         await session.commit()
@@ -686,6 +779,7 @@ async def update_gate(
     session: AsyncSession = Depends(get_session),
 ) -> GateOut:
     """Edit a gate's value/name/category. History is untouched — batches snapshot the string."""
+    _validate_gate_credit_cost(body.credit_cost)
     gate = await _require_active_gate(session, gate_id)
     category = await _require_category(session, body.category_id)
     duplicate = await gates_repo.get_active_by_value(session, body.value)
@@ -694,6 +788,7 @@ async def update_gate(
     gate.value = body.value
     gate.name = body.name
     gate.display_value = body.display_value
+    gate.credit_cost = body.credit_cost
     gate.category_id = category.id
     try:
         await session.commit()
@@ -998,6 +1093,9 @@ class CreatePlanRequest(BaseModel):
     duration_days: int
     antispam_seconds: Decimal
     max_lines_per_batch: int
+    # Credits granted to the tenant on assign/renew (credits feature). 0 ⇒ a
+    # time-only plan. Bounds-checked in _validate_plan_fields.
+    credits: int = 0
     is_active: bool = True
 
     @field_validator("name")
@@ -1014,6 +1112,7 @@ class UpdatePlanRequest(BaseModel):
     duration_days: int | None = None
     antispam_seconds: Decimal | None = None
     max_lines_per_batch: int | None = None
+    credits: int | None = None
     is_active: bool | None = None
 
     @field_validator("name")
@@ -1029,6 +1128,7 @@ class PlanOut(BaseModel):
     duration_days: int
     antispam_seconds: Decimal
     max_lines_per_batch: int
+    credits: int
     is_active: bool
     created_at: datetime
 
@@ -1046,6 +1146,7 @@ def _plan_to_out(plan: Plan) -> PlanOut:
         duration_days=plan.duration_days,
         antispam_seconds=plan.antispam_seconds,
         max_lines_per_batch=plan.max_lines_per_batch,
+        credits=plan.credits,
         is_active=plan.is_active,
         created_at=plan.created_at,
     )
@@ -1057,14 +1158,15 @@ def _validate_plan_fields(
     duration_days: int,
     antispam_seconds: Decimal,
     max_lines_per_batch: int,
+    credits: int,
 ) -> None:
     """Field-bound policy (creation AND edit), surfaced as invalid_plan (400).
 
     Bounds: ``antispam_seconds >= 1``, ``duration_days >= 1``,
-    ``max_lines_per_batch >= 1``, ``price_usd >= 0`` — plus the column ceilings
-    so a fat-finger value can't overflow Numeric/int4. The message is
-    field-specific Spanish copy (the invalid_plan contract accepts an override).
-    """
+    ``max_lines_per_batch >= 1``, ``price_usd >= 0``, ``credits >= 0`` — plus
+    the column ceilings so a fat-finger value can't overflow Numeric/int4. The
+    message is field-specific Spanish copy (the invalid_plan contract accepts
+    an override)."""
     if not Decimal(1) <= antispam_seconds <= PLAN_ANTISPAM_MAX:
         raise invalid_plan("El antispam debe ser de al menos 1 segundo.")
     if not 1 <= duration_days <= PLAN_DURATION_MAX:
@@ -1073,6 +1175,8 @@ def _validate_plan_fields(
         raise invalid_plan("El máximo de líneas por lote debe ser al menos 1.")
     if not Decimal(0) <= price_usd <= PLAN_PRICE_MAX:
         raise invalid_plan("El precio no puede ser negativo.")
+    if not 0 <= credits <= _PG_INT_MAX:
+        raise invalid_plan("Los créditos del plan no pueden ser negativos.")
 
 
 @router.get("/plans", response_model=PlanListResponse)
@@ -1117,6 +1221,7 @@ async def create_plan(
         duration_days=body.duration_days,
         antispam_seconds=body.antispam_seconds,
         max_lines_per_batch=body.max_lines_per_batch,
+        credits=body.credits,
     )
     plan = await plans_service.create_plan(
         session,
@@ -1125,6 +1230,7 @@ async def create_plan(
         duration_days=body.duration_days,
         antispam_seconds=body.antispam_seconds,
         max_lines_per_batch=body.max_lines_per_batch,
+        credits=body.credits,
         is_active=body.is_active,
     )
     await session.commit()
@@ -1159,6 +1265,7 @@ async def update_plan(
         max_lines_per_batch=fields.get(
             "max_lines_per_batch", current.max_lines_per_batch
         ),
+        credits=fields.get("credits", current.credits),
     )
     if not fields:  # nothing to change — return the current row unchanged
         return _plan_to_out(current)

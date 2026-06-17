@@ -426,6 +426,8 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "eta_seconds": 0,
         # Story 4.2: admission position — None outside 'waiting'.
         "queue_position": None,
+        # Credits feature: the tenant's balance — 0 for a no-plan client.
+        "credit_balance": 0,
         "cc_new": 0,
         # Story 4.1: watchdog slice — unpaused by default (autouse reset).
         "watchdog": {

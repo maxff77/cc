@@ -60,16 +60,20 @@ async def create(
     name: str,
     display_value: str,
     category_id: int,
+    credit_cost: int = 0,
 ) -> Gate:
     """Insert and flush a fresh active gate.
 
     ``value`` is the real command (verbatim), ``name`` the friendly label,
     ``display_value`` the owner-authored "Comando visible" clients see.
+    ``credit_cost`` is the credits charged per captured ✅ (credits feature;
+    0 ⇒ free).
     """
     gate = Gate(
         value=value,
         name=name,
         display_value=display_value,
+        credit_cost=credit_cost,
         category_id=category_id,
     )
     session.add(gate)

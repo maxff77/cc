@@ -63,6 +63,11 @@ async def create_account(
                 raise invalid_plan()
             resolved_plan_id = plan.id
             expires_at = datetime.now(UTC) + timedelta(days=plan.duration_days)
+            # Credit grant (credits feature): a fresh tenant starts at 0, so
+            # assigning a plan grants its ``credits`` package. Set on the freshly
+            # created tenant; the caller's commit persists it in the same
+            # transaction. Legacy plan_days path grants none.
+            tenant.credit_balance = plan.credits
         else:
             # Legacy path: plan_days is validated as a positive int by the
             # router for clients.

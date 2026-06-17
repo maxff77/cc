@@ -46,6 +46,7 @@ from app.core.cc_extract import extract_cc
 from app.core.redact import redact_reply_text
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
+from app.db.models import Batch
 from app.db.repos import responses as responses_repo
 from app.services import batches as batches_service
 
@@ -327,6 +328,25 @@ async def process_incoming(reply: IncomingReply) -> None:
             await session.commit()
             return
 
+        # Credits charge (credits feature): the FIRST time this message reaches
+        # ✅, debit the batch's snapshotted gate_credit_cost from the tenant.
+        # Read from the BATCH snapshot (an owner re-pricing the gate never
+        # re-charges an old batch); skipped when the batch row is gone (SET NULL
+        # after cleanup) or the gate is free. MUST run BEFORE add_full so the
+        # first-✅ existence check doesn't see the row we're about to insert —
+        # same transaction, so the debit commits atomically with the revision.
+        charged_balance: int | None = None
+        if status == responses_repo.STATUS_OK and attributed.batch_id is not None:
+            batch_row = await session.get(Batch, attributed.batch_id)
+            if batch_row is not None and batch_row.gate_credit_cost > 0:
+                charged_balance = await responses_repo.charge_if_first_ok(
+                    session,
+                    tenant_id=attributed.tenant_id,
+                    chat_id=reply.chat_id,
+                    message_id=reply.message_id,
+                    cost=batch_row.gate_credit_cost,
+                )
+
         await responses_repo.add_full(
             session,
             tenant_id=attributed.tenant_id,
@@ -366,6 +386,16 @@ async def process_incoming(reply: IncomingReply) -> None:
         capture_session_id = attributed.capture_session_id
         batch_id = attributed.batch_id
         await session.commit()
+
+    # Credits balance update (credits feature): emitted ONLY on a real debit
+    # (charged_balance is None for free gates and for an already-charged
+    # message). Fired before the response.captured guard below so it never gets
+    # skipped — a first-✅ is always a transition, but emitting here keeps the
+    # two events independent. The cockpit reduces it into its live balance.
+    if charged_balance is not None:
+        await broadcaster.emit(
+            tenant_id, "credits.updated", {"balance": charged_balance}
+        )
 
     # Emission parity with the legacy (exact): transition to ok / ok-edit
     # with new CC / transition to rejected. ok→ok with new text but no new CC

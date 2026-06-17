@@ -176,6 +176,17 @@ def gate_not_found() -> AppError:
 # --- Codes this story (2.2) defines --------------------------------------
 
 
+def invalid_gate(message: str | None = None) -> AppError:
+    # A gate field failed validation (credits feature: ``credit_cost`` negative
+    # or over the column ceiling). The caller may pass field-specific Spanish
+    # copy; the default covers the generic case.
+    return AppError(
+        status_code=400,
+        code="invalid_gate",
+        message=message or "Datos del gate inválidos.",
+    )
+
+
 def category_exists() -> AppError:
     return AppError(
         status_code=409,
@@ -397,6 +408,16 @@ def invalid_plan(message: str | None = None) -> AppError:
     )
 
 
+def invalid_credits() -> AppError:
+    # Owner recharge with a negative / out-of-range credit balance (credits
+    # feature). 400 — the request is malformed.
+    return AppError(
+        status_code=400,
+        code="invalid_credits",
+        message="Indica una cantidad de créditos válida (0 o más).",
+    )
+
+
 def plan_name_taken() -> AppError:
     return AppError(
         status_code=409,
@@ -420,6 +441,22 @@ def plan_in_use() -> AppError:
         message=(
             "No puedes eliminar un plan asignado a clientes. Desactívalo en su "
             "lugar."
+        ),
+    )
+
+
+def insufficient_credits(*, gate_name: str) -> AppError:
+    # The client tried to start or append a batch on a costed gate
+    # (``credit_cost > 0``, credits feature) with a credit balance of 0.
+    # Free gates (cost 0) are never blocked; the day-plan is untouched. 403 (an
+    # authorization-shaped block on THIS gate), not 400 — the request is
+    # well-formed, the account just lacks credits for this gate.
+    return AppError(
+        status_code=403,
+        code="insufficient_credits",
+        message=(
+            f"No tienes créditos para usar el gate «{gate_name}». "
+            "Recarga créditos para continuar."
         ),
     )
 

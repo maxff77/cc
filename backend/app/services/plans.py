@@ -149,6 +149,7 @@ async def create_plan(
     duration_days: int,
     antispam_seconds: Decimal,
     max_lines_per_batch: int,
+    credits: int = 0,
     is_active: bool = True,
 ) -> Plan:
     """Create a plan; rejects a duplicate name with ``plan_name_taken``.
@@ -168,6 +169,7 @@ async def create_plan(
             duration_days=duration_days,
             antispam_seconds=antispam_seconds,
             max_lines_per_batch=max_lines_per_batch,
+            credits=credits,
             is_active=is_active,
         )
     except IntegrityError as exc:

@@ -31,6 +31,10 @@ class PublicGateOut(BaseModel):
     id: int
     name: str
     display_value: str
+    # Credits charged per captured ✅ (credits feature). Client-safe to show:
+    # the cockpit displays the cost and blocks a costed gate at balance 0. 0 ⇒
+    # free gate.
+    credit_cost: int
     category_id: int
     category_name: str
     created_at: datetime
@@ -48,6 +52,7 @@ def gate_to_public_out(gate: Gate) -> PublicGateOut:
         id=gate.id,
         name=gate.name,
         display_value=gate.display_value,
+        credit_cost=gate.credit_cost,
         category_id=gate.category_id,
         category_name=gate.category.name,
         created_at=gate.created_at,
