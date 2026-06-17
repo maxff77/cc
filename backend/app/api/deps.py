@@ -23,11 +23,17 @@ from app.services import auth as auth_service
 from app.services import plans as plans_service
 
 
-async def _resolve_session_user(request: Request, session: AsyncSession) -> User:
+async def _resolve_session_user(
+    request: Request, session: AsyncSession, *, enforce_expiry: bool = True
+) -> User:
     """Resolve the authenticated user from the session cookie.
 
     Raises ``not_authenticated`` (401) when the cookie is absent or the session
     is unknown / revoked / expired.
+
+    ``enforce_expiry=False`` skips ONLY the plan-expiry 403 (the blocked
+    hard-revoke still runs): the gift-key claim path needs it so a lapsed /
+    just-registered client can redeem to regain access.
     """
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
@@ -56,7 +62,7 @@ async def _resolve_session_user(request: Request, session: AsyncSession) -> User
     # still DO nothing — every gated endpoint 403s — and it dies naturally at
     # SESSION_TTL. Contrast the is_blocked branch above, which DOES hard-revoke
     # (a deliberate, irreversible lockout).
-    if plans_service.is_plan_expired(user):
+    if enforce_expiry and plans_service.is_plan_expired(user):
         raise plan_expired()
     return user
 
@@ -90,6 +96,23 @@ async def get_current_user_allow_pending_password(
     the change-password endpoint").
     """
     return await _resolve_session_user(request, session)
+
+
+async def get_current_user_allow_expired(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """``_resolve_session_user`` WITHOUT the expiry gate (nor the flag gate).
+
+    Used EXCLUSIVELY by the gift-key claim endpoint: a just-registered or lapsed
+    client (``plan_expired``, or still ``must_change_password``) must be able to
+    redeem a key to (re)gain access — claiming is the recovery path. The blocked
+    hard-revoke still applies (a blocked session is 401'd) and ``tenant_id``
+    still comes only from the session; the route additionally guards
+    ``role == 'client'``. Mirror of ``get_current_user_allow_pending_password``,
+    one more deliberate hole.
+    """
+    return await _resolve_session_user(request, session, enforce_expiry=False)
 
 
 async def _revoke_own_session(token: str) -> None:

@@ -1130,6 +1130,9 @@ class PlanOut(BaseModel):
     max_lines_per_batch: int
     credits: int
     is_active: bool
+    # The gift-key default ("basic") tier — at most one plan true (gift-keys
+    # feature). The UI shows which plan keys grant; set via /plans/{id}/default.
+    is_default: bool
     created_at: datetime
 
 
@@ -1148,6 +1151,7 @@ def _plan_to_out(plan: Plan) -> PlanOut:
         max_lines_per_batch=plan.max_lines_per_batch,
         credits=plan.credits,
         is_active=plan.is_active,
+        is_default=plan.is_default,
         created_at=plan.created_at,
     )
 
@@ -1286,6 +1290,22 @@ async def delete_plan(
         raise plan_not_found()
     await plans_service.delete_plan(session, plan_id)
     await session.commit()
+
+
+@router.post("/plans/{plan_id}/default", response_model=PlanOut)
+async def set_plan_default(
+    plan_id: int,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    """Flag a plan as the DEFAULT ("basic") tier gift keys grant to a plan-less
+    claimer (gift-keys feature). At most one default — flagging one clears the
+    prior. Owner-only: admins mint keys but never choose the tier."""
+    if not 0 < plan_id <= _PG_INT_MAX:
+        raise plan_not_found()
+    plan = await plans_service.set_default_plan(session, plan_id)
+    await session.commit()
+    return _plan_to_out(plan)
 
 
 # --- Cross-tenant support view (Story 3.6) ----------------------------------

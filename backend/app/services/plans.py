@@ -236,3 +236,19 @@ async def delete_plan(session: AsyncSession, plan_id: int) -> None:
         await plans_repo.delete(session, plan)
     except IntegrityError as exc:
         raise plan_in_use() from exc
+
+
+async def set_default_plan(session: AsyncSession, plan_id: int) -> Plan:
+    """Flag ``plan_id`` as the default ("basic") plan for gift keys.
+
+    Clears the prior default FIRST so the partial unique index
+    ``uq_plans_one_default`` never sees two trues (the documented flip pattern).
+    Locks the target row; unknown id → ``plan_not_found``. Caller commits.
+    """
+    plan = await plans_repo.get_by_id(session, plan_id, for_update=True)
+    if plan is None:
+        raise plan_not_found()
+    await plans_repo.clear_default(session)
+    plan.is_default = True
+    await session.flush()
+    return plan

@@ -641,7 +641,19 @@ class Plan(Base):
     """
 
     __tablename__ = "plans"
-    __table_args__ = (UniqueConstraint("name", name="uq_plans_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_plans_name"),
+        # At most ONE plan is the gift-key default ("basic" tier), DB-enforced
+        # (gift-keys feature). Flagging a new default clears the prior one FIRST
+        # (services/plans.set_default_plan) to dodge this index — the documented
+        # "flip carefully to dodge the partial index" pattern.
+        Index(
+            "uq_plans_one_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
@@ -659,9 +671,67 @@ class Plan(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=text("true"), nullable=False
     )
+    # The owner-designated DEFAULT ("basic") plan that gift keys grant to a
+    # plan-less claimer (gift-keys feature). At most one plan is the default
+    # (partial unique index above). false on every plan until the owner flags
+    # one from /admin/plans — admins NEVER choose a key's tier (anti-abuse).
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GiftKey(Base):
+    """A single-use redeemable gift key (gift-keys feature).
+
+    An admin/owner MINTS a key carrying only ``days`` + a SNAPSHOT of the
+    owner-designated default ("basic") plan (``plan_id``); a client CLAIMS it to
+    add days — never credits. The table IS the audit log: ``created_by_user_id``
+    / ``claimed_by_user_id`` + the timestamps record who minted and who claimed,
+    so the owner can spot admin abuse. GLOBAL, no tenant scoping (the gate/plan-
+    catalog convention) — identity comes from the session at the route.
+
+    ``status`` is a plain String ('active' | 'claimed' | 'revoked'), no DB enum
+    (2.2 decision). Single-use is enforced at claim under ``SELECT … FOR UPDATE``
+    on the row: only an 'active' key transitions to 'claimed'.
+
+    ``plan_id`` is RESTRICT (like ``users.plan_id``): a referenced plan can't be
+    deleted, and the snapshot means a later default change never re-prices an
+    outstanding key. The user FKs are SET NULL (mirror ``audit_log.actor``): the
+    trail survives the removal of the minting/claiming user.
+    """
+
+    __tablename__ = "gift_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    days: Mapped[int] = mapped_column()
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("plans.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(10), server_default=text("'active'"), nullable=False
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    claimed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    revoked_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

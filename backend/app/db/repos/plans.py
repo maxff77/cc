@@ -14,6 +14,7 @@ serialize instead of losing a write.
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Plan, User
@@ -106,3 +107,21 @@ async def count_users_with_plan(session: AsyncSession, plan_id: int) -> int:
     """Return how many users currently reference ``plan_id`` (the in-use guard)."""
     stmt = select(func.count()).select_from(User).where(User.plan_id == plan_id)
     return (await session.execute(stmt)).scalar_one()
+
+
+async def get_default(session: AsyncSession) -> Plan | None:
+    """The owner-designated default ("basic") plan, or ``None`` (gift-keys
+    feature). At most one row has ``is_default=true`` — DB-enforced by the
+    partial unique index ``uq_plans_one_default``."""
+    stmt = select(Plan).where(Plan.is_default.is_(True))
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def clear_default(session: AsyncSession) -> None:
+    """Unset ``is_default`` on whatever plan currently holds it.
+
+    Run BEFORE flagging a new default so the partial unique index never sees two
+    trues (the "flip carefully to dodge the partial index" pattern)."""
+    await session.execute(
+        sql_update(Plan).where(Plan.is_default.is_(True)).values(is_default=False)
+    )

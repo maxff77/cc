@@ -474,3 +474,49 @@ def batch_line_limit(*, cap: int, attempted: int) -> AppError:
             f"{attempted}. Reduce la cantidad."
         ),
     )
+
+
+# --- Codes the gift-keys feature defines ---------------------------------
+
+
+def invalid_key_days() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_key_days",
+        message="Indica los días de la key (mínimo 1).",
+    )
+
+
+def no_default_plan() -> AppError:
+    return AppError(
+        status_code=409,
+        code="no_default_plan",
+        message=(
+            "Configura un plan predeterminado antes de generar keys "
+            "(márcalo en /admin/plans)."
+        ),
+    )
+
+
+def key_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="key_not_found",
+        message="Esa key no existe.",
+    )
+
+
+def key_already_claimed() -> AppError:
+    return AppError(
+        status_code=409,
+        code="key_already_claimed",
+        message="Esa key ya fue canjeada.",
+    )
+
+
+def key_revoked() -> AppError:
+    return AppError(
+        status_code=409,
+        code="key_revoked",
+        message="Esa key fue revocada.",
+    )
