@@ -62,8 +62,14 @@ def filtrada_txt(rows: list[Response]) -> str:
 
 
 def export_filename(capture_session: CaptureSession, view: str) -> str:
-    """``{slug}-{session_id}-{view}.txt`` (e.g. gate ``.zo``, session 42,
-    filtrada ⇒ ``zo-42-filtrada.txt``). The session id disambiguates —
-    friendly names repeat and may carry any char."""
-    slug = _SLUG_UNSAFE.sub("_", capture_session.gate_value.lstrip(".")).strip("_")
+    """``{slug}-{session_id}-{view}.txt`` (e.g. display ``Comando 01``, session
+    42, filtrada ⇒ ``Comando_01-42-filtrada.txt``). The session id disambiguates
+    — friendly names repeat and may carry any char.
+
+    Slugged from the client-visible ``gate_display_value`` (NOT the real
+    ``gate_value``): the download filename is a client surface and must not leak
+    the real command. ``lstrip(".")`` is kept (harmless on display strings)."""
+    slug = _SLUG_UNSAFE.sub(
+        "_", capture_session.gate_display_value.lstrip(".")
+    ).strip("_")
     return f"{slug or 'gate'}-{capture_session.id}-{view}.txt"

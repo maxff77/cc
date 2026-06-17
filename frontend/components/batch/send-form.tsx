@@ -19,11 +19,13 @@ import { Area } from "@/components/ui/area";
 import { Btn } from "@/components/ui/btn";
 import { Notice } from "@/components/ui/notice";
 
-// Mirrors backend GateOut (snake_case end-to-end, users/gates-page idiom).
+// Mirrors backend PublicGateOut (snake_case end-to-end). The real command
+// `value` is owner-only and NOT exposed here — clients see `display_value`
+// ("Comando visible") instead.
 export interface GateOut {
   id: number;
-  value: string;
   name: string;
+  display_value: string;
   category_id: number;
   category_name: string;
   created_at: string;
@@ -32,7 +34,7 @@ export interface GateOut {
 interface BatchOut {
   id: number;
   gate_name: string;
-  gate_value: string;
+  gate_display_value: string;
   state: string;
   sent: number;
   queued: number;
@@ -126,10 +128,10 @@ export function SendForm({
   // regardless — submit the live gate's id (any valid id works as fallback).
   const liveGateId = useMemo(() => {
     if (!isLive) return null;
-    const match = gates.find((g) => g.value === live.gateValue);
+    const match = gates.find((g) => g.display_value === live.gateDisplayValue);
 
     return (match ?? gates[0])?.id ?? null;
-  }, [isLive, gates, live.gateValue]);
+  }, [isLive, gates, live.gateDisplayValue]);
 
   const mutation = useMutation({
     mutationFn: (payload: { text: string; gate_id: number }) =>
@@ -224,7 +226,7 @@ export function SendForm({
       gatesInCategory.map((g) => ({
         id: String(g.id),
         label: g.name,
-        mono: g.value,
+        mono: g.display_value,
       })),
     [gatesInCategory],
   );
@@ -240,11 +242,11 @@ export function SendForm({
       {banner && <Notice status="danger">{banner}</Notice>}
       <form className="flex flex-col gap-3.5" onSubmit={onSubmit}>
         {isLive ? (
-          // Active-gate chip (UX-DR9): name · value.
+          // Active-gate chip (UX-DR9): name · comando visible.
           <div className="flex flex-wrap items-center gap-2">
             <LabelCaps>Gate activo</LabelCaps>
             <MonoChip>
-              {live.gateName} · {live.gateValue}
+              {live.gateName} · {live.gateDisplayValue}
             </MonoChip>
             {selectError && (
               <Notice className="w-full" status="danger">

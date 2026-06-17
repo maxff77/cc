@@ -54,7 +54,10 @@ _NAME_MAX = 200
 class SessionOut(BaseModel):
     id: int
     name: str | None
-    gate_value: str
+    # Client-visible "Comando visible" snapshot. The real ``gate_value`` is
+    # owner-only and deliberately NOT exposed here (this shape also feeds the
+    # admin support view).
+    gate_display_value: str
     gate_name: str
     # The "En curso"/"Cerrada" badge derives from THIS (recorded 3.1
     # decision), not from "bound to a live batch".
@@ -119,7 +122,7 @@ def session_to_out(capture_session: CaptureSession) -> SessionOut:
     return SessionOut(
         id=capture_session.id,
         name=capture_session.name,
-        gate_value=capture_session.gate_value,
+        gate_display_value=capture_session.gate_display_value,
         gate_name=capture_session.gate_name,
         is_active=capture_session.is_active,
         created_at=capture_session.created_at,
@@ -361,7 +364,11 @@ async def new_session(
         raise batch_live()
     try:
         fresh = await capture_sessions_repo.create_active(
-            session, user.tenant_id, active.gate_value, active.gate_name
+            session,
+            user.tenant_id,
+            active.gate_value,
+            active.gate_name,
+            active.gate_display_value,
         )
         await session.commit()
     except IntegrityError:

@@ -476,6 +476,7 @@ async def reset_password(
 
 GATE_VALUE_MAX = 20
 GATE_NAME_MAX = 80
+GATE_DISPLAY_VALUE_MAX = 80
 _PG_INT_MAX = 2**31 - 1  # gates.id is int4; larger ids overflow the bind
 
 
@@ -516,9 +517,25 @@ def _validate_gate_name(name: str) -> str:
     return name
 
 
+def _validate_gate_display_value(display_value: str) -> str:
+    """Policy for the gate's "Comando visible": trimmed, non-empty, ≤80 chars. Spaces ARE
+    allowed (owner-authored display string); only control/invisible chars are
+    rejected. Same idiom as ``_validate_gate_name`` — NOT the real command, so
+    no leading-dot or apply_gate space-collapse concerns apply."""
+    display_value = display_value.strip()
+    if not display_value:
+        raise ValueError("comando visible vacío")
+    if any(not ch.isprintable() for ch in display_value):
+        raise ValueError("el comando visible no puede contener caracteres invisibles")
+    if len(display_value) > GATE_DISPLAY_VALUE_MAX:
+        raise ValueError("comando visible demasiado largo")
+    return display_value
+
+
 class CreateGateRequest(BaseModel):
     value: str
     name: str
+    display_value: str
     category_id: int
 
     @field_validator("value")
@@ -530,11 +547,17 @@ class CreateGateRequest(BaseModel):
     @classmethod
     def _valid_name(cls, v: str) -> str:
         return _validate_gate_name(v)
+
+    @field_validator("display_value")
+    @classmethod
+    def _valid_display_value(cls, v: str) -> str:
+        return _validate_gate_display_value(v)
 
 
 class UpdateGateRequest(BaseModel):
     value: str
     name: str
+    display_value: str
     category_id: int
 
     @field_validator("value")
@@ -547,11 +570,20 @@ class UpdateGateRequest(BaseModel):
     def _valid_name(cls, v: str) -> str:
         return _validate_gate_name(v)
 
+    @field_validator("display_value")
+    @classmethod
+    def _valid_display_value(cls, v: str) -> str:
+        return _validate_gate_display_value(v)
+
 
 class GateOut(BaseModel):
+    """Owner-facing gate shape — carries the real ``value`` (owner-only). The
+    public catalog router uses ``PublicGateOut`` (no ``value``) instead."""
+
     id: int
     value: str
     name: str
+    display_value: str
     category_id: int
     category_name: str
     created_at: datetime
@@ -572,6 +604,7 @@ def gate_to_out(gate: Gate) -> GateOut:
         id=gate.id,
         value=gate.value,
         name=gate.name,
+        display_value=gate.display_value,
         category_id=gate.category_id,
         category_name=gate.category.name,
         created_at=gate.created_at,
@@ -610,7 +643,11 @@ async def create_gate(
         raise gate_exists()
     try:
         gate = await gates_repo.create(
-            session, value=body.value, name=body.name, category_id=category.id
+            session,
+            value=body.value,
+            name=body.name,
+            display_value=body.display_value,
+            category_id=category.id,
         )
         await session.commit()
     except IntegrityError as exc:
@@ -656,6 +693,7 @@ async def update_gate(
         raise gate_exists()
     gate.value = body.value
     gate.name = body.name
+    gate.display_value = body.display_value
     gate.category_id = category.id
     try:
         await session.commit()

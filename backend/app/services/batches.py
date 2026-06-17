@@ -107,7 +107,9 @@ def state_data(
         "batch_id": batch.id,
         "state": state,
         "gate_name": batch.gate_name,
-        "gate_value": batch.gate_value,
+        # Client-visible "Comando visible" snapshot — clients render this; the
+        # real gate_value (owner-only) is never sent over the client WS.
+        "gate_display_value": batch.gate_display_value,
         "session_id": batch.capture_session_id,
         "queue_position": queue_position,
     }
@@ -182,7 +184,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
             # collides with the live batch's top-level ``gate_name``/value.
             "session_name": None,
             "session_gate_name": None,
-            "session_gate_value": None,
+            "session_gate_display_value": None,
             "cc_new": 0,
             "responses_total": 0,
             "responses_ok_total": 0,
@@ -198,7 +200,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         # client-side, mirroring Historial's `fallbackName`).
         "session_name": active.name,
         "session_gate_name": active.gate_name,
-        "session_gate_value": active.gate_value,
+        "session_gate_display_value": active.gate_display_value,
         "cc_new": await responses_repo.cc_count(session, active.id),
         "responses_total": await responses_repo.full_count(session, active.id),
         # "Filtrada con response" badge: only the ✅ revisions (full text).
@@ -247,7 +249,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
             "state": "idle",
             "batch_id": None,
             "gate_name": None,
-            "gate_value": None,
+            "gate_display_value": None,
             "sent": 0,
             "queued": 0,
             "failed": 0,
@@ -280,7 +282,7 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         "state": batch.state,
         "batch_id": batch.id,
         "gate_name": batch.gate_name,
-        "gate_value": batch.gate_value,
+        "gate_display_value": batch.gate_display_value,
         "sent": sent,
         "queued": queued,
         "failed": failed,

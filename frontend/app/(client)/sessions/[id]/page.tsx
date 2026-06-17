@@ -44,7 +44,7 @@ interface SessionCcRow {
 interface SessionDetailOut {
   id: number;
   name: string | null;
-  gate_value: string;
+  gate_display_value: string;
   gate_name: string;
   is_active: boolean;
   created_at: string;
@@ -59,7 +59,7 @@ interface SessionDetailOut {
 interface SessionOut {
   id: number;
   name: string | null;
-  gate_value: string;
+  gate_display_value: string;
   gate_name: string;
   is_active: boolean;
   created_at: string;
@@ -259,7 +259,7 @@ export default function SessionDetailPage() {
           </>
         }
         back={{ href: "/sessions", label: "Historial" }}
-        mono={`${data.gate_name} · ${data.gate_value} · ${fallbackName(data.created_at)}`}
+        mono={`${data.gate_name} · ${data.gate_display_value} · ${fallbackName(data.created_at)}`}
         title={data.name ?? fallbackName(data.created_at)}
       />
 

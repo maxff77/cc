@@ -86,9 +86,10 @@ class CreateBatchRequest(BaseModel):
 
 class BatchOut(BaseModel):
     # Shape consumed by the UI to flip into live mode without waiting for WS.
+    # Client-facing: carries the visible "Comando visible", NEVER the real value.
     id: int
     gate_name: str
-    gate_value: str
+    gate_display_value: str
     state: str
     sent: int
     queued: int
@@ -139,7 +140,10 @@ async def create_or_append_batch(
     gate = await gates_repo.get_by_id(session, body.gate_id)
     if gate is None or gate.deleted_at is not None:
         raise gate_not_found()
+    # gate_value is the REAL command (engine prepends + sends it);
+    # gate_display_value is the client-visible "Comando visible" snapshot.
     gate_value, gate_name = gate.value, gate.name
+    gate_display_value = gate.display_value
 
     # FOR UPDATE: serialize the append against the worker's
     # complete_if_drained (which locks the same row) — without it, an append
@@ -177,6 +181,7 @@ async def create_or_append_batch(
                 tenant_id=tenant_id,
                 gate_value=gate_value,
                 gate_name=gate_name,
+                gate_display_value=gate_display_value,
                 priority=priority,
                 state=state,
             )
@@ -191,7 +196,7 @@ async def create_or_append_batch(
             # away, and old replies attribute via send_log → line → batch,
             # never via the active session.
             capture_session = await capture_sessions_repo.resolve_for_batch(
-                session, tenant_id, gate_value, gate_name
+                session, tenant_id, gate_value, gate_name, gate_display_value
             )
             batch.capture_session_id = capture_session.id
             # Computed inside the transaction (post-flush id) so the POST
@@ -239,7 +244,7 @@ async def create_or_append_batch(
             return BatchOut(
                 id=batch.id,
                 gate_name=batch.gate_name,
-                gate_value=batch.gate_value,
+                gate_display_value=batch.gate_display_value,
                 state=batch.state,
                 sent=0,
                 queued=len(lines),
@@ -302,7 +307,7 @@ async def create_or_append_batch(
     return BatchOut(
         id=live.id,
         gate_name=live.gate_name,
-        gate_value=live.gate_value,
+        gate_display_value=live.gate_display_value,
         state=live.state,
         sent=progress["sent"],
         queued=progress["queued"],

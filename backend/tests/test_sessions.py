@@ -128,6 +128,7 @@ async def _create_other_gate(ctx: dict[str, object], gate: dict) -> dict:
         json={
             "value": f".h{uuid.uuid4().hex[:6]}",
             "name": "Otro Historial",
+            "display_value": "Otro Visible",
             "category_id": gate["category_id"],
         },
     )
@@ -164,13 +165,14 @@ async def test_list_sessions_newest_first_with_active_flag_and_snapshots(
     assert (newest["id"], oldest["id"]) == (second_session, first_session)
     assert (newest["is_active"], oldest["is_active"]) == (True, False)
     assert (newest["name"], oldest["name"]) == (None, None)
-    # Gate strings are session SNAPSHOTS, verbatim from binding time.
-    assert (newest["gate_value"], newest["gate_name"]) == (
-        other["value"],
+    # Gate strings are session SNAPSHOTS, verbatim from binding time. Clients
+    # see the display value (Comando visible), never the real value.
+    assert (newest["gate_display_value"], newest["gate_name"]) == (
+        other["display_value"],
         other["name"],
     )
-    assert (oldest["gate_value"], oldest["gate_name"]) == (
-        gate["value"],
+    assert (oldest["gate_display_value"], oldest["gate_name"]) == (
+        gate["display_value"],
         gate["name"],
     )
     assert newest["created_at"] and oldest["created_at"]
@@ -198,7 +200,7 @@ async def test_detail_carries_full_and_cc_rows_exact_shape(
     body = res.json()
     assert body["id"] == session_id
     assert body["name"] is None
-    assert body["gate_value"] == gate["value"]
+    assert body["gate_display_value"] == gate["display_value"]
     assert body["gate_name"] == gate["name"]
     assert body["is_active"] is True
     assert (body["responses_total"], body["cc_total"]) == (1, 1)
@@ -372,7 +374,10 @@ async def test_continue_reactivates_by_replacement_and_emits_session_active(
     body = res.json()
     assert body["id"] == session_a
     assert body["is_active"] is True
-    assert (body["gate_value"], body["gate_name"]) == (gate["value"], gate["name"])
+    assert (body["gate_display_value"], body["gate_name"]) == (
+        gate["display_value"],
+        gate["name"],
+    )
 
     # Activation by replacement — exactly ONE active session.
     listed = await http.get("/api/sessions")
@@ -393,7 +398,7 @@ async def test_continue_reactivates_by_replacement_and_emits_session_active(
             # gate snapshot is gate A's, restored by the continue).
             "session_name": None,
             "session_gate_name": gate["name"],
-            "session_gate_value": gate["value"],
+            "session_gate_display_value": gate["display_value"],
             "cc_new": 1,
             "responses_total": 1,
             "responses_ok_total": 1,
@@ -576,7 +581,10 @@ async def test_new_session_forks_active_gate_and_emits_empty_active(
     assert session_new != session_old
     assert body["is_active"] is True
     # Forks the active session's gate (no gate picker).
-    assert (body["gate_value"], body["gate_name"]) == (gate["value"], gate["name"])
+    assert (body["gate_display_value"], body["gate_name"]) == (
+        gate["display_value"],
+        gate["name"],
+    )
     assert body["name"] is None
 
     # Activation by replacement — exactly ONE active, the old one is Cerrada
@@ -593,7 +601,7 @@ async def test_new_session_forks_active_gate_and_emits_empty_active(
             "session_id": session_new,
             "session_name": None,
             "session_gate_name": gate["name"],
-            "session_gate_value": gate["value"],
+            "session_gate_display_value": gate["display_value"],
             "cc_new": 0,
             "responses_total": 0,
             "responses_ok_total": 0,
@@ -684,7 +692,7 @@ async def test_new_session_rejected_while_a_batch_is_live(
     assert stop.status_code == 204, stop.text
     res = await http.post("/api/sessions/new")
     assert res.status_code == 200, res.text
-    assert res.json()["gate_value"] == gate["value"]
+    assert res.json()["gate_display_value"] == gate["display_value"]
 
 
 # --- Export (Story 3.5) ---------------------------------------------------------
@@ -720,7 +728,7 @@ async def test_export_filtrada_is_one_datum_per_line_with_final_newline(
 
     res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
     assert res.status_code == 200, res.text
-    _assert_txt_headers(res, gate["value"], session_id, "filtrada")
+    _assert_txt_headers(res, gate["display_value"], session_id, "filtrada")
     assert res.text == "4111\n4222\n"
 
 
@@ -749,7 +757,7 @@ async def test_export_completa_carries_every_revision_as_timestamped_blocks(
 
     res = await http.get(f"/api/sessions/{session_id}/export?view=completa")
     assert res.status_code == 200, res.text
-    _assert_txt_headers(res, gate["value"], session_id, "completa")
+    _assert_txt_headers(res, gate["display_value"], session_id, "completa")
     full_rows = [r for r in await _response_rows(session_id) if r.kind == "full"]
     assert [r.text for r in full_rows] == [
         "✅ Aprobada CC: 4111 Status a",
@@ -789,7 +797,7 @@ async def test_filtrada_con_response_counts_and_exports_only_ok(
         f"/api/sessions/{session_id}/export?view=filtrada_completa"
     )
     assert res.status_code == 200, res.text
-    _assert_txt_headers(res, gate["value"], session_id, "filtrada_completa")
+    _assert_txt_headers(res, gate["display_value"], session_id, "filtrada_completa")
     ok_row = next(
         r
         for r in await _response_rows(session_id)
@@ -841,7 +849,7 @@ async def test_export_works_during_live_batch_and_on_closed_session(
     # Live (sending, not drained) ⇒ 200, no guard.
     res = await http.get(f"/api/sessions/{session_id}/export?view=filtrada")
     assert res.status_code == 200, res.text
-    _assert_txt_headers(res, gate["value"], session_id, "filtrada")
+    _assert_txt_headers(res, gate["display_value"], session_id, "filtrada")
 
     await _drain()  # message_id 1 — the batch completes
     await _capture_ok(3801, 1, "✅ Aprobada CC: 4111 Status a")
@@ -876,7 +884,7 @@ async def test_export_of_session_without_rows_is_an_empty_file(
     for view in ("completa", "filtrada"):
         res = await http.get(f"/api/sessions/{session_id}/export?view={view}")
         assert res.status_code == 200, res.text
-        _assert_txt_headers(res, gate["value"], session_id, view)
+        _assert_txt_headers(res, gate["display_value"], session_id, view)
         assert res.text == ""
 
 

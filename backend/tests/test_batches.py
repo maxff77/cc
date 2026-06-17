@@ -151,7 +151,7 @@ async def test_new_batch_applies_gate_dedups_and_orders(
     assert body["appended"] is False
     assert body["added"] == 3
     assert body["state"] == "sending"
-    assert body["gate_value"] == value
+    assert body["gate_display_value"] == gate["display_value"]
     assert body["gate_name"] == gate["name"]
     assert (body["sent"], body["queued"], body["total"]) == (0, 3, 3)
 
@@ -251,6 +251,7 @@ async def test_append_to_live_batch(
         json={
             "value": f".o{uuid.uuid4().hex[:6]}",
             "name": "Otro",
+            "display_value": "Otro Visible",
             "category_id": gate["category_id"],
         },
     )
@@ -414,7 +415,7 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         "state": "idle",
         "batch_id": None,
         "gate_name": None,
-        "gate_value": None,
+        "gate_display_value": None,
         "sent": 0,
         "queued": 0,
         "failed": 0,
@@ -438,7 +439,7 @@ async def test_snapshot_idle_shape(client_user: tuple[AsyncClient, User]) -> Non
         # Cockpit active-session identity — null with no active session.
         "session_name": None,
         "session_gate_name": None,
-        "session_gate_value": None,
+        "session_gate_display_value": None,
         "responses_total": 0,
         # "Filtrada con response": total of ✅ revisions.
         "responses_ok_total": 0,
@@ -463,7 +464,7 @@ async def test_snapshot_live_shape_and_eta_math(
     assert snap["state"] == "sending"
     assert snap["batch_id"] == res.json()["id"]
     assert snap["gate_name"] == gate["name"]
-    assert snap["gate_value"] == gate["value"]
+    assert snap["gate_display_value"] == gate["display_value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 3, 3)
     assert (snap["failed"], snap["failed_lines"]) == (0, [])  # Story 2.5 slots
     # Pendientes: the snapshot rebuilds the still-queued lines in position

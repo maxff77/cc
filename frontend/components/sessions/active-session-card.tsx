@@ -141,8 +141,8 @@ export function ActiveSessionCard() {
         {!editing && live.sessionGateName !== null && (
           <div className="flex items-center gap-2 text-xs text-muted">
             <span className="truncate">{live.sessionGateName}</span>
-            {live.sessionGateValue !== null && (
-              <MonoChip>{live.sessionGateValue}</MonoChip>
+            {live.sessionDisplayValue !== null && (
+              <MonoChip>{live.sessionDisplayValue}</MonoChip>
             )}
           </div>
         )}

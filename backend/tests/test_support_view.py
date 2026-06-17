@@ -129,7 +129,7 @@ async def test_owner_lists_client_sessions_with_email_and_exact_shape(
     assert item == {
         "id": session_id,
         "name": None,
-        "gate_value": gate["value"],
+        "gate_display_value": gate["display_value"],
         "gate_name": gate["name"],
         "is_active": True,
     }
@@ -160,7 +160,7 @@ async def test_admin_reads_session_detail_with_exact_rows(
     body = res.json()
     assert body["id"] == session_id
     assert body["name"] is None
-    assert body["gate_value"] == gate["value"]
+    assert body["gate_display_value"] == gate["display_value"]
     assert body["gate_name"] == gate["name"]
     assert body["is_active"] is True
     assert (body["responses_total"], body["cc_total"]) == (1, 1)

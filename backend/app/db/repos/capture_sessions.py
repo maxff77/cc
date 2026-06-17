@@ -96,13 +96,18 @@ async def delete(
 
 
 async def create_active(
-    session: AsyncSession, tenant_id: int, gate_value: str, gate_name: str
+    session: AsyncSession,
+    tenant_id: int,
+    gate_value: str,
+    gate_name: str,
+    gate_display_value: str,
 ) -> CaptureSession:
     """Deactivate the previous active session and insert the new active one.
 
     Activation by replacement — legacy: "sessions are replaced by
     reassignment", never closed. The UPDATE runs first so the partial unique
-    index (the belt) never trips on the honest path.
+    index (the belt) never trips on the honest path. ``gate_display_value`` is
+    the client-visible "Comando visible" snapshot.
     """
     await session.execute(
         update(CaptureSession)
@@ -113,6 +118,7 @@ async def create_active(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
+        gate_display_value=gate_display_value,
         is_active=True,
     )
     session.add(capture_session)
@@ -151,22 +157,33 @@ async def activate(
 
 
 async def resolve_for_batch(
-    session: AsyncSession, tenant_id: int, gate_value: str, gate_name: str
+    session: AsyncSession,
+    tenant_id: int,
+    gate_value: str,
+    gate_name: str,
+    gate_display_value: str,
 ) -> CaptureSession:
     """The AC 3 legacy semantics: reuse the active session when its gate
     matches, otherwise auto-create a fresh active one.
 
     Exact port of "/api/enviar reuses the active Sesion when its slug matches
-    the submitted prefix, otherwise auto-creates one".
+    the submitted prefix, otherwise auto-creates one". Reuse still keys on the
+    REAL ``gate_value`` (the gate's identity), not the display string.
     """
     active = await get_active(session, tenant_id)
     if active is not None and active.gate_value == gate_value:
         return active
-    return await create_active(session, tenant_id, gate_value, gate_name)
+    return await create_active(
+        session, tenant_id, gate_value, gate_name, gate_display_value
+    )
 
 
 async def resolve_for_backfill(
-    session: AsyncSession, tenant_id: int, gate_value: str, gate_name: str
+    session: AsyncSession,
+    tenant_id: int,
+    gate_value: str,
+    gate_name: str,
+    gate_display_value: str,
 ) -> CaptureSession:
     """Late-reply backfill (attribution path): like ``resolve_for_batch`` but
     it NEVER changes which session is active (review 3-1).
@@ -187,6 +204,7 @@ async def resolve_for_backfill(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
+        gate_display_value=gate_display_value,
         is_active=False,
     )
     session.add(capture_session)

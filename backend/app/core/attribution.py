@@ -89,7 +89,8 @@ async def resolve(
     capture_session_id = batch.capture_session_id
     if capture_session_id is None:
         capture_session = await capture_sessions_repo.resolve_for_backfill(
-            session, record.tenant_id, batch.gate_value, batch.gate_name
+            session, record.tenant_id, batch.gate_value, batch.gate_name,
+            batch.gate_display_value,
         )
         batch.capture_session_id = capture_session.id
         await session.flush()

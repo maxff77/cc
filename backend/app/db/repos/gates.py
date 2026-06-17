@@ -54,10 +54,24 @@ async def get_active_by_value(session: AsyncSession, value: str) -> Gate | None:
 
 
 async def create(
-    session: AsyncSession, *, value: str, name: str, category_id: int
+    session: AsyncSession,
+    *,
+    value: str,
+    name: str,
+    display_value: str,
+    category_id: int,
 ) -> Gate:
-    """Insert and flush a fresh active gate (value verbatim; name is the label)."""
-    gate = Gate(value=value, name=name, category_id=category_id)
+    """Insert and flush a fresh active gate.
+
+    ``value`` is the real command (verbatim), ``name`` the friendly label,
+    ``display_value`` the owner-authored "Comando visible" clients see.
+    """
+    gate = Gate(
+        value=value,
+        name=name,
+        display_value=display_value,
+        category_id=category_id,
+    )
     session.add(gate)
     await session.flush()
     return gate

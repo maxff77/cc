@@ -20,8 +20,11 @@ import { Select } from "@/components/ui/select";
 // end-to-end) — same explicit-interface idiom as the users page.
 interface GateOut {
   id: number;
+  // The REAL command — owner-only, shown ONLY on this admin catalog page.
   value: string;
   name: string;
+  // The client-visible "Comando visible" (what every client surface shows).
+  display_value: string;
   category_id: number;
   category_name: string;
   created_at: string;
@@ -47,6 +50,7 @@ const GATES_KEY = ["admin-gates"] as const;
 const CATEGORIES_KEY = ["admin-gate-categories"] as const;
 const GATE_VALUE_MAX = 20;
 const GATE_NAME_MAX = 80;
+const GATE_DISPLAY_VALUE_MAX = 80;
 const CATEGORY_NAME_MAX = 80;
 
 // Mirror of backend `_validate_category_name`: required, ≤80, spaces allowed.
@@ -93,6 +97,25 @@ function validateGateName(raw: string): string | null {
 
   if (!name) return "Ingresá un nombre.";
   if (name.length > GATE_NAME_MAX) return `Máximo ${GATE_NAME_MAX} caracteres.`;
+
+  return null;
+}
+
+// Mirror of `_validate_gate_display_value` ("Comando visible"): required, ≤80,
+// plain ASCII spaces allowed; tabs/NBSP/unicode-separators and invisible/
+// control chars rejected (same net effect as the backend `not isprintable()`).
+function validateDisplayValue(raw: string): string | null {
+  const display = raw.trim();
+
+  if (!display) return "Ingresá el comando visible.";
+  if (
+    /[^\S ]|[\u0000-\u001f\u007f-\u009f\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/.test(
+      display,
+    )
+  )
+    return "El comando visible no puede contener tabulaciones ni caracteres invisibles.";
+  if (display.length > GATE_DISPLAY_VALUE_MAX)
+    return `Máximo ${GATE_DISPLAY_VALUE_MAX} caracteres.`;
 
   return null;
 }
@@ -213,7 +236,16 @@ export default function AdminGatesPage() {
                             {formatCreated(g.created_at)}
                           </span>
                         </div>
-                        <MonoChip>{g.value}</MonoChip>
+                        <div className="flex shrink-0 flex-col items-end gap-1 text-[10px] uppercase tracking-wide text-muted">
+                          <span className="flex items-center gap-1.5">
+                            Visible
+                            <MonoChip>{g.display_value}</MonoChip>
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            Real
+                            <MonoChip>{g.value}</MonoChip>
+                          </span>
+                        </div>
                         <EditGateAction
                           categories={categoryItems}
                           gate={g}
@@ -544,9 +576,11 @@ function CreateGateForm({
 }) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [displayValue, setDisplayValue] = useState("");
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [displayError, setDisplayError] = useState<string | null>(null);
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -555,11 +589,13 @@ function CreateGateForm({
       api.post<GateOut>("/api/admin/gates", {
         value,
         name,
+        display_value: displayValue,
         category_id: categoryId,
       }),
     onSuccess: () => {
       setName("");
       setValue("");
+      setDisplayValue("");
       onCreated();
     },
     onError: (err) => {
@@ -583,16 +619,19 @@ function CreateGateForm({
     if (mutation.isPending) return;
     setNameError(null);
     setFieldError(null);
+    setDisplayError(null);
     setCategoryError(null);
     setBanner(null);
     const invalidName = validateGateName(name);
     const invalidValue = validateGateValue(value);
+    const invalidDisplay = validateDisplayValue(displayValue);
     const invalidCategory = categoryId === null ? "Elegí una categoría." : null;
 
     if (invalidName) setNameError(invalidName);
     if (invalidValue) setFieldError(invalidValue);
+    if (invalidDisplay) setDisplayError(invalidDisplay);
     if (invalidCategory) setCategoryError(invalidCategory);
-    if (invalidName || invalidValue || invalidCategory) return;
+    if (invalidName || invalidValue || invalidDisplay || invalidCategory) return;
     mutation.mutate();
   }
 
@@ -620,13 +659,27 @@ function CreateGateForm({
             mono
             required
             error={fieldError}
-            label="Gate"
+            label="Gate (comando real)"
             name="value"
             placeholder=".ej"
             value={value}
             onChange={(v) => {
               setValue(v);
               if (fieldError) setFieldError(null);
+            }}
+          />
+
+          <Field
+            mono
+            required
+            error={displayError}
+            label="Comando visible"
+            name="display_value"
+            placeholder="Lo que ve el cliente"
+            value={displayValue}
+            onChange={(v) => {
+              setDisplayValue(v);
+              if (displayError) setDisplayError(null);
             }}
           />
 
@@ -668,6 +721,7 @@ function EditGateAction({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(gate.name);
   const [value, setValue] = useState(gate.value);
+  const [displayValue, setDisplayValue] = useState(gate.display_value);
   const [categoryId, setCategoryId] = useState<number | null>(gate.category_id);
   const [error, setError] = useState<string | null>(null);
 
@@ -676,6 +730,7 @@ function EditGateAction({
       api.patch<GateOut>(`/api/admin/gates/${gate.id}`, {
         value,
         name,
+        display_value: displayValue,
         category_id: categoryId,
       }),
     onSuccess: () => {
@@ -705,6 +760,7 @@ function EditGateAction({
     const invalid =
       validateGateName(name) ??
       validateGateValue(value) ??
+      validateDisplayValue(displayValue) ??
       (categoryId === null ? "Elegí una categoría." : null);
 
     if (invalid) {
@@ -724,6 +780,7 @@ function EditGateAction({
         onClick={() => {
           setName(gate.name);
           setValue(gate.value);
+          setDisplayValue(gate.display_value);
           setCategoryId(gate.category_id);
           setError(null);
           setOpen(true);
@@ -757,11 +814,22 @@ function EditGateAction({
 
           <Field
             mono
-            label="Gate"
+            label="Gate (comando real)"
             name="value"
             value={value}
             onChange={(v) => {
               setValue(v);
+              if (error) setError(null);
+            }}
+          />
+
+          <Field
+            mono
+            label="Comando visible"
+            name="display_value"
+            value={displayValue}
+            onChange={(v) => {
+              setDisplayValue(v);
               if (error) setError(null);
             }}
           />

@@ -737,8 +737,8 @@ export interface components {
             id: number;
             /** Gate Name */
             gate_name: string;
-            /** Gate Value */
-            gate_value: string;
+            /** Gate Display Value */
+            gate_display_value: string;
             /** State */
             state: string;
             /** Sent */
@@ -803,6 +803,8 @@ export interface components {
             value: string;
             /** Name */
             name: string;
+            /** Display Value */
+            display_value: string;
             /** Category Id */
             category_id: number;
         };
@@ -839,6 +841,8 @@ export interface components {
             value: string;
             /** Name */
             name: string;
+            /** Display Value */
+            display_value: string;
             /** Category Id */
             category_id: number;
             /** Category Name */
@@ -998,8 +1002,8 @@ export interface components {
             id: number;
             /** Name */
             name: string | null;
-            /** Gate Value */
-            gate_value: string;
+            /** Gate Display Value */
+            gate_display_value: string;
             /** Gate Name */
             gate_name: string;
             /** Is Active */
@@ -1031,8 +1035,8 @@ export interface components {
             id: number;
             /** Name */
             name: string | null;
-            /** Gate Value */
-            gate_value: string;
+            /** Gate Display Value */
+            gate_display_value: string;
             /** Gate Name */
             gate_name: string;
             /** Is Active */
@@ -1070,6 +1074,8 @@ export interface components {
             value: string;
             /** Name */
             name: string;
+            /** Display Value */
+            display_value: string;
             /** Category Id */
             category_id: number;
         };

@@ -166,11 +166,19 @@ class Gate(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # The REAL command the engine prepends + sends. OWNER-ONLY: never exposed
+    # to clients (public /api/gates omits it; only /admin/gates shows it). The
+    # client-visible string is ``display_value`` instead.
     value: Mapped[str] = mapped_column(String(20))
     # Friendly label shown to clients. Required; not unique — two gates may
     # share a name, ``value`` is the identity. (Story 2.2 owner decision:
-    # clients see name + category + value.)
+    # clients see name + category + display_value.)
     name: Mapped[str] = mapped_column(String(80))
+    # Owner-authored "Comando visible": the string clients see EVERYWHERE the
+    # real ``value`` used to show (selector, session headers, history). Decoupled
+    # from ``value`` on purpose — clients must never see the real command.
+    # Required; not unique. Backfilled from ``value`` on existing rows.
+    display_value: Mapped[str] = mapped_column(String(80))
     # Every gate belongs to exactly one category (Story 2.2). RESTRICT: a
     # category cannot be dropped while gates (active OR retired) reference it.
     category_id: Mapped[int] = mapped_column(
@@ -262,6 +270,11 @@ class Batch(Base):
     )
     gate_value: Mapped[str] = mapped_column(String(20))
     gate_name: Mapped[str] = mapped_column(String(80))
+    # Snapshot of the gate's client-visible "Comando visible" at batch start —
+    # same denormalize-on-purpose idiom as gate_value/gate_name. Clients render
+    # THIS (never gate_value) in live + historical views, so an owner editing
+    # display_value later never rewrites an old batch's label.
+    gate_display_value: Mapped[str] = mapped_column(String(80))
     state: Mapped[str] = mapped_column(String(20))
     # Scheduler priority tier (Story 2.4, generalized): 0=client, 1=admin,
     # 2=owner — higher sends first. Derived from the creator's role at batch
@@ -410,6 +423,10 @@ class CaptureSession(Base):
     )
     gate_value: Mapped[str] = mapped_column(String(20))
     gate_name: Mapped[str] = mapped_column(String(80))
+    # Snapshot of the gate's client-visible "Comando visible" (same idiom as
+    # Batch.gate_display_value): the Historial / support views render THIS, not
+    # the real gate_value.
+    gate_display_value: Mapped[str] = mapped_column(String(80))
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False

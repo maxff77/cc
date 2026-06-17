@@ -135,6 +135,7 @@ async def create_batch(
     tenant_id: int,
     gate_value: str,
     gate_name: str,
+    gate_display_value: str,
     priority: int,
     state: str = STATE_SENDING,
 ) -> Batch:
@@ -142,12 +143,14 @@ async def create_batch(
 
     ``priority`` is the scheduler tier (0=client, 1=admin, 2=owner). ``state``
     defaults to 'sending'; the admission-controlled POST passes 'waiting' when
-    the cap is full (Story 4.2).
+    the cap is full (Story 4.2). ``gate_display_value`` is the client-visible
+    "Comando visible" snapshot (clients render it instead of ``gate_value``).
     """
     batch = Batch(
         tenant_id=tenant_id,
         gate_value=gate_value,
         gate_name=gate_name,
+        gate_display_value=gate_display_value,
         state=state,
         priority=priority,
     )

@@ -378,7 +378,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "batch_id": batch_id,
             "state": "sending",
             "gate_name": gate["name"],
-            "gate_value": gate["value"],
+            "gate_display_value": gate["display_value"],
             "session_id": session_id,
             # Story 4.2: admission position — None outside 'waiting'.
             "queue_position": None,
@@ -392,7 +392,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "batch_id": batch_id,
             "state": "paused",
             "gate_name": gate["name"],
-            "gate_value": gate["value"],
+            "gate_display_value": gate["display_value"],
             "session_id": session_id,
             "queue_position": None,
         }
@@ -406,7 +406,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "batch_id": batch_id,
             "state": "idle",
             "gate_name": gate["name"],
-            "gate_value": gate["value"],
+            "gate_display_value": gate["display_value"],
             "session_id": session_id,
             "queue_position": None,
         }
@@ -430,6 +430,7 @@ async def test_partial_unique_index_rejects_second_live_batch(
                 tenant_id=user.tenant_id,
                 gate_value=gate["value"],
                 gate_name=gate["name"],
+                gate_display_value=gate["display_value"],
                 priority=0,
             )
             await session.commit()
@@ -443,6 +444,7 @@ async def test_partial_unique_index_rejects_second_live_batch(
                 tenant_id=user.tenant_id,
                 gate_value=gate["value"],
                 gate_name=gate["name"],
+                gate_display_value=gate["display_value"],
                 priority=0,
             )
             await session.commit()
@@ -515,7 +517,7 @@ async def test_snapshot_passes_paused_and_stopping_through(
         snap = await batches_service.snapshot(session, user.tenant_id)
     assert snap["state"] == "paused"
     assert snap["batch_id"] == batch_id
-    assert snap["gate_value"] == gate["value"]
+    assert snap["gate_display_value"] == gate["display_value"]
     assert (snap["sent"], snap["queued"], snap["total"]) == (0, 2, 2)
     assert snap["cc_new"] == 0  # real since 3.1 — this test captures nothing
 

@@ -132,6 +132,7 @@ async def _create_other_gate(ctx: dict[str, object], gate: dict) -> dict:
         json={
             "value": f".o{uuid.uuid4().hex[:6]}",
             "name": "Otro Lote",
+            "display_value": "Otro Lote Visible",
             "category_id": gate["category_id"],
         },
     )

@@ -261,7 +261,12 @@ async def gate(ctx: dict[str, object]) -> AsyncIterator[dict]:
     value = f".b{uuid.uuid4().hex[:6]}"
     res = await owner_client.post(
         "/api/admin/gates",
-        json={"value": value, "name": "Visa Lote", "category_id": cat.json()["id"]},
+        json={
+            "value": value,
+            "name": "Visa Lote",
+            "display_value": "Comando Lote",
+            "category_id": cat.json()["id"],
+        },
     )
     assert res.status_code == 201, res.text
     yield res.json()

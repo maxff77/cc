@@ -36,7 +36,7 @@ import { StatePill } from "@/components/ui/state-pill";
 interface SessionOut {
   id: number;
   name: string | null;
-  gate_value: string;
+  gate_display_value: string;
   gate_name: string;
   is_active: boolean;
   created_at: string;
@@ -227,7 +227,7 @@ export default function AdminTenantSessionsPage() {
                       {s.name ?? fallbackName(s.created_at)}
                     </td>
                     <td className="px-3 py-2.5">
-                      <MonoChip>{s.gate_value}</MonoChip>
+                      <MonoChip>{s.gate_display_value}</MonoChip>
                     </td>
                     <td className="px-3 py-2.5">
                       <SessionBadge isActive={s.is_active} />
@@ -307,7 +307,7 @@ function SessionDetail({
             {data.name ?? fallbackName(data.created_at)}
           </h2>
           <p className="truncate font-mono text-[11px] text-muted">
-            {data.gate_value} · {data.id}
+            {data.gate_display_value} · {data.id}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">

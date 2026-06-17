@@ -32,7 +32,7 @@ import { StatePill } from "@/components/ui/state-pill";
 interface SessionOut {
   id: number;
   name: string | null;
-  gate_value: string;
+  gate_display_value: string;
   gate_name: string;
   is_active: boolean;
   created_at: string;
@@ -83,24 +83,24 @@ function fallbackName(iso: string): string {
 }
 
 interface GateGroup {
-  gateValue: string;
+  gateDisplayValue: string;
   gateName: string;
   sessions: SessionOut[];
 }
 
-// Group the flat newest-first list by gate_value, preserving first-appearance
-// order ⇒ groups sort by their most recent session.
+// Group the flat newest-first list by gate_display_value, preserving
+// first-appearance order ⇒ groups sort by their most recent session.
 function groupByGate(items: SessionOut[]): GateGroup[] {
   const groups: GateGroup[] = [];
   const indexByGate = new Map<string, number>();
 
   for (const session of items) {
-    const at = indexByGate.get(session.gate_value);
+    const at = indexByGate.get(session.gate_display_value);
 
     if (at === undefined) {
-      indexByGate.set(session.gate_value, groups.length);
+      indexByGate.set(session.gate_display_value, groups.length);
       groups.push({
-        gateValue: session.gate_value,
+        gateDisplayValue: session.gate_display_value,
         gateName: session.gate_name,
         sessions: [session],
       });
@@ -149,9 +149,9 @@ export default function SessionsPage() {
     // jerarquically above its rows (ui-polish-spec §3.7).
     content = groupByGate(sessions.data.items).map((group) => (
       <SectionCard
-        key={group.gateValue}
+        key={group.gateDisplayValue}
         legend={group.gateName}
-        legendRight={<MonoChip>{group.gateValue}</MonoChip>}
+        legendRight={<MonoChip>{group.gateDisplayValue}</MonoChip>}
         padding="none"
       >
         <ul className="flex flex-col">

@@ -71,7 +71,7 @@ export interface LiveBatchState {
   state: BatchSurfaceState;
   batchId: number | null;
   gateName: string | null;
-  gateValue: string | null;
+  gateDisplayValue: string | null;
   sent: number;
   queued: number;
   // Lines the retry cap gave up on (Story 2.5). They live with the LIVE
@@ -96,7 +96,7 @@ export interface LiveBatchState {
   // these survive the idle reset: capture stays armed between batches.
   sessionName: string | null;
   sessionGateName: string | null;
-  sessionGateValue: string | null;
+  sessionDisplayValue: string | null;
   responses: ResponseRow[];
   cc: CcRow[];
   // Real total of 'full' revisions — honest even when the snapshot list is
@@ -141,7 +141,7 @@ interface SnapshotData {
   state: BatchSurfaceState;
   batch_id: number | null;
   gate_name: string | null;
-  gate_value: string | null;
+  gate_display_value: string | null;
   sent: number;
   queued: number;
   failed: number;
@@ -161,7 +161,7 @@ interface SnapshotData {
   // top-level gate_name/value so the spread never collides server-side.
   session_name: string | null;
   session_gate_name: string | null;
-  session_gate_value: string | null;
+  session_gate_display_value: string | null;
   responses: SnapshotResponseRow[];
   cc: SnapshotCcRow[];
   responses_total: number;
@@ -207,7 +207,7 @@ interface BatchStateData {
   state: BatchSurfaceState;
   batch_id: number | null;
   gate_name: string | null;
-  gate_value: string | null;
+  gate_display_value: string | null;
   session_id: number | null;
   // Story 4.2: travels in EVERY batch.state — null outside "waiting".
   queue_position: number | null;
@@ -268,7 +268,7 @@ interface SessionActiveData {
   session_id: number | null;
   session_name: string | null;
   session_gate_name: string | null;
-  session_gate_value: string | null;
+  session_gate_display_value: string | null;
   cc_new: number;
   responses_total: number;
   responses_ok_total: number;
@@ -281,7 +281,7 @@ const IDLE: LiveBatchState = {
   state: "idle",
   batchId: null,
   gateName: null,
-  gateValue: null,
+  gateDisplayValue: null,
   sent: 0,
   queued: 0,
   failed: 0,
@@ -293,7 +293,7 @@ const IDLE: LiveBatchState = {
   sessionId: null,
   sessionName: null,
   sessionGateName: null,
-  sessionGateValue: null,
+  sessionDisplayValue: null,
   responses: [],
   cc: [],
   responsesTotal: 0,
@@ -338,7 +338,7 @@ function reduce(event: string, data: unknown) {
         state: d.state,
         batchId: d.batch_id,
         gateName: d.gate_name,
-        gateValue: d.gate_value,
+        gateDisplayValue: d.gate_display_value,
         sent: d.sent,
         queued: d.queued,
         // Snapshot REPLACES everything — a tab reconnecting mid-batch
@@ -356,7 +356,7 @@ function reduce(event: string, data: unknown) {
         sessionId: d.session_id,
         sessionName: d.session_name,
         sessionGateName: d.session_gate_name,
-        sessionGateValue: d.session_gate_value,
+        sessionDisplayValue: d.session_gate_display_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
           messageId: row.message_id,
@@ -455,7 +455,7 @@ function reduce(event: string, data: unknown) {
           sessionId: store.sessionId,
           sessionName: store.sessionName,
           sessionGateName: store.sessionGateName,
-          sessionGateValue: store.sessionGateValue,
+          sessionDisplayValue: store.sessionDisplayValue,
           responses: store.responses,
           cc: store.cc,
           ccNew: store.ccNew,
@@ -488,7 +488,7 @@ function reduce(event: string, data: unknown) {
           state: d.state,
           batchId: d.batch_id,
           gateName: d.gate_name,
-          gateValue: d.gate_value,
+          gateDisplayValue: d.gate_display_value,
           // Pendientes is batch-scoped: a different batch id ⇒ start clean
           // (the create's batch.lines_queued — fanned to every tenant tab —
           // refills it). batch.state carries no line texts itself.
@@ -499,7 +499,9 @@ function reduce(event: string, data: unknown) {
           sessionId: d.session_id ?? store.sessionId,
           sessionName: adopting ? null : store.sessionName,
           sessionGateName: adopting ? d.gate_name : store.sessionGateName,
-          sessionGateValue: adopting ? d.gate_value : store.sessionGateValue,
+          sessionDisplayValue: adopting
+            ? d.gate_display_value
+            : store.sessionDisplayValue,
           responses: sessionChanged ? [] : store.responses,
           cc: sessionChanged ? [] : store.cc,
           ccNew: sessionChanged ? 0 : store.ccNew,
@@ -615,7 +617,7 @@ function reduce(event: string, data: unknown) {
         sessionId: d.session_id,
         sessionName: d.session_name,
         sessionGateName: d.session_gate_name,
-        sessionGateValue: d.session_gate_value,
+        sessionDisplayValue: d.session_gate_display_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
           messageId: row.message_id,
@@ -790,7 +792,7 @@ export function clearSession(sessionId: number) {
     sessionId: null,
     sessionName: null,
     sessionGateName: null,
-    sessionGateValue: null,
+    sessionDisplayValue: null,
     responses: [],
     cc: [],
     ccNew: 0,
@@ -820,7 +822,7 @@ export function renameActiveSession(sessionId: number, name: string) {
 export function seedFromBatch(batch: {
   id: number;
   gate_name: string;
-  gate_value: string;
+  gate_display_value: string;
   state: string;
   sent: number;
   queued: number;
@@ -838,7 +840,7 @@ export function seedFromBatch(batch: {
     state: waiting ? "waiting" : "sending",
     batchId: batch.id,
     gateName: batch.gate_name,
-    gateValue: batch.gate_value,
+    gateDisplayValue: batch.gate_display_value,
     sent: batch.sent,
     queued: batch.queued,
     failed: batch.failed,
@@ -858,7 +860,7 @@ export function seedFromBatch(batch: {
     sessionId: store.sessionId,
     sessionName: store.sessionName,
     sessionGateName: store.sessionGateName,
-    sessionGateValue: store.sessionGateValue,
+    sessionDisplayValue: store.sessionDisplayValue,
     responses: store.responses,
     cc: store.cc,
     responsesTotal: store.responsesTotal,

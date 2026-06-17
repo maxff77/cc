@@ -87,7 +87,12 @@ async def _create_gate(
     value = value if value is not None else unique_gate_value()
     res = await owner_client.post(
         "/api/admin/gates",
-        json={"value": value, "name": f"Gate {value}", "category_id": category_id},
+        json={
+            "value": value,
+            "name": f"Gate {value}",
+            "display_value": f"Visible {value}",
+            "category_id": category_id,
+        },
     )
     assert res.status_code == 201, res.text
     return res.json()
@@ -214,7 +219,8 @@ async def test_gate_create_requires_valid_category(
 
     # Missing category_id entirely → 422 (required field).
     res = await owner_client.post(
-        "/api/admin/gates", json={"value": unique_gate_value(), "name": "X"}
+        "/api/admin/gates",
+        json={"value": unique_gate_value(), "name": "X", "display_value": "X"},
     )
     assert res.status_code == 422
 
@@ -225,6 +231,7 @@ async def test_gate_create_requires_valid_category(
             json={
                 "value": unique_gate_value(),
                 "name": "X",
+                "display_value": "X",
                 "category_id": bad_id,
             },
         )
@@ -275,8 +282,10 @@ async def test_client_gates_feed_carries_category_fields(
     assert len(match) == 1
     assert match[0]["category_id"] == category["id"]
     assert match[0]["category_name"] == category["name"]
-    # Owner decision 2026-06-11: the value IS client-visible (supersedes 2.1).
-    assert match[0]["value"] == gate["value"]
+    # display_value feature (2026-06-16): clients see the owner-authored
+    # "Comando visible", NEVER the real value (which is omitted from this feed).
+    assert "value" not in match[0]
+    assert match[0]["display_value"] == gate["display_value"]
     assert match[0]["name"] == gate["name"]
 
 
