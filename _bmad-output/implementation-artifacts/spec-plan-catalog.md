@@ -2,7 +2,7 @@
 title: 'Owner-managed pricing plan catalog (days + antispam + max lines)'
 type: 'feature'
 created: '2026-06-16'
-status: 'in-review'
+status: 'done'
 context: ['{project-root}/CLAUDE.md']
 ---
 
