@@ -5,6 +5,7 @@ server-side session cookie (see Dev Notes / architecture for exact flags).
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, field_validator
@@ -14,6 +15,7 @@ from app.api.deps import get_current_user, get_current_user_allow_pending_passwo
 from app.config import settings
 from app.db.base import get_session
 from app.db.models import User
+from app.db.repos import plans as plans_repo
 from app.errors import (
     account_blocked,
     forbidden,
@@ -36,6 +38,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PlanSummary(BaseModel):
+    # The client's pricing-plan summary surfaced to the cockpit (plan-catalog
+    # feature): the cockpit shows/enforces the line cap client-side from this;
+    # the backend stays authoritative. ``antispam_seconds`` is exact (Decimal,
+    # mirrors the Numeric column).
+    name: str
+    antispam_seconds: Decimal
+    max_lines_per_batch: int
+
+
 class MeResponse(BaseModel):
     id: int
     email: str
@@ -44,6 +56,10 @@ class MeResponse(BaseModel):
     # Plan deadline for the client header badge. Null for owner/admin (they
     # carry no plan); serialized to ISO 8601 for the frontend.
     expires_at: datetime | None = None
+    # The client's plan summary (plan-catalog feature) — null when the user has
+    # no plan_id (owner/admin, or a pre-catalog client). Default None so
+    # ``login`` (which does not resolve the plan) keeps its existing shape.
+    plan: PlanSummary | None = None
 
 
 class LoginResponse(MeResponse):
@@ -195,14 +211,34 @@ async def logout(
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user)) -> MeResponse:
-    """Return the authenticated user; 401 when unauthenticated."""
+async def me(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MeResponse:
+    """Return the authenticated user; 401 when unauthenticated.
+
+    For a client on a plan (plan-catalog feature) the response carries a plan
+    summary the cockpit uses to show/enforce the line cap client-side; the
+    backend remains authoritative. ``plan`` is null when ``plan_id`` is null
+    (owner/admin, or a pre-catalog client). The plan is fetched on the
+    request-scoped session that already loaded ``user`` — no lazy-load.
+    """
+    plan_summary: PlanSummary | None = None
+    if user.plan_id is not None:
+        plan = await plans_repo.get_by_id(session, user.plan_id)
+        if plan is not None:
+            plan_summary = PlanSummary(
+                name=plan.name,
+                antispam_seconds=plan.antispam_seconds,
+                max_lines_per_batch=plan.max_lines_per_batch,
+            )
     return MeResponse(
         id=user.id,
         email=user.email,
         role=user.role,
         tenant_id=user.tenant_id,
         expires_at=user.expires_at,
+        plan=plan_summary,
     )
 
 

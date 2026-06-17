@@ -23,6 +23,7 @@ const ITEMS = [
   { href: "/", label: "Envío", ownerOnly: false },
   { href: "/sessions", label: "Historial", ownerOnly: false },
   { href: "/admin/users", label: "Usuarios", ownerOnly: false },
+  { href: "/admin/plans", label: "Planes", ownerOnly: true },
   { href: "/admin/gates", label: "Gates", ownerOnly: true },
   { href: "/admin/destinos", label: "Destinos", ownerOnly: true },
 ] as const;

@@ -14,7 +14,7 @@ from typing import NamedTuple
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Batch, BatchLine
+from app.db.models import Batch, BatchLine, Plan, User
 
 # Lifecycle states (2.2 + 2.3 + 2.5 + 4.2) — plain strings, no DB enum (see
 # the model docstring). 'cancelled' (2.5, plan expiry) is terminal and NOT
@@ -258,34 +258,78 @@ class ActiveSender(NamedTuple):
 
     The partial unique index ``uq_batches_one_live_per_tenant`` guarantees
     at most one live batch per tenant, so tenant ≡ batch in the rotation.
+
+    ``antispam_seconds`` is the tenant's per-tenant scheduler COOLDOWN
+    (plan-catalog feature): the gap a tenant waits before being re-picked,
+    resolved as ``coalesce(client plan.antispam_seconds, 0.0)`` — a plan_id of
+    NULL means NO per-tenant cooldown (legacy behavior: the account-wide
+    ``g_min`` sleep is the SOLE pacer). It rides on the struct so
+    ``core.scheduler.pick_next`` stays DB-free: the cooldown only SLOWS a
+    tenant on top of the global floor; it never speeds the account up.
     """
 
     tenant_id: int
     batch_id: int
     priority: int  # scheduler tier: 0=client, 1=admin, 2=owner
+    # Per-tenant cooldown (plan or global fallback). Defaults to 0.0 ("no
+    # cooldown" — always eligible, the pre-plan-catalog behavior) so callers
+    # that don't resolve a plan (the scheduler's own unit tests) build the same
+    # struct they always did; ``active_senders`` always sets a real value.
+    antispam_seconds: float = 0.0
 
 
-async def active_senders(session: AsyncSession) -> list[ActiveSender]:
+async def active_senders(
+    session: AsyncSession, *, global_interval: float
+) -> list[ActiveSender]:
     """Tenants with a 'sending' batch that has ≥1 servable ('queued') line.
 
     Ordered by ``tenant_id`` so the scheduler's cyclic cursor is stable.
     Paused batches fall out on their own (``state='paused'`` doesn't match) —
     the AC 2 paused-tenant exclusion needs no extra code, only the test.
+
+    Each sender's ``antispam_seconds`` (the per-tenant cooldown) is resolved
+    here as ``coalesce(plan.antispam_seconds, 0.0)`` via the tenant → client
+    user → plan join — left joins so a tenant with no client row or a
+    ``plan_id`` of NULL falls back to 0.0: NO per-tenant cooldown, the legacy
+    behavior where the global ``g_min`` sleep alone paces the account. Only a
+    tenant WITH a plan carries a positive cooldown (and the plan's antispam is
+    itself floored at ≥1s on the way in). ``global_interval`` is accepted for
+    caller/stub compatibility but no longer gates a no-plan tenant — the global
+    floor lives in the worker's own pacing sleep, not in this per-tenant gate.
     """
     has_queued = (
         select(BatchLine.id)
         .where(BatchLine.batch_id == Batch.id, BatchLine.state == LINE_QUEUED)
         .exists()
     )
+    # Resolve the cooldown via tenant → its client user → that user's plan.
+    # Both joins are OUTER: owner/admin "house" tenants carry no client row,
+    # and a client with plan_id NULL has no plan row — either way coalesce
+    # lands on 0.0 (no per-tenant cooldown; the global g_min sleep paces them,
+    # exactly as before the plan catalog). (One client per tenant — see
+    # ``users_repo.get_user_by_tenant`` — so the join never multiplies rows;
+    # the belt-and-braces ``role == 'client'`` predicate keeps a shared tenant
+    # from joining a staff row.)
+    antispam = func.coalesce(Plan.antispam_seconds, 0.0)
     stmt = (
-        select(Batch.tenant_id, Batch.id, Batch.priority)
+        select(Batch.tenant_id, Batch.id, Batch.priority, antispam)
+        .select_from(Batch)
+        .outerjoin(
+            User, (User.tenant_id == Batch.tenant_id) & (User.role == "client")
+        )
+        .outerjoin(Plan, Plan.id == User.plan_id)
         .where(Batch.state == STATE_SENDING, has_queued)
         .order_by(Batch.tenant_id)
     )
     rows = (await session.execute(stmt)).all()
     return [
-        ActiveSender(tenant_id=tenant_id, batch_id=batch_id, priority=priority)
-        for tenant_id, batch_id, priority in rows
+        ActiveSender(
+            tenant_id=tenant_id,
+            batch_id=batch_id,
+            priority=priority,
+            antispam_seconds=float(antispam_seconds),
+        )
+        for tenant_id, batch_id, priority, antispam_seconds in rows
     ]
 
 

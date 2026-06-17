@@ -63,6 +63,11 @@ class Scheduler:
         self._last_owner_tenant_id: int | None = None
         self._last_was_owner: bool = False
         self._last_was_admin: bool = False
+        # Per-tenant antispam cooldown (plan-catalog feature): monotonic
+        # timestamp of each tenant's last send. Process memory like the rotation
+        # cursor and the governor — a restart clears it and every tenant is
+        # immediately eligible (the global g_min floor still paces the account).
+        self._last_send_at: dict[int, float] = {}
         # Observability counters (Story 4.3) — process memory like the rest
         # of the governor: the structured logs are the durable series.
         self._flood_events_total: int = 0
@@ -160,6 +165,16 @@ class Scheduler:
     def pick_next(self, active: list[ActiveSender]) -> ActiveSender | None:
         """Pick whose line goes out next; ``None`` when nobody is servable.
 
+        FIRST, the per-tenant antispam cooldown (plan-catalog feature) filters
+        ``active`` to the ELIGIBLE subset — a tenant is skipped until its
+        ``antispam_seconds`` has elapsed since its last send. The existing
+        priority/rotation logic then runs over the eligible subset alone;
+        ``None`` is returned when EVERY active tenant is still cooling down
+        (the worker idles and re-polls — same as an empty queue). The cooldown
+        only gates RE-PICKING a tenant: it can slow a tenant but never makes
+        the shared account send faster than the global ``g_min`` floor, which
+        still paces every send (the ban protector is unchanged).
+
         Priority is a 3-tier ranking owner (2) > admin (1) > client (0),
         implemented as NESTED bounded alternation. The owner tier alternates
         against everyone below it (so it "jumps ahead" yet is bounded to
@@ -173,6 +188,16 @@ class Scheduler:
         This generalizes the original binary owner/client alternation: with
         no admins it reduces exactly to the old behaviour.
         """
+        if not active:
+            return None
+        now = self._now()
+        self._prune_cooldowns(now, active)
+        active = [
+            s
+            for s in active
+            if now - self._last_send_at.get(s.tenant_id, float("-inf"))
+            >= s.antispam_seconds
+        ]
         if not active:
             return None
         owners = [s for s in active if s.priority >= 2]
@@ -198,6 +223,42 @@ class Scheduler:
         pick = self._next_cyclic(clients, self._last_client_tenant_id)
         self._last_client_tenant_id = pick.tenant_id
         return pick
+
+    def _prune_cooldowns(self, now: float, active: list[ActiveSender]) -> None:
+        """Drop stale ``_last_send_at`` entries so the map can't leak unbounded.
+
+        The map gains one entry per distinct tenant that has ever sent; without
+        pruning it grows for the whole process lifetime (departed/deleted
+        tenants never reclaimed) — the slow-leak class ``services.auth._prune``
+        guards against. Safe-to-drop = a tenant NOT in the current ``active``
+        list whose last send is older than the LARGEST cooldown that could ever
+        gate it (the governor ceiling, ``_G_MIN_CEIL`` — also the antispam upper
+        bound): past that age its timestamp can no longer skip it, so forgetting
+        it is equivalent to "never sent" (worst case it sends one slot early on
+        return, which the global ``g_min`` sleep still paces). O(active) to
+        build the live set, O(stale) to delete — never a full-map scan per pick.
+        """
+        if not self._last_send_at:
+            return
+        live = {s.tenant_id for s in active}
+        cutoff = now - _G_MIN_CEIL
+        stale = [
+            tid
+            for tid, last in self._last_send_at.items()
+            if tid not in live and last < cutoff
+        ]
+        for tid in stale:
+            del self._last_send_at[tid]
+
+    def note_sent(self, tenant_id: int) -> None:
+        """Record a tenant's send so its antispam cooldown starts (plan-catalog).
+
+        Called by the worker after a CONFIRMED send. Until ``antispam_seconds``
+        elapses, ``pick_next`` skips this tenant — other tenants are still
+        interleaved within the gap. Monotonic clock, process memory like the
+        rest of the scheduler state.
+        """
+        self._last_send_at[tenant_id] = self._now()
 
     @staticmethod
     def _next_cyclic(

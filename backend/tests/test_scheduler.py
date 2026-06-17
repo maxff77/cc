@@ -398,8 +398,10 @@ async def test_step_idles_when_queue_empties_between_listing_and_claim(
 
     real_listing = batches_repo.active_senders
 
-    async def stale_listing(session: object) -> list[ActiveSender]:
-        listed = await real_listing(session)  # type: ignore[arg-type]
+    async def stale_listing(
+        session: object, *, global_interval: float
+    ) -> list[ActiveSender]:
+        listed = await real_listing(session, global_interval=global_interval)  # type: ignore[arg-type]
         # A stop empties the picked tenant's queue right after the listing.
         async with async_session_factory() as race:
             await batches_repo.delete_queued_lines(race, batch_id)

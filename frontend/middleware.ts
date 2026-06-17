@@ -143,6 +143,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/admin/users", request.url));
   }
 
+  // /admin/plans is owner-only (pricing-plan catalog): same gate as
+  // /admin/gates — an admin is redirected to /admin/users; clients were
+  // already bounced to / above. Segment-anchored so /admin/plansfoo 404s.
+  const isPlansPath =
+    request.nextUrl.pathname === "/admin/plans" ||
+    request.nextUrl.pathname.startsWith("/admin/plans/");
+
+  if (isPlansPath && me.role !== "owner") {
+    return NextResponse.redirect(new URL("/admin/users", request.url));
+  }
+
   // /admin/destinos is owner-only (multi-target sending): the send-target list
   // is a shared-account safety surface, same gate as /admin/gates. Admins are
   // redirected to their own surface; clients were already bounced to / above.

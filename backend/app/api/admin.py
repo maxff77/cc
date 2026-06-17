@@ -15,6 +15,7 @@ import logging
 import math
 import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import AwareDatetime, BaseModel, field_validator
@@ -33,11 +34,12 @@ from app.core import send_worker
 from app.core.redact import redact_reply_text
 from app.core.scheduler import scheduler
 from app.db.base import get_session
-from app.db.models import Gate, GateCategory, User
+from app.db.models import Gate, GateCategory, Plan, User
 from app.db.repos import audit as audit_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import gate_categories as gate_categories_repo
 from app.db.repos import gates as gates_repo
+from app.db.repos import plans as plans_repo
 from app.db.repos import responses as responses_repo
 from app.db.repos import users as users_repo
 from app.errors import (
@@ -49,9 +51,11 @@ from app.errors import (
     gate_not_found,
     invalid_admission_cap,
     invalid_contact,
+    invalid_plan,
     invalid_plan_days,
     invalid_renewal,
     invalid_send_interval,
+    plan_not_found,
     renewal_would_shorten,
     session_not_found,
     tenant_not_found,
@@ -127,6 +131,11 @@ class CreateUserRequest(BaseModel):
     email: str
     password: str
     role: str = "client"
+    # Plan modes for a client (XOR, resolved in the route): a catalog ``plan_id``
+    # (plan-catalog feature — sets the link AND derives expires_at from the plan's
+    # duration_days) OR the legacy ``plan_days`` (no plan link). When both are
+    # given the catalog plan wins (services.users.create_account precedence).
+    plan_id: int | None = None
     plan_days: int | None = None
     # Raw handle; normalized/validated in the route so a bad value surfaces the
     # invalid_contact code (400), not a pydantic 422.
@@ -155,9 +164,12 @@ class SetContactRequest(BaseModel):
 
 class RenewPlanRequest(BaseModel):
     # Exactly one mode per request (FR4: "add days or set a new expiration
-    # date"); the route enforces the XOR and the bounds. AwareDatetime rejects a
-    # naive datetime at the boundary — ``expires_at`` is timestamptz and naive
-    # comparisons raise TypeError (1.4 lesson).
+    # date", plus the plan-catalog ``plan_id``); the route enforces the XOR and
+    # the bounds. AwareDatetime rejects a naive datetime at the boundary —
+    # ``expires_at`` is timestamptz and naive comparisons raise TypeError (1.4
+    # lesson). Assigning a ``plan_id`` updates ``user.plan_id`` AND extends
+    # expires_at by the plan's duration_days, anchored on max(now, current).
+    plan_id: int | None = None
     plan_days: int | None = None
     expires_at: AwareDatetime | None = None
 
@@ -213,8 +225,10 @@ async def create_user(
     Authorization matrix (server-enforced):
     - role must be 'client' or 'admin' (else forbidden).
     - creating 'admin' is owner-only (admin caller → forbidden).
-    - 'client' requires a positive plan_days (else invalid_plan_days);
-      'admin' ignores plan_days.
+    - 'client' carries a plan: either a catalog ``plan_id`` (plan-catalog
+      feature — expires_at derived from the plan's duration_days; unknown or
+      inactive plan → invalid_plan in the service) OR a positive ``plan_days``
+      (legacy; else invalid_plan_days). 'admin' ignores both — no plan.
     """
     if body.role not in ("client", "admin"):
         raise forbidden()
@@ -222,17 +236,28 @@ async def create_user(
     if body.role == "admin" and actor.role != "owner":
         raise forbidden()
 
-    plan_days = (
-        _validate_plan_days(body.plan_days)
-        if body.role == "client"
-        else None  # admins carry no plan
-    )
+    # A client must carry a plan via exactly one mode. ``plan_id`` (catalog)
+    # takes precedence and is validated in the service (exists + active); the
+    # legacy ``plan_days`` is bounds-checked here. Admins ignore both.
+    plan_id: int | None = None
+    plan_days: int | None = None
+    if body.role == "client":
+        if body.plan_id is not None:
+            # Bounds-check before the DB lookup: an out-of-int4 id overflows the
+            # asyncpg bind and raises a raw DataError → 500 (2.1 review lesson).
+            # Reject it as invalid_plan, matching the unknown/inactive contract.
+            if not 0 < body.plan_id <= _PG_INT_MAX:
+                raise invalid_plan()
+            plan_id = body.plan_id  # service validates exists + active
+        else:
+            plan_days = _validate_plan_days(body.plan_days)
 
     user = await users_service.create_account(
         session,
         email=body.email,
         password=body.password,
         role=body.role,
+        plan_id=plan_id,
         plan_days=plan_days,
         # Contact is a client-only field (renewal outreach); admins carry none
         # and have no edit path, so never store one for them.
@@ -297,22 +322,49 @@ async def renew_plan(
     actor: User = Depends(require_admin_or_owner),
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
-    """Renew a client's plan by adding days XOR setting a future date (AC1/AC2).
+    """Renew a client's plan: assign a catalog plan XOR add days XOR set a
+    future date (AC1/AC2 + plan-catalog feature).
 
     Validation order: target exists & is a client → exactly one mode provided →
     mode-specific bounds. Login re-reads the new ``expires_at`` so a renewed
     expired client logs in normally (AC2) — no expiry code changes here.
+
+    Plan-catalog mode (``plan_id``): the plan must exist AND be active (else
+    invalid_plan); it links ``target.plan_id`` and extends expires_at by the
+    plan's duration_days anchored on ``max(now, current)`` (renewing an active
+    plan stacks days; renewing an expired one grants days from today).
     """
     target = await _require_client_target(session, user_id)
 
-    if body.plan_days is not None:
-        if body.expires_at is not None:
-            raise invalid_renewal()  # both modes at once
+    # Exactly one renewal mode. ``plan_id`` (catalog) is mutually exclusive with
+    # the legacy add-days / set-date modes.
+    modes = sum(
+        x is not None for x in (body.plan_id, body.plan_days, body.expires_at)
+    )
+    if modes != 1:
+        raise invalid_renewal()
+
+    if body.plan_id is not None:
+        # Bounds-check before the DB lookup (out-of-int4 ids overflow the
+        # asyncpg bind → raw DataError → 500). Assigning an unknown/inactive
+        # plan is invalid_plan (the spec I/O matrix's "unknown/inactive plan →
+        # invalid_plan" contract — same surface as create-user), not the bare
+        # plan_not_found get_plan would raise.
+        if not 0 < body.plan_id <= _PG_INT_MAX:
+            raise invalid_plan()
+        plan = await plans_repo.get_by_id(session, body.plan_id)
+        if plan is None or not plan.is_active:
+            raise invalid_plan()
+        target.plan_id = plan.id
+        new_expiry = plans_service.compute_renewed_expiry_from_duration(
+            target.expires_at, plan.duration_days
+        )
+    elif body.plan_days is not None:
         _validate_plan_days(body.plan_days)
         new_expiry = plans_service.compute_renewed_expiry(
             target.expires_at, body.plan_days
         )
-    elif body.expires_at is not None:
+    else:
         # AwareDatetime guarantees tz-aware. A past/now date is a lockout, not
         # a renewal (block is the tool for that); the upper bound mirrors
         # PLAN_DAYS_MAX so a stored far-future expiry can never overflow a
@@ -327,8 +379,6 @@ async def renew_plan(
         if target.expires_at is not None and body.expires_at < target.expires_at:
             raise renewal_would_shorten()
         new_expiry = body.expires_at
-    else:
-        raise invalid_renewal()  # neither mode
 
     user = await plans_service.renew_plan(session, target, new_expiry)
     await session.commit()
@@ -857,6 +907,230 @@ async def delete_gate_category(
     except IntegrityError as exc:
         # Race: a gate was (re)assigned to this category after the check.
         raise category_in_use() from exc
+
+
+# --- Pricing-plan catalog CRUD (plan-catalog feature) ------------------------
+#
+# Owner-only curation of the GLOBAL pricing-plan catalog (no tenant scoping —
+# see the ``db.repos.plans`` module note). Plans hold price + duration +
+# per-tenant antispam cooldown + a max-lines-per-batch cap. The catalog ships
+# EMPTY (nothing seeded). Delete is RESTRICTed while ≥1 client references the
+# plan (409 plan_in_use) — retire via ``is_active=false`` instead, so historical
+# assignments never dangle. Money/seconds are exact ``Decimal`` (Numeric
+# columns); the route validates field bounds BEFORE the service runs
+# (antispam/duration/max-lines >= 1, price >= 0) so a bad value surfaces the
+# invalid_plan code, not a raw 422.
+
+PLAN_NAME_MAX = 80
+PLAN_DURATION_MAX = PLAN_DAYS_MAX  # same ~100-year ceiling as plan renewal
+# Numeric(6,2) holds up to 9999.99; the antispam cooldown can only SLOW a tenant
+# below the account-wide floor, so a generous upper bound is harmless.
+PLAN_ANTISPAM_MAX = 9999
+PLAN_MAX_LINES_MAX = _PG_INT_MAX
+PLAN_PRICE_MAX = Decimal("99999999.99")  # Numeric(10,2) column ceiling
+
+
+def _validate_plan_name(name: str) -> str:
+    """Plan name policy (same shape as ``_validate_gate_name``): trimmed,
+    non-empty, ≤80 chars, no control/invisible chars; spaces allowed."""
+    name = name.strip()
+    if not name:
+        raise ValueError("nombre vacío")
+    if any(not ch.isprintable() for ch in name):
+        raise ValueError("el nombre no puede contener caracteres invisibles")
+    if len(name) > PLAN_NAME_MAX:
+        raise ValueError("nombre demasiado largo")
+    return name
+
+
+class CreatePlanRequest(BaseModel):
+    name: str
+    # Money is exact (Decimal); pydantic v2 coerces JSON numbers to Decimal.
+    price_usd: Decimal
+    duration_days: int
+    antispam_seconds: Decimal
+    max_lines_per_batch: int
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        return _validate_plan_name(v)
+
+
+class UpdatePlanRequest(BaseModel):
+    # Partial edit: every field optional; only the provided ones are written.
+    # ``None`` means "leave unchanged" — so a deactivate is ``is_active: false``.
+    name: str | None = None
+    price_usd: Decimal | None = None
+    duration_days: int | None = None
+    antispam_seconds: Decimal | None = None
+    max_lines_per_batch: int | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str | None) -> str | None:
+        return None if v is None else _validate_plan_name(v)
+
+
+class PlanOut(BaseModel):
+    id: int
+    name: str
+    price_usd: Decimal
+    duration_days: int
+    antispam_seconds: Decimal
+    max_lines_per_batch: int
+    is_active: bool
+    created_at: datetime
+
+
+class PlanListResponse(BaseModel):
+    items: list[PlanOut]
+    total: int
+
+
+def _plan_to_out(plan: Plan) -> PlanOut:
+    return PlanOut(
+        id=plan.id,
+        name=plan.name,
+        price_usd=plan.price_usd,
+        duration_days=plan.duration_days,
+        antispam_seconds=plan.antispam_seconds,
+        max_lines_per_batch=plan.max_lines_per_batch,
+        is_active=plan.is_active,
+        created_at=plan.created_at,
+    )
+
+
+def _validate_plan_fields(
+    *,
+    price_usd: Decimal,
+    duration_days: int,
+    antispam_seconds: Decimal,
+    max_lines_per_batch: int,
+) -> None:
+    """Field-bound policy (creation AND edit), surfaced as invalid_plan (400).
+
+    Bounds: ``antispam_seconds >= 1``, ``duration_days >= 1``,
+    ``max_lines_per_batch >= 1``, ``price_usd >= 0`` — plus the column ceilings
+    so a fat-finger value can't overflow Numeric/int4. The message is
+    field-specific Spanish copy (the invalid_plan contract accepts an override).
+    """
+    if not Decimal(1) <= antispam_seconds <= PLAN_ANTISPAM_MAX:
+        raise invalid_plan("El antispam debe ser de al menos 1 segundo.")
+    if not 1 <= duration_days <= PLAN_DURATION_MAX:
+        raise invalid_plan("La duración debe ser de al menos 1 día.")
+    if not 1 <= max_lines_per_batch <= PLAN_MAX_LINES_MAX:
+        raise invalid_plan("El máximo de líneas por lote debe ser al menos 1.")
+    if not Decimal(0) <= price_usd <= PLAN_PRICE_MAX:
+        raise invalid_plan("El precio no puede ser negativo.")
+
+
+@router.get("/plans", response_model=PlanListResponse)
+async def list_plans(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> PlanListResponse:
+    """List the full catalog (active AND retired), ordered by id."""
+    plans = await plans_service.list_plans(session)
+    return PlanListResponse(
+        items=[_plan_to_out(p) for p in plans], total=len(plans)
+    )
+
+
+@router.get("/plans/active", response_model=PlanListResponse)
+async def list_active_plans(
+    actor: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_session),
+) -> PlanListResponse:
+    """Active plans only — the read needed to populate the client create/renew
+    selector. Plan CRUD stays owner-only (``/plans`` GET/POST/PATCH/DELETE);
+    this narrow read is admin-accessible so a non-owner admin (who CAN create
+    and renew clients) still has the sellable tiers to choose from — otherwise
+    the selector 403s and the documented admin function breaks. No retired
+    plans leak: only ``is_active`` rows, no full-catalog disclosure."""
+    plans = await plans_service.list_plans(session, active_only=True)
+    return PlanListResponse(
+        items=[_plan_to_out(p) for p in plans], total=len(plans)
+    )
+
+
+@router.post("/plans", response_model=PlanOut, status_code=201)
+async def create_plan(
+    body: CreatePlanRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    """Add a plan; bad field → 400 invalid_plan, duplicate name → 409
+    plan_name_taken."""
+    _validate_plan_fields(
+        price_usd=body.price_usd,
+        duration_days=body.duration_days,
+        antispam_seconds=body.antispam_seconds,
+        max_lines_per_batch=body.max_lines_per_batch,
+    )
+    plan = await plans_service.create_plan(
+        session,
+        name=body.name,
+        price_usd=body.price_usd,
+        duration_days=body.duration_days,
+        antispam_seconds=body.antispam_seconds,
+        max_lines_per_batch=body.max_lines_per_batch,
+        is_active=body.is_active,
+    )
+    await session.commit()
+    return _plan_to_out(plan)
+
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+async def update_plan(
+    plan_id: int,
+    body: UpdatePlanRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> PlanOut:
+    """Edit a plan (partial). Unknown → 404 plan_not_found, duplicate name →
+    409 plan_name_taken, bad field → 400 invalid_plan.
+
+    Only fields present in the body are written. The post-edit values (current
+    row merged with the patch) are bounds-checked so an edit can't drop a field
+    below its floor. Existing clients keep their already-derived ``expires_at``;
+    editing the plan changes only future assignments/renewals + the live
+    antispam cooldown — never retroactively (recorded scope).
+    """
+    if not 0 < plan_id <= _PG_INT_MAX:
+        raise plan_not_found()
+    # Merge patch over the current row to bounds-check the resulting plan.
+    current = await plans_service.get_plan(session, plan_id)
+    fields = body.model_dump(exclude_none=True)
+    _validate_plan_fields(
+        price_usd=fields.get("price_usd", current.price_usd),
+        duration_days=fields.get("duration_days", current.duration_days),
+        antispam_seconds=fields.get("antispam_seconds", current.antispam_seconds),
+        max_lines_per_batch=fields.get(
+            "max_lines_per_batch", current.max_lines_per_batch
+        ),
+    )
+    if not fields:  # nothing to change — return the current row unchanged
+        return _plan_to_out(current)
+    plan = await plans_service.update_plan(session, plan_id, **fields)
+    await session.commit()
+    return _plan_to_out(plan)
+
+
+@router.delete("/plans/{plan_id}", status_code=204)
+async def delete_plan(
+    plan_id: int,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a plan. Unknown → 404 plan_not_found; referenced by ≥1 client →
+    409 plan_in_use (retire via is_active=false instead)."""
+    if not 0 < plan_id <= _PG_INT_MAX:
+        raise plan_not_found()
+    await plans_service.delete_plan(session, plan_id)
+    await session.commit()
 
 
 # --- Cross-tenant support view (Story 3.6) ----------------------------------

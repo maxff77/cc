@@ -54,8 +54,9 @@ async def _set_interval(owner_client: AsyncClient, seconds: float) -> None:
 
 def test_parse_interval_accepts_valid_including_bounds() -> None:
     assert pacing_service._parse_interval("4.0") == 4.0
-    assert pacing_service._parse_interval("0") == 0.0  # min inclusive (floor removed)
-    assert pacing_service._parse_interval("1.9") == 1.9  # below old 2s floor, now valid
+    assert pacing_service._parse_interval("1") == 1.0  # min inclusive (plan-catalog floor)
+    assert pacing_service._parse_interval("0") is None  # below the 1s floor → rejected
+    assert pacing_service._parse_interval("0.9") is None  # sub-1s → rejected
     assert pacing_service._parse_interval("30") == 30.0  # max inclusive
 
 
@@ -101,16 +102,22 @@ async def test_interval_put_rejects_out_of_bounds(ctx: dict[str, object]) -> Non
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_interval_put_accepts_zero_floor_removed(ctx: dict[str, object]) -> None:
-    """Anti-ban floor removed on owner request: 0 (and sub-2s values) now pass."""
+async def test_interval_put_enforces_one_second_floor(ctx: dict[str, object]) -> None:
+    """Plan-catalog floor: the shared account never sends faster than 1s, so
+    sub-1s values are rejected and exactly 1.0 (min inclusive) is accepted."""
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
-    for ok in (0, 0.5, 1.9):
+    for bad in (0, 0.5, 0.9):
         res = await owner_client.put(
-            "/api/admin/interval", json={"interval_seconds": ok}
+            "/api/admin/interval", json={"interval_seconds": bad}
         )
-        assert res.status_code == 200, ok
-        assert res.json()["interval_seconds"] == ok
-        assert scheduler.floor == ok
+        assert res.status_code == 400, bad
+        assert res.json()["code"] == "invalid_send_interval"
+    res = await owner_client.put(
+        "/api/admin/interval", json={"interval_seconds": 1.0}
+    )
+    assert res.status_code == 200
+    assert res.json()["interval_seconds"] == 1.0
+    assert scheduler.floor == 1.0
 
 
 @pytest.mark.asyncio(loop_scope="session")

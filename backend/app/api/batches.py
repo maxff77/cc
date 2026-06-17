@@ -33,7 +33,9 @@ from app.db.models import Batch, User
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import gates as gates_repo
+from app.db.repos import plans as plans_repo
 from app.errors import (
+    batch_line_limit,
     batch_not_found,
     batch_not_live,
     batch_stopping,
@@ -53,6 +55,25 @@ _PG_INT_MAX = 2**31 - 1  # ids are int4; larger binds overflow asyncpg
 # Scheduler priority tier by role (owner > admin > client). Unknown roles
 # fall to client priority — never silently above a real client.
 _PRIORITY_BY_ROLE = {"owner": 2, "admin": 1, "client": 0}
+
+
+async def _plan_line_cap(session: AsyncSession, plan_id: int | None) -> int | None:
+    """The client's plan ``max_lines_per_batch`` cap, or ``None`` for no cap.
+
+    Resolved from ``plan_id`` (plan-catalog feature). ``plan_id IS NULL`` —
+    including every owner/admin "house" tenant and any pre-catalog client —
+    means NO cap (unchanged behavior). A dangling plan_id (RESTRICT FK makes
+    this impossible in practice) also yields no cap rather than a 500.
+
+    Takes a plain ``plan_id`` (NOT the ORM ``user``) on purpose: the append
+    path runs AFTER a ``session.rollback()`` that expires the session-loaded
+    ``user``, so reading ``user.plan_id`` there would lazy-refresh synchronously
+    (MissingGreenlet). The caller captures ``plan_id`` once before any rollback.
+    """
+    if plan_id is None:
+        return None
+    plan = await plans_repo.get_by_id(session, plan_id)
+    return plan.max_lines_per_batch if plan is not None else None
 
 
 # --- Schemas (inline, codebase convention) ---------------------------------
@@ -104,9 +125,12 @@ async def create_or_append_batch(
 
     # Captured BEFORE any rollback: a rollback expires the session-loaded
     # ``user`` object and a later attribute access would lazy-refresh
-    # synchronously (MissingGreenlet).
+    # synchronously (MissingGreenlet). ``plan_id`` is captured here too because
+    # the append path reads it AFTER the create-path rollback (the plan line
+    # cap is resolved from this scalar, never from the expired ``user``).
     tenant_id = user.tenant_id
     priority = _PRIORITY_BY_ROLE.get(user.role, 0)
+    plan_id = user.plan_id
 
     # Resolve the gate from the catalog — active only (retired and unknown
     # look the same, 404). Out-of-int4 ids can't exist (2.1 review lesson).
@@ -128,6 +152,13 @@ async def create_or_append_batch(
         lines = batches_service.apply_gate(body.text, gate_value)
         if not lines:
             raise empty_batch()
+        # Plan line cap (plan-catalog feature): a fresh batch starts at 0 lines,
+        # so the cap applies to this paste directly. Over the cap → 400
+        # batch_line_limit and NOTHING is queued (checked before create_batch).
+        # plan_id NULL → no cap (unchanged behavior).
+        cap = await _plan_line_cap(session, plan_id)
+        if cap is not None and len(lines) > cap:
+            raise batch_line_limit(cap=cap, attempted=len(lines))
         try:
             # Admission decision (Story 4.2, AC 1/4) under the cap row's FOR
             # UPDATE lock — serialized against concurrent POSTs and the
@@ -232,6 +263,18 @@ async def create_or_append_batch(
     pending = await batches_repo.pending_texts(session, live.id)
     new_lines = [line for line in lines if line not in pending]
     # … but zero NEW lines after dedup is NOT an error (added: 0).
+    # Plan line cap (plan-catalog feature): enforced against the RESULTING batch
+    # size so a client can't bypass the cap by appending in chunks. Already-sent
+    # lines plus still-pending lines count toward it (failed lines are terminal
+    # and don't); over the cap → 400 batch_line_limit and NOTHING is queued.
+    # plan_id NULL → no cap (unchanged behavior). ``plan_id`` was captured
+    # before the create-path rollback (never re-read off the expired ``user``).
+    cap = await _plan_line_cap(session, plan_id)
+    if cap is not None and new_lines:
+        sent, queued, _failed = await batches_repo.counts(session, live.id)
+        attempted = sent + queued + len(new_lines)
+        if attempted > cap:
+            raise batch_line_limit(cap=cap, attempted=attempted)
     appended_lines: list = []
     if new_lines:
         start = await batches_repo.next_position(session, live.id)

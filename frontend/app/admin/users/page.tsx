@@ -12,6 +12,7 @@ import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import { Btn } from "@/components/ui/btn";
 import { Field } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatePill } from "@/components/ui/state-pill";
@@ -41,8 +42,87 @@ interface Me {
   tenant_id: number;
 }
 
+// Plan catalog row (feat/plan-catalog) — mirrors the backend PlanOut; only the
+// fields the selector needs are read. Decimals ride as number|string.
+interface PlanOut {
+  id: number;
+  name: string;
+  price_usd: number | string;
+  duration_days: number;
+  antispam_seconds: number | string;
+  max_lines_per_batch: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface PlanListResponse {
+  items: PlanOut[];
+  total: number;
+}
+
 const USERS_KEY = ["admin-users"] as const;
 const ME_KEY = ["me"] as const;
+const PLANS_KEY = ["admin-plans"] as const;
+
+// Active-plan options for the create/renew selectors. Uses the
+// admin-accessible /admin/plans/active read (full plan CRUD at /admin/plans is
+// owner-only) so a non-owner admin can still pick a tier when creating/renewing
+// a client. The endpoint already returns active-only; the filter is a
+// belt-and-braces guard.
+function useActivePlans() {
+  const query = useQuery({
+    queryKey: PLANS_KEY,
+    queryFn: () => api.get<PlanListResponse>("/api/admin/plans/active"),
+  });
+  const active = (query.data?.items ?? []).filter((p) => p.is_active);
+
+  return { ...query, active };
+}
+
+// Compact "Name · 30 d · $10.00" label so the owner picks a tier by its terms.
+function planLabel(plan: PlanOut): string {
+  const price = Number(plan.price_usd);
+  const priceText = Number.isFinite(price) ? `$${price.toFixed(2)}` : "";
+
+  return `${plan.name} · ${plan.duration_days} d · ${priceText}`;
+}
+
+// Shared plan selector for the create-client form and the renew dialog. Empty
+// catalog renders a single disabled hint option with zero behavior (mirrors the
+// gates page CategorySelect idiom).
+function PlanSelect({
+  plans,
+  value,
+  onChange,
+  label = "Plan",
+  error,
+  disabled,
+}: {
+  plans: PlanOut[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+  label?: string;
+  error?: string | null;
+  disabled?: boolean;
+}) {
+  const empty = plans.length === 0;
+  const options = empty
+    ? [{ id: "__none", label: "Primero crea un plan." }]
+    : plans.map((p) => ({ id: String(p.id), label: planLabel(p) }));
+
+  return (
+    <Select
+      className="w-full"
+      disabled={disabled || empty}
+      error={error}
+      label={label}
+      options={options}
+      placeholder="Elegí un plan"
+      value={value === null ? null : String(value)}
+      onChange={(id) => onChange(id === "__none" ? null : Number(id))}
+    />
+  );
+}
 
 // Role pill tone: owner→accent, admin→cyan, client→muted (per Ranger-X handoff).
 const ROLE_TONE: Record<string, "accent" | "cyan" | "muted"> = {
@@ -50,13 +130,6 @@ const ROLE_TONE: Record<string, "accent" | "cyan" | "muted"> = {
   admin: "cyan",
   client: "muted",
 };
-
-// `type="number"` still lets through strings Number.parseInt silently
-// mis-reads ("1e2" → 1, "30.5" → 30) or that serialize as null (NaN) — gate on
-// plain digits before trusting the value.
-function isPositiveInt(value: string): boolean {
-  return /^\d+$/.test(value.trim()) && Number(value) > 0;
-}
 
 function formatExpiry(iso: string | null): string {
   if (!iso) return "—";
@@ -293,18 +366,24 @@ function CreateUserForm({
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [planDays, setPlanDays] = useState("30");
+  // Plan is now a CATALOG pick (feat/plan-catalog): the selector sends plan_id;
+  // the backend derives expires_at from the plan's duration_days. The legacy
+  // plan_days free-input is gone (the page no longer offers it).
+  const [planId, setPlanId] = useState<number | null>(null);
   const [contact, setContact] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [contactError, setContactError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
+  // Active plans for the client selector (admins carry no plan). Shared query.
+  const plans = useActivePlans();
+
   const mutation = useMutation({
     mutationFn: () => {
       const payload: Record<string, unknown> = { email, password, role: kind };
 
-      if (kind === "client") payload.plan_days = Number(planDays);
+      if (kind === "client") payload.plan_id = planId;
       // Optional — only send when filled; the backend normalizes (strips '@').
       if (contact.trim()) payload.contact = contact.trim();
 
@@ -313,7 +392,7 @@ function CreateUserForm({
     onSuccess: () => {
       setEmail("");
       setPassword("");
-      setPlanDays("30");
+      setPlanId(null);
       setContact("");
       onCreated();
     },
@@ -322,7 +401,8 @@ function CreateUserForm({
       // the relevant field by `code` instead of re-stating the copy here.
       if (err instanceof ApiError) {
         if (err.code === "email_taken") setEmailError(err.message);
-        else if (err.code === "invalid_plan_days") setPlanError(err.message);
+        // invalid_plan (unknown/inactive plan) lands on the plan selector.
+        else if (err.code === "invalid_plan") setPlanError(err.message);
         else if (err.code === "invalid_contact") setContactError(err.message);
         else setBanner(err.message);
       } else {
@@ -338,8 +418,8 @@ function CreateUserForm({
     setContactError(null);
     setBanner(null);
 
-    if (kind === "client" && !isPositiveInt(planDays)) {
-      setPlanError("Indica un número entero de días.");
+    if (kind === "client" && planId === null) {
+      setPlanError("Elegí un plan.");
 
       return;
     }
@@ -382,16 +462,12 @@ function CreateUserForm({
         />
 
         {kind === "client" && (
-          <Field
-            required
+          <PlanSelect
             error={planError}
-            label="Días del plan"
-            name="plan_days"
-            placeholder="30"
-            type="number"
-            value={planDays}
-            onChange={(v) => {
-              setPlanDays(v);
+            plans={plans.active}
+            value={planId}
+            onChange={(id) => {
+              setPlanId(id);
               if (planError) setPlanError(null);
             }}
           />
@@ -435,7 +511,7 @@ interface AdmissionOut {
 const ADMISSION_KEY = ["admin-admission"] as const;
 const ADMISSION_CAP_MAX = 1000;
 
-// Digits-only gate (the isPositiveInt idiom) that ALSO admits 0 — 0 disables
+// Digits-only gate that ALSO admits 0 — 0 disables
 // admission control entirely (backend bounds: 0..1000).
 function isValidCap(value: string): boolean {
   return /^\d+$/.test(value.trim()) && Number(value) <= ADMISSION_CAP_MAX;
@@ -842,30 +918,37 @@ function RenewAction({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [days, setDays] = useState("");
+  // Renew is now a catalog pick XOR a manual end-date (feat/plan-catalog). The
+  // legacy free "Días" input is gone: picking a plan sends plan_id and the
+  // backend extends expires_at from the plan's duration_days
+  // (max(now, current) + duration). The date stays as a manual override.
+  const [planId, setPlanId] = useState<number | null>(null);
   const [date, setDate] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const plans = useActivePlans();
+
   const mutation = useMutation({
     mutationFn: () => {
-      // Exactly one mode: días → plan_days; otherwise the date as end-of-day
-      // in the ADMIN'S timezone (not hardcoded Z) — formatExpiry renders in
-      // local time, so this keeps the Vence column showing the picked day.
-      const payload = days.trim()
-        ? { plan_days: Number(days) }
-        : { expires_at: new Date(`${date}T23:59:59`).toISOString() };
+      // Exactly one mode: plan → plan_id; otherwise the date as end-of-day in
+      // the ADMIN'S timezone (not hardcoded Z) — formatExpiry renders in local
+      // time, so this keeps the Vence column showing the picked day.
+      const payload =
+        planId !== null
+          ? { plan_id: planId }
+          : { expires_at: new Date(`${date}T23:59:59`).toISOString() };
 
       return api.post<UserOut>(`/api/admin/users/${userId}/renew`, payload);
     },
     onSuccess: () => {
       setOpen(false);
-      setDays("");
+      setPlanId(null);
       setDate("");
       setError(null);
       onChanged();
     },
     onError: (err) => {
-      // Backend sends Spanish in `message` for invalid_renewal / invalid_plan_days.
+      // Backend sends Spanish in `message` for invalid_renewal / invalid_plan.
       setError(
         err instanceof ApiError
           ? err.message
@@ -876,16 +959,11 @@ function RenewAction({
 
   function submit() {
     setError(null);
-    const hasDays = days.trim() !== "";
+    const hasPlan = planId !== null;
     const hasDate = date.trim() !== "";
 
-    if (hasDays === hasDate) {
-      setError("Completa solo Días o solo Hasta.");
-
-      return;
-    }
-    if (hasDays && !isPositiveInt(days)) {
-      setError("Indica un número entero de días.");
+    if (hasPlan === hasDate) {
+      setError("Elegí solo un plan o solo una fecha.");
 
       return;
     }
@@ -916,32 +994,25 @@ function RenewAction({
         }}
       >
         <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <Field
-              className="w-24"
-              label="Días"
-              name="plan_days"
-              placeholder="30"
-              type="number"
-              value={days}
-              onChange={(v) => {
-                setDays(v);
-                if (error) setError(null);
-              }}
-            />
+          <PlanSelect
+            plans={plans.active}
+            value={planId}
+            onChange={(id) => {
+              setPlanId(id);
+              if (error) setError(null);
+            }}
+          />
 
-            <Field
-              className="flex-1"
-              label="Hasta"
-              name="expires_at"
-              type="date"
-              value={date}
-              onChange={(v) => {
-                setDate(v);
-                if (error) setError(null);
-              }}
-            />
-          </div>
+          <Field
+            label="Hasta (fecha manual)"
+            name="expires_at"
+            type="date"
+            value={date}
+            onChange={(v) => {
+              setDate(v);
+              if (error) setError(null);
+            }}
+          />
 
           {error && <Notice status="danger">{error}</Notice>}
         </div>

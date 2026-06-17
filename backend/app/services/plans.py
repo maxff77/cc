@@ -1,9 +1,11 @@
-"""Plan service: expiry predicate (1.4) + renew/extend & block/unblock (1.5).
+"""Plan service: expiry predicate (1.4) + renew/extend & block/unblock (1.5)
++ the owner-managed pricing-plan catalog (plan-catalog feature).
 
 The expiry predicate stays pure domain logic over a ``User`` row. The renew/
-block/unblock operations need the DB, so they take an ``AsyncSession`` like
-``services/users.create_account`` does: the service orchestrates and flushes,
-the router maps errors and commits. The router validates inputs BEFORE calling.
+block/unblock operations and the catalog CRUD need the DB, so they take an
+``AsyncSession`` like ``services/users.create_account`` does: the service
+orchestrates and flushes, the router maps errors and commits. The router
+validates inputs BEFORE calling.
 
 Clock source: this module deliberately uses the APP clock (``datetime.now(UTC)``)
 — the documented exception to the SQL-``now()`` convention (see
@@ -11,11 +13,15 @@ Clock source: this module deliberately uses the APP clock (``datetime.now(UTC)``
 """
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import Plan, User
+from app.db.repos import plans as plans_repo
 from app.db.repos import users as users_repo
+from app.errors import plan_in_use, plan_name_taken, plan_not_found
 
 
 def is_plan_expired(user: User) -> bool:
@@ -98,3 +104,133 @@ async def set_blocked(session: AsyncSession, user: User, *, blocked: bool) -> Us
         await users_repo.revoke_all_sessions_for_user(session, user.id)
     await session.flush()
     return user
+
+
+# --- Duration-based expiry helpers (plan-catalog feature) ----------------
+
+
+def compute_expiry_from_duration(duration_days: int) -> datetime:
+    """Fresh expiry for a newly-assigned plan: ``now(UTC) + duration_days``.
+
+    Used by ``create_account`` when a client is created on a plan — the same
+    APP-clock source as ``compute_renewed_expiry`` (the documented exception to
+    the SQL-``now()`` convention; plan deadlines are day-scale, so clock skew
+    cannot move the lockout meaningfully).
+    """
+    return datetime.now(UTC) + timedelta(days=duration_days)
+
+
+def compute_renewed_expiry_from_duration(
+    current: datetime | None, duration_days: int
+) -> datetime:
+    """Renew variant: extend ``duration_days`` from ``max(now(UTC), current)``.
+
+    Thin alias of ``compute_renewed_expiry`` keyed on a plan's ``duration_days``
+    — renewing an ACTIVE plan stacks days onto the current expiry, renewing an
+    EXPIRED one grants days from today (so the renewal actually restores
+    access, the AC2 rationale documented on ``compute_renewed_expiry``).
+    """
+    return compute_renewed_expiry(current, duration_days)
+
+
+# --- Plan-catalog CRUD (plan-catalog feature) ----------------------------
+#
+# GLOBAL/owner-curated like the gate catalog — no tenant scope here; the
+# authorization boundary is the route's owner ``require_role`` gate. Each op
+# flushes; the router commits. Field-bound validation (antispam/duration/
+# max-lines >= 1, price >= 0) belongs to the router BEFORE calling.
+
+
+async def create_plan(
+    session: AsyncSession,
+    *,
+    name: str,
+    price_usd: Decimal,
+    duration_days: int,
+    antispam_seconds: Decimal,
+    max_lines_per_batch: int,
+    is_active: bool = True,
+) -> Plan:
+    """Create a plan; rejects a duplicate name with ``plan_name_taken``.
+
+    The pre-check is racy (two concurrent creates of the same name only trip
+    the DB unique constraint at flush), so the IntegrityError is mapped to the
+    SAME ``plan_name_taken`` contract instead of a 500 — the ``create_account``
+    duplicate-email idiom.
+    """
+    if await plans_repo.get_by_name(session, name) is not None:
+        raise plan_name_taken()
+    try:
+        return await plans_repo.create(
+            session,
+            name=name,
+            price_usd=price_usd,
+            duration_days=duration_days,
+            antispam_seconds=antispam_seconds,
+            max_lines_per_batch=max_lines_per_batch,
+            is_active=is_active,
+        )
+    except IntegrityError as exc:
+        raise plan_name_taken() from exc
+
+
+async def list_plans(session: AsyncSession, *, active_only: bool = False) -> list[Plan]:
+    """Return the catalog — every plan, or only active ones (``active_only``)."""
+    if active_only:
+        return await plans_repo.list_active(session)
+    return await plans_repo.list_all(session)
+
+
+async def get_plan(session: AsyncSession, plan_id: int) -> Plan:
+    """Return the plan with this id or raise ``plan_not_found``."""
+    plan = await plans_repo.get_by_id(session, plan_id)
+    if plan is None:
+        raise plan_not_found()
+    return plan
+
+
+async def update_plan(session: AsyncSession, plan_id: int, **fields: object) -> Plan:
+    """Edit a plan (locks the row); flush, caller commits.
+
+    A name change duplicating another plan's name is rejected with
+    ``plan_name_taken`` — pre-checked AND backstopped by the DB unique
+    constraint at flush. Only the provided ``fields`` are written.
+    """
+    plan = await plans_repo.get_by_id(session, plan_id, for_update=True)
+    if plan is None:
+        raise plan_not_found()
+    new_name = fields.get("name")
+    if (
+        isinstance(new_name, str)
+        and new_name != plan.name
+        and await plans_repo.get_by_name(session, new_name) is not None
+    ):
+        raise plan_name_taken()
+    try:
+        return await plans_repo.update(session, plan, **fields)
+    except IntegrityError as exc:
+        raise plan_name_taken() from exc
+
+
+async def delete_plan(session: AsyncSession, plan_id: int) -> None:
+    """Delete a plan; rejects deletion while ≥1 user references it.
+
+    The ``users.plan_id`` FK is ``RESTRICT``; the explicit ``plan_in_use``
+    guard (mirror of ``category_in_use``) gives the owner a clear "deactivate
+    instead" message rather than a raw IntegrityError. Retire via
+    ``is_active=false``; never delete a plan with historical assignments.
+    """
+    plan = await plans_repo.get_by_id(session, plan_id, for_update=True)
+    if plan is None:
+        raise plan_not_found()
+    if await plans_repo.count_users_with_plan(session, plan_id) > 0:
+        raise plan_in_use()
+    # The plan-row lock does NOT serialize a concurrent create/renew that reads
+    # the plan WITHOUT for_update and assigns ``user.plan_id`` — so a reference
+    # can land between the count above and this delete. The FK is RESTRICT, so
+    # that case raises at flush rather than orphaning; map it to the clean
+    # plan_in_use ("deactivate instead") rather than a raw 500.
+    try:
+        await plans_repo.delete(session, plan)
+    except IntegrityError as exc:
+        raise plan_in_use() from exc

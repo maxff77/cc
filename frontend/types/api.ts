@@ -3,6 +3,21 @@
  * Do not make direct changes to the file.
  */
 
+// --- Hand-maintained: backend {code, message} error codes (feat/plan-catalog).
+// App error `code`s are NOT part of the OpenAPI document, so openapi-typescript
+// never emits them — this union is curated by hand alongside the generated
+// shapes. UI code branches on `ApiError.code` (lib/api.ts); these are the codes
+// the plan-catalog surfaces route on. `(string & {})` keeps the union open for
+// every other backend code while preserving literal autocompletion.
+export type PlanErrorCode =
+    | "invalid_plan"
+    | "plan_name_taken"
+    | "plan_not_found"
+    | "plan_in_use"
+    | "batch_line_limit";
+
+export type ApiErrorCode = PlanErrorCode | (string & {});
+
 export interface paths {
     "/api/health": {
         parameters: {
@@ -361,6 +376,54 @@ export interface paths {
          * @description Rename a category (gates keep pointing at it — nothing else moves).
          */
         patch: operations["update_gate_category_api_admin_gate_categories__category_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plans
+         * @description The full pricing-plan catalog (active + retired), ordered by id.
+         */
+        get: operations["list_plans_api_admin_plans_get"];
+        put?: never;
+        /**
+         * Create Plan
+         * @description Add a plan to the catalog; duplicate name → 409 plan_name_taken.
+         */
+        post: operations["create_plan_api_admin_plans_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Plan
+         * @description Delete a plan; referenced by ≥1 client → 409 plan_in_use (retire via is_active instead).
+         */
+        delete: operations["delete_plan_api_admin_plans__plan_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Plan
+         * @description Partial edit of a plan's fields; bad field → 400 invalid_plan, duplicate name → 409 plan_name_taken.
+         */
+        patch: operations["update_plan_api_admin_plans__plan_id__patch"];
         trace?: never;
     };
     "/api/gates": {
@@ -754,8 +817,12 @@ export interface components {
              * @default client
              */
             role: string;
+            /** Plan Id */
+            plan_id?: number | null;
             /** Plan Days */
             plan_days?: number | null;
+            /** Contact */
+            contact?: string | null;
         };
         /** GateListResponse */
         GateListResponse: {
@@ -819,6 +886,85 @@ export interface components {
             tenant_id: number;
             /** Expires At */
             expires_at?: string | null;
+            plan?: components["schemas"]["PlanSummary"] | null;
+        };
+        /**
+         * PlanSummary
+         * @description The client's plan slice on /api/auth/me — null for owner/admin or a
+         *     pre-catalog client (plan_id IS NULL). Powers the cockpit's max-lines guard.
+         */
+        PlanSummary: {
+            /** Name */
+            name: string;
+            /** Antispam Seconds */
+            antispam_seconds: number | string;
+            /** Max Lines Per Batch */
+            max_lines_per_batch: number;
+        };
+        /** PlanOut */
+        PlanOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Price Usd */
+            price_usd: number | string;
+            /** Duration Days */
+            duration_days: number;
+            /** Antispam Seconds */
+            antispam_seconds: number | string;
+            /** Max Lines Per Batch */
+            max_lines_per_batch: number;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** PlanListResponse */
+        PlanListResponse: {
+            /** Items */
+            items: components["schemas"]["PlanOut"][];
+            /** Total */
+            total: number;
+        };
+        /** CreatePlanRequest */
+        CreatePlanRequest: {
+            /** Name */
+            name: string;
+            /** Price Usd */
+            price_usd: number | string;
+            /** Duration Days */
+            duration_days: number;
+            /** Antispam Seconds */
+            antispam_seconds: number | string;
+            /** Max Lines Per Batch */
+            max_lines_per_batch: number;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+        };
+        /**
+         * UpdatePlanRequest
+         * @description Partial edit — every field optional; the patch merges over the row.
+         */
+        UpdatePlanRequest: {
+            /** Name */
+            name?: string | null;
+            /** Price Usd */
+            price_usd?: number | string | null;
+            /** Duration Days */
+            duration_days?: number | null;
+            /** Antispam Seconds */
+            antispam_seconds?: number | string | null;
+            /** Max Lines Per Batch */
+            max_lines_per_batch?: number | null;
+            /** Is Active */
+            is_active?: boolean | null;
         };
         /** RenameSessionRequest */
         RenameSessionRequest: {
@@ -827,6 +973,8 @@ export interface components {
         };
         /** RenewPlanRequest */
         RenewPlanRequest: {
+            /** Plan Id */
+            plan_id?: number | null;
             /** Plan Days */
             plan_days?: number | null;
             /** Expires At */
@@ -1564,6 +1712,123 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GateListResponse"];
+                };
+            };
+        };
+    };
+    list_plans_api_admin_plans_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanListResponse"];
+                };
+            };
+        };
+    };
+    create_plan_api_admin_plans_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_plan_api_admin_plans__plan_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_plan_api_admin_plans__plan_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

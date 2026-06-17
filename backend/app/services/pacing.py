@@ -20,12 +20,14 @@ from app.core.scheduler import scheduler
 from app.db.repos import system_settings as system_settings_repo
 
 INTERVAL_KEY = "send_interval_seconds"
-# Range for the shared account. The 2.0s anti-ban floor was REMOVED on owner
-# request (testing): the lower bound is now 0.0s, so the owner can set any
-# interval down to zero. WARNING: below ~2s FloodWaits/bans escalate on the
-# shared MTProto account and a ban hits every tenant — this is a deliberate
-# owner override, not a safe default. 30.0s still mirrors the governor ceiling.
-INTERVAL_MIN = 0.0
+# Range for the shared account. The lower bound is a HARD 1.0s floor (raised
+# from 0.0s for the plan-catalog feature): per-tenant plan antispam can only
+# SLOW a tenant below this account-wide pace, never speed the account past it,
+# so 1s is the absolute fastest the shared MTProto account ever sends — the
+# ban protector. WARNING: below ~2s FloodWaits/bans still escalate; 1s is the
+# floor of owner discretion, not a safe default. 30.0s mirrors the governor
+# ceiling.
+INTERVAL_MIN = 1.0
 INTERVAL_MAX = 30.0
 
 

@@ -7,7 +7,7 @@
 import type { LiveBatchState } from "@/lib/ws";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
@@ -45,6 +45,40 @@ interface BatchOut {
 }
 
 const GATES_KEY = ["gates"] as const;
+const ME_KEY = ["me"] as const;
+
+// The client's plan slice on /api/auth/me — null for owner/admin or a
+// pre-catalog client (plan_id IS NULL → no line cap). Only max_lines_per_batch
+// is read here for the pre-submit guard.
+interface PlanSummary {
+  name: string;
+  antispam_seconds: number | string;
+  max_lines_per_batch: number;
+}
+
+interface Me {
+  id: number;
+  email: string;
+  role: string;
+  tenant_id: number;
+  expires_at: string | null;
+  plan: PlanSummary | null;
+}
+
+// Count of lines the backend would queue from a paste: trimmed, blank-skipped,
+// deduplicated — mirrors services/batches.apply_gate (the gate prefix never
+// changes the count). UX-only; the backend re-counts and stays authoritative.
+function countLines(text: string): number {
+  const seen = new Set<string>();
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+
+    if (line) seen.add(line);
+  }
+
+  return seen.size;
+}
 
 export function SendForm({
   gates,
@@ -54,6 +88,14 @@ export function SendForm({
   live: LiveBatchState;
 }) {
   const queryClient = useQueryClient();
+  // The plan's max_lines_per_batch fuels a pre-submit cap guard (UX only — the
+  // backend enforces batch_line_limit authoritatively). Shared ["me"] query so
+  // it dedupes with anything else reading identity; null plan → no cap.
+  const me = useQuery({
+    queryKey: ME_KEY,
+    queryFn: () => api.get<Me>("/api/auth/me"),
+  });
+  const lineCap = me.data?.plan?.max_lines_per_batch ?? null;
   const [text, setText] = useState("");
   const [categoryKey, setCategoryKey] = useState<string | null>(null);
   const [gateKey, setGateKey] = useState<string | null>(null);
@@ -102,7 +144,10 @@ export function SendForm({
     },
     onError: (err) => {
       if (err instanceof ApiError) {
-        if (err.code === "empty_batch") {
+        if (err.code === "empty_batch" || err.code === "batch_line_limit") {
+          // batch_line_limit: the authoritative backend cap rejection (e.g. a
+          // stale plan in the ["me"] cache) — surface its Spanish copy on the
+          // textarea, same lane as empty_batch.
           setTextError(err.message);
         } else if (err.code === "gate_not_found") {
           // Retired in another tab — refresh the catalog and re-pick.
@@ -134,6 +179,26 @@ export function SendForm({
       setTextError("No hay líneas para enviar.");
 
       return;
+    }
+
+    // Plan line-cap guard (plan-catalog feature): block before the request when
+    // a NEW batch's paste would exceed the client's max_lines_per_batch. Only
+    // the create case is guarded pre-submit: there is no pending queue to dedup
+    // against, so countLines exactly matches what the backend will queue. On
+    // APPEND the backend dedups the paste against the already-pending texts
+    // before counting (batches.py), and the cockpit only holds a CAPPED pending
+    // list — so a client-side resulting-size estimate would over-count and
+    // falsely block a paste the backend would accept. The backend stays
+    // authoritative there (its batch_line_limit message surfaces in the banner).
+    // No plan → no cap.
+    if (lineCap !== null && !isLive) {
+      const incoming = countLines(text);
+
+      if (incoming > lineCap) {
+        setTextError(`Máximo ${lineCap} líneas; tienes ${incoming}.`);
+
+        return;
+      }
     }
 
     const gateId = isLive ? liveGateId : gateKey ? Number(gateKey) : null;

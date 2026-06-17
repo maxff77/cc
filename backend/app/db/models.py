@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -69,6 +70,16 @@ class User(Base):
     # get an expires_at.
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # The owner-managed pricing plan this client is on (plan-catalog feature).
+    # Nullable: owner/admin rows carry no plan, and a client with plan_id NULL
+    # falls back to the legacy behavior (global send interval, no line cap).
+    # RESTRICT (not SET NULL/CASCADE): a plan referenced by ≥1 user cannot be
+    # deleted — the service guards it explicitly (plan_in_use) and the DB
+    # enforces it too, so historical assignments never dangle. Retire a plan
+    # via ``is_active=false`` instead of deleting it.
+    plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plans.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     # Telegram handle for renewal outreach (sin '@'; un solo formato canónico).
     # Optional — clientes previos quedan NULL hasta que se llene.
@@ -564,6 +575,44 @@ class SystemSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Plan(Base):
+    """An owner-managed pricing plan (the plan-catalog feature).
+
+    GLOBAL catalog — intentionally NO tenant_id: the owner curates one shared
+    list of tiers for all clients (same deliberate exception as ``gates`` and
+    ``system_settings``). A client links to one plan via ``User.plan_id``;
+    assigning/renewing derives ``expires_at`` from ``duration_days``.
+
+    The catalog ships EMPTY — the owner creates plans from ``/admin/plans``;
+    nothing is seeded. Retirement is a soft state (``is_active=false``), never
+    a delete while referenced: the ``User.plan_id`` FK is ``RESTRICT`` and the
+    service raises ``plan_in_use``, so historical assignments never dangle.
+
+    Money/seconds use ``Numeric`` (exact, no float drift): ``price_usd`` for
+    display/billing, ``antispam_seconds`` as the per-tenant scheduler cooldown
+    (never below the global floor — the account-wide ban protector).
+    """
+
+    __tablename__ = "plans"
+    __table_args__ = (UniqueConstraint("name", name="uq_plans_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    price_usd: Mapped[float] = mapped_column(Numeric(10, 2))
+    duration_days: Mapped[int] = mapped_column()
+    antispam_seconds: Mapped[float] = mapped_column(Numeric(6, 2))
+    max_lines_per_batch: Mapped[int] = mapped_column()
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

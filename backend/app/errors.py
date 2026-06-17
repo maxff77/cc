@@ -378,5 +378,62 @@ def invalid_send_interval() -> AppError:
     return AppError(
         status_code=400,
         code="invalid_send_interval",
-        message="Indica un intervalo entre 0 y 30 segundos.",
+        message="Indica un intervalo entre 1 y 30 segundos.",
+    )
+
+
+# --- Codes the plan-catalog feature defines ------------------------------
+
+
+def invalid_plan(message: str | None = None) -> AppError:
+    # A plan field failed validation (antispam/duration/max-lines < 1, or a
+    # negative price) OR a client was assigned an unknown/inactive plan. The
+    # caller may pass a field-specific Spanish message; the default covers the
+    # generic "no such usable plan" case.
+    return AppError(
+        status_code=400,
+        code="invalid_plan",
+        message=message or "Plan inválido o no disponible.",
+    )
+
+
+def plan_name_taken() -> AppError:
+    return AppError(
+        status_code=409,
+        code="plan_name_taken",
+        message="Ya existe un plan con ese nombre.",
+    )
+
+
+def plan_not_found() -> AppError:
+    return AppError(
+        status_code=404,
+        code="plan_not_found",
+        message="Ese plan no existe.",
+    )
+
+
+def plan_in_use() -> AppError:
+    return AppError(
+        status_code=409,
+        code="plan_in_use",
+        message=(
+            "No puedes eliminar un plan asignado a clientes. Desactívalo en su "
+            "lugar."
+        ),
+    )
+
+
+def batch_line_limit(*, cap: int, attempted: int) -> AppError:
+    # The client's plan caps lines per batch (plan-catalog feature). Raised on
+    # create AND append when the resulting line count would exceed the cap;
+    # nothing is queued. The message states the cap and the attempted count so
+    # the client knows exactly how many to trim.
+    return AppError(
+        status_code=400,
+        code="batch_line_limit",
+        message=(
+            f"Tu plan permite máximo {cap} líneas por lote; intentaste enviar "
+            f"{attempted}. Reduce la cantidad."
+        ),
     )
