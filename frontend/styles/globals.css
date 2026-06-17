@@ -261,6 +261,13 @@ body {
 /* focus ring */
 .rx-focus:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
+/* touch tap target — guarantee ≥44px of pressable height on coarse pointers
+   (phones/touch tablets) without inflating the dense pointer:fine layouts.
+   Applied to every Btn, Select trigger/option, nav item and segmented control. */
+@media (pointer: coarse) {
+  .tap-44 { min-height: 2.75rem; }
+}
+
 @keyframes rx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes rx-dash { to { stroke-dashoffset: -100; } }
 @keyframes rx-fade-up { from { transform: translateY(9px); } to { transform: translateY(0); } }

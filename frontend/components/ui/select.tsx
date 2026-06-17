@@ -74,7 +74,7 @@ export function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
         className={clsx(
-          "rx-focus flex w-full items-center justify-between gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-2.5 text-left text-sm transition-[border-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-55",
+          "tap-44 rx-focus flex w-full items-center justify-between gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-2.5 text-left text-sm transition-[border-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-55",
           selected
             ? "text-[var(--field-foreground)]"
             : "text-[var(--field-placeholder)]",
@@ -113,7 +113,7 @@ export function Select({
                 key={o.id}
                 aria-selected={active}
                 className={clsx(
-                  "flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-2.5 text-left text-sm",
+                  "tap-44 flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-2.5 text-left text-sm",
                   active
                     ? "bg-[var(--accent-soft)] text-accent"
                     : "text-foreground hover:bg-surface-secondary",

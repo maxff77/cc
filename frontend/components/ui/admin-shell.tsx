@@ -50,57 +50,78 @@ export function AdminShell({
     }
   }
 
+  const navItems = ITEMS.filter((item) => !item.ownerOnly || gatesVisible);
+
+  // One renderer for both nav strips. The gradient underline is desktop-only:
+  // on the mobile scroll strip overflow-x clips anything below the item, so
+  // active state there leans on the surface-tertiary fill instead.
+  const renderNavItem = (
+    item: (typeof ITEMS)[number],
+    { underline, className }: { underline: boolean; className?: string },
+  ) => {
+    const active =
+      pathname === item.href || pathname.startsWith(item.href + "/");
+
+    return (
+      <Link
+        key={item.href}
+        className={clsx(
+          "tap-44 rx-focus relative flex items-center rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
+          active
+            ? "bg-surface-tertiary text-foreground"
+            : "text-muted hover:text-foreground",
+          className,
+        )}
+        href={item.href}
+      >
+        {item.label}
+        {underline && active && (
+          <span
+            aria-hidden
+            className="brand-fill absolute inset-x-3 -bottom-[13px] h-0.5 rounded"
+          />
+        )}
+      </Link>
+    );
+  };
+
   return (
     <div className="relative flex min-h-screen flex-col">
       <RxBackdrop />
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-border bg-[color-mix(in_oklch,var(--background)_82%,transparent)] px-4 py-3 backdrop-blur-md lg:px-6">
-        <div className="flex min-w-0 items-center gap-6">
-          <Link
-            className="rx-focus flex shrink-0 items-center gap-2.5"
-            href="/admin/users"
-          >
-            <Mark size={28} />
-            <span className="gradient-text font-display text-xl font-extrabold italic leading-none tracking-[0.01em]">
-              RANGER-X
-            </span>
-          </Link>
-          <nav className="flex items-center gap-1">
-            {ITEMS.filter((item) => !item.ownerOnly || gatesVisible).map(
-              (item) => {
-                const active =
-                  pathname === item.href ||
-                  pathname.startsWith(item.href + "/");
-
-                return (
-                  <Link
-                    key={item.href}
-                    className={clsx(
-                      "rx-focus relative rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
-                      active
-                        ? "bg-surface-tertiary text-foreground"
-                        : "text-muted hover:text-foreground",
-                    )}
-                    href={item.href}
-                  >
-                    {item.label}
-                    {active && (
-                      <span
-                        aria-hidden
-                        className="brand-fill absolute inset-x-3 -bottom-[13px] h-0.5 rounded"
-                      />
-                    )}
-                  </Link>
-                );
-              },
-            )}
-          </nav>
+      <header className="sticky top-0 z-30 border-b border-border bg-[color-mix(in_oklch,var(--background)_82%,transparent)] backdrop-blur-md">
+        <div className="flex items-center justify-between gap-4 px-4 py-3 lg:px-6">
+          <div className="flex min-w-0 items-center gap-6">
+            <Link
+              className="rx-focus flex shrink-0 items-center gap-2.5"
+              href="/admin/users"
+            >
+              <Mark size={28} />
+              <span className="gradient-text font-display text-xl font-extrabold italic leading-none tracking-[0.01em]">
+                RANGER-X
+              </span>
+            </Link>
+            {/* Desktop: inline tabs with the gradient active-underline. */}
+            <nav className="hidden items-center gap-1 lg:flex">
+              {navItems.map((item) => renderNavItem(item, { underline: true }))}
+            </nav>
+          </div>
+          <div className="flex shrink-0 items-center gap-2.5">
+            <ThemeToggle />
+            <Btn size="sm" variant="secondary" onClick={logout}>
+              Cerrar sesión
+            </Btn>
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
-          <ThemeToggle />
-          <Btn size="sm" variant="secondary" onClick={logout}>
-            Cerrar sesión
-          </Btn>
-        </div>
+        {/* Mobile: a horizontally-scrollable strip so all six owner tabs stay
+            reachable without crushing the bar (no bottom nav on admin). */}
+        <nav className="flex items-center gap-1 overflow-x-auto rx-scroll border-t border-border px-4 pb-2 pt-1.5 lg:hidden">
+          {navItems.map((item) =>
+            renderNavItem(item, {
+              underline: false,
+              className: "shrink-0 whitespace-nowrap",
+            }),
+          )}
+        </nav>
       </header>
 
       <main className="relative z-[1] mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 lg:px-8">

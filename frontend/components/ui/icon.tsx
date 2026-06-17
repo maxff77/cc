@@ -22,7 +22,8 @@ export type IconName =
   | "trash"
   | "refresh"
   | "search"
-  | "check";
+  | "check"
+  | "logout";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   user: (
@@ -120,6 +121,16 @@ const PATHS: Record<IconName, React.ReactNode> = {
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeWidth="2.4"
+    />
+  ),
+  logout: (
+    <path
+      d="M14 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h6a2 2 0 002-2v-2M10 12h11m0 0l-3-3m3 3l-3 3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
     />
   ),
 };

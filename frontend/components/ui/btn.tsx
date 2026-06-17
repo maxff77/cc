@@ -64,7 +64,7 @@ export function Btn({
   return (
     <button
       className={clsx(
-        "rx-focus inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-field)] border font-display font-semibold tracking-[0.02em] transition-[transform,box-shadow,background,border-color] duration-150 hover:enabled:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55",
+        "tap-44 rx-focus inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-field)] border font-display font-semibold tracking-[0.02em] transition-[transform,box-shadow,background,border-color] duration-150 hover:enabled:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55",
         SIZE_CLASS[size],
         VARIANT_CLASS[variant],
         full && "w-full",

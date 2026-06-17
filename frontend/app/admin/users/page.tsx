@@ -181,6 +181,101 @@ function Th({
   );
 }
 
+// One labelled field inside a user card (the mobile reflow of a table cell).
+function CardField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <LabelCaps>{label}</LabelCaps>
+      <div className="text-sm">{children}</div>
+    </div>
+  );
+}
+
+// Phone/tablet card — the table row reflowed to a single column. Reuses the
+// exact action components and helpers the table uses, so behaviour is identical
+// across breakpoints (no second information architecture).
+function UserCard({
+  user: u,
+  isOwner,
+  onChanged,
+}: {
+  user: UserOut;
+  isOwner: boolean;
+  onChanged: () => void;
+}) {
+  const isClient = u.role === "client";
+
+  return (
+    <li className="flex flex-col gap-3.5 rounded-[var(--radius-field)] border border-border bg-surface-secondary p-3.5">
+      <div className="flex items-start justify-between gap-2.5">
+        <span className="min-w-0 break-all font-mono text-[0.82rem] font-semibold leading-snug text-foreground">
+          {u.email}
+        </span>
+        <StatePill tone={ROLE_TONE[u.role] ?? "muted"}>{u.role}</StatePill>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <CardField label="Contacto">
+          <ContactLink contact={u.contact} />
+        </CardField>
+        <CardField label="Vence">
+          <span className="font-mono text-[0.72rem] tabular-nums text-muted">
+            {formatExpiry(u.expires_at)}
+          </span>
+        </CardField>
+        {isClient && (
+          <>
+            <CardField label="Créditos">
+              <span className="font-mono text-[0.82rem] tabular-nums text-foreground">
+                {u.credit_balance}
+              </span>
+            </CardField>
+            <CardField label="Estado">
+              {u.is_blocked ? (
+                <StatePill tone="danger">Bloqueado</StatePill>
+              ) : (
+                <StatePill tone="success">Activo</StatePill>
+              )}
+            </CardField>
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-separator pt-3">
+        {isClient ? (
+          <>
+            <Link
+              className="tap-44 rx-focus inline-flex shrink-0 items-center rounded-[var(--radius-field)] border border-border px-3 py-1.5 font-display text-[13px] font-semibold tracking-[0.02em] text-muted transition-colors hover:text-foreground"
+              href={`/admin/tenants/${u.tenant_id}`}
+            >
+              Sesiones
+            </Link>
+            <ClientLifecycleActions
+              isOwner={isOwner}
+              user={u}
+              onChanged={onChanged}
+            />
+          </>
+        ) : isOwner && u.role === "admin" ? (
+          <DeleteAdminAction
+            email={u.email}
+            userId={u.id}
+            onDeleted={onChanged}
+          />
+        ) : (
+          <LabelCaps>Sin acciones</LabelCaps>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export default function AdminUsersPage() {
   const queryClient = useQueryClient();
   // Segmented create switch: which form to show. The "admin" tab is owner-only;
@@ -267,8 +362,10 @@ export default function AdminUsersPage() {
                 message="Todavía no hay clientes."
               />
             ) : (
-              <div className="rx-scroll overflow-x-auto">
-                <table className="w-full min-w-[640px] border-collapse">
+              <>
+                {/* Desktop: the dense 7-column table. */}
+                <div className="hidden rx-scroll overflow-x-auto lg:block">
+                  <table className="w-full min-w-[640px] border-collapse">
                   <thead>
                     <tr>
                       <Th>Correo</Th>
@@ -356,8 +453,24 @@ export default function AdminUsersPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                  </table>
+                </div>
+                {/* Phone/tablet: one card per user — every field reflowed to a
+                    single column, with touch-sized actions. Same data, no
+                    horizontal scroll. */}
+                <ul className="flex flex-col gap-3 p-3 lg:hidden">
+                  {users.data.items.map((u) => (
+                    <UserCard
+                      key={u.id}
+                      isOwner={isOwner}
+                      user={u}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({ queryKey: USERS_KEY })
+                      }
+                    />
+                  ))}
+                </ul>
+              </>
             ))}
         </SectionCard>
       </div>

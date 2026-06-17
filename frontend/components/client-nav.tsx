@@ -18,6 +18,7 @@ import { siteConfig } from "@/config/site";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
 import { PlanBadge } from "@/components/ui/plan-badge";
@@ -76,7 +77,7 @@ function NavItem({
   return (
     <Link
       className={clsx(
-        "rx-focus relative rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
+        "tap-44 rx-focus relative flex items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
         active
           ? "bg-surface-tertiary text-foreground"
           : "text-muted hover:text-foreground",
@@ -175,19 +176,23 @@ export function ClientNav() {
           </Link>
           {/* Desktop: inline nav tabs. */}
           <nav className="hidden items-center gap-1 lg:flex">{items()}</nav>
+          {/* On phones the cockpit ring + bottom-nav live dot already carry
+              state; the header pill returns at sm+ where there's room. */}
           {live.state !== "idle" && (
-            <StatePill
-              dot={
-                live.state === "sending"
-                  ? "pulse"
-                  : live.state === "paused" || live.state === "waiting"
-                    ? "static"
-                    : undefined
-              }
-              tone={PILL_TONE[live.state]}
-            >
-              {PILL_COPY[live.state]}
-            </StatePill>
+            <span className="hidden sm:inline-flex">
+              <StatePill
+                dot={
+                  live.state === "sending"
+                    ? "pulse"
+                    : live.state === "paused" || live.state === "waiting"
+                      ? "static"
+                      : undefined
+                }
+                tone={PILL_TONE[live.state]}
+              >
+                {PILL_COPY[live.state]}
+              </StatePill>
+            </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
@@ -215,8 +220,16 @@ export function ClientNav() {
             </Btn>
           )}
           <ThemeToggle />
-          <Btn size="sm" variant="secondary" onClick={logout}>
-            Cerrar sesión
+          {/* Icon-only on phones (text returns at sm+) so the header clears the
+              plan badge + theme toggle without overflow on a ~360px screen. */}
+          <Btn
+            aria-label="Cerrar sesión"
+            size="sm"
+            variant="secondary"
+            onClick={logout}
+          >
+            <Icon name="logout" size={16} />
+            <span className="hidden sm:inline">Cerrar sesión</span>
           </Btn>
         </div>
       </header>
@@ -228,7 +241,7 @@ export function ClientNav() {
             desktop-only). Hidden for staff so their nav doesn't overflow. */}
         {!isStaff && (
           <a
-            className="rx-focus relative flex-1 rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
+            className="tap-44 rx-focus relative flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
             href={siteConfig.contact.telegram}
             rel="noopener noreferrer"
             target="_blank"

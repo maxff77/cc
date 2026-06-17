@@ -78,7 +78,9 @@ export function Field({
         <input
           autoComplete={autoComplete}
           className={clsx(
-            "min-w-0 flex-1 border-none bg-transparent text-sm text-[var(--field-foreground)] outline-none placeholder:text-[var(--field-placeholder)]",
+            // text-base on phones (<640) keeps inputs ≥16px so iOS Safari does
+            // not zoom the viewport on focus; design size returns at sm+.
+            "min-w-0 flex-1 border-none bg-transparent text-base text-[var(--field-foreground)] outline-none placeholder:text-[var(--field-placeholder)] sm:text-sm",
             mono && "font-mono",
             inputClassName,
           )}
