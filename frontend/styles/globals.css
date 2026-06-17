@@ -221,6 +221,21 @@ body {
   opacity: .5;
 }
 
+/* client content shell: fluid responsive container — clamp gutters scale
+   320px → 4K with no breakpoint jump; bottom clears the mobile bottom nav +
+   home-indicator safe area; capped reading width. */
+.client-shell {
+  width: 100%;
+  margin-inline: auto;
+  max-width: 1400px;
+  padding-inline: clamp(1rem, 4vw, 4rem);
+  padding-top: clamp(1rem, 2.5vw, 2rem);
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 1024px) {
+  .client-shell { padding-bottom: clamp(1.5rem, 2.5vw, 2.5rem); }
+}
+
 /* engraved-legend mask: background above the border line, surface below */
 .legend-mask {
   background: linear-gradient(to bottom, var(--background) 50%, var(--surface) 50%);
