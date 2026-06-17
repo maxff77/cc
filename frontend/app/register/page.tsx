@@ -19,10 +19,12 @@ interface RegisterResponse {
   home_path: string;
 }
 
-// Mirror the backend min (auth.py _PASSWORD_MIN). Guarding client-side keeps a
-// short password from reaching the API as an opaque 422 (the {detail} body the
-// fetch wrapper can only render as a generic "error inesperado").
+// Mirror the backend bounds (auth.py _PASSWORD_MIN / _PASSWORD_MAX). Guarding
+// client-side keeps an out-of-range password from reaching the API as an opaque
+// 422 (the {detail} body the fetch wrapper can only render as a generic "error
+// inesperado").
 const PASSWORD_MIN = 8;
+const PASSWORD_MAX = 128;
 
 // Code → Spanish copy, mapped client-side so the UI is stable if a backend
 // message changes (same pattern as the login page).
@@ -47,6 +49,14 @@ export default function RegisterPage() {
     if (password.length < PASSWORD_MIN) {
       setPasswordError(
         `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres.`,
+      );
+
+      return;
+    }
+
+    if (password.length > PASSWORD_MAX) {
+      setPasswordError(
+        `La contraseña no puede superar ${PASSWORD_MAX} caracteres.`,
       );
 
       return;

@@ -119,10 +119,17 @@ async def register_account(
     with a plan). A self-registered user must be locked out until an owner
     activates a plan, so:
 
-    - ``expires_at = now(UTC)`` → already-expired. ``is_plan_expired`` is True
-      the instant it is checked (boundary is ``<=``). It is deliberately NOT
-      ``None``: a ``None`` ``expires_at`` reads as *no plan limit* (not expired),
-      which would grant full access — the exact opposite of what we want.
+    - ``expires_at = now(UTC) - 1 day`` → robustly already-expired. A full-day
+      margin (not exactly ``now()``) keeps the account expired under BOTH expiry
+      clocks: the auth gate compares against the Python clock (``is_plan_expired``)
+      while the send worker's guard compares against the SQL clock
+      (``tenant_plan_expired`` → ``expires_at <= func.now()``). Exactly ``now()``
+      leaves a sub-second skew window where the SQL-clock check could read the
+      no-plan tenant as still active (the legacy "seconds of skew can't move a
+      day-scale expiry" reasoning only holds with a real margin). It is
+      deliberately NOT ``None``: a ``None`` ``expires_at`` reads as *no plan
+      limit* (not expired), which would grant full access — the opposite of
+      what we want.
     - ``plan_id`` stays NULL and the fresh tenant keeps ``credit_balance = 0``;
       no plan link, no credits, no sending until the owner acts.
     - ``contact`` stays NULL (we collect email + password only).
@@ -143,7 +150,7 @@ async def register_account(
             email=email,
             password_hash=hash_password(password),
             role="client",
-            expires_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) - timedelta(days=1),
             contact=None,
         )
     except IntegrityError as exc:

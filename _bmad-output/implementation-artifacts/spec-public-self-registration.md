@@ -2,7 +2,7 @@
 title: 'Public self-registration with no-plan → Telegram-contact lockout'
 type: 'feature'
 created: '2026-06-17'
-status: 'in-review'
+status: 'done'
 baseline_commit: 'fde30028ad49729e550160567a51b0e7a494f18d'
 context:
   - '{project-root}/CLAUDE.md'
@@ -70,6 +70,10 @@ context:
 - Given a no-plan/expired user logging in via `/login`, when credentials are valid, then they receive a session and reach `/expired` (no `/login`↔`/expired` bounce loop).
 - Given a self-registered user before activation, when they attempt any send/batch action, then it is refused by the existing `plan_expired` gate (zero blast radius on the shared account).
 
+## Spec Change Log
+
+- **2026-06-17 (step-04 review, patch — no loopback):** Edge-case review flagged that the frozen "Always" rule `expires_at = now(UTC)` leaves a sub-second skew window: the auth gate (`is_plan_expired`) compares against the Python clock while the send worker's guard (`tenant_plan_expired`) compares against the SQL clock (`func.now()`), so an app clock running ahead of the DB could read a no-plan tenant as still active on the SQL path. **Amended (code only, frozen intent unchanged):** `register_account` now sets `expires_at = now(UTC) - 1 day` — robustly already-expired under both clocks, restoring the legacy day-scale margin. This serves the unambiguous frozen intent ("already-expired, locked out, never None") more safely; the literal `now(UTC)` was a mechanism, not the intent. Avoids the known-bad state: brief unauthorized sending on the 🔒 shared Telegram account during clock skew. **KEEP:** never use `None` (reads as no-plan-limit), and keep the per-IP register throttle.
+
 ## Verification
 
 **Commands:**
@@ -79,3 +83,48 @@ context:
 
 **Manual checks:**
 - Register a new email → verify the browser lands on `/expired` with the `@yesterWhite` Telegram contact, then have an owner assign a plan and confirm the tab auto-enters the cockpit.
+
+## Suggested Review Order
+
+**Registration endpoint (entry point — grasp the whole flow here)**
+
+- Public signup: throttle → create no-plan client → session cookie → route to lockout.
+  [`auth.py:173`](../../backend/app/api/auth.py#L173)
+
+- The no-plan client row: `expires_at = now - 1 day` (robust expiry under both clocks), no plan, no credits.
+  [`users.py:110`](../../backend/app/services/users.py#L110)
+
+**Login bounce-loop fix (the riskiest change — auth semantics)**
+
+- Expired client now gets a (gated) session + home_path instead of a 403 — kills the /login↔/expired loop.
+  [`auth.py:259`](../../backend/app/api/auth.py#L259)
+
+**Anti-abuse + validation**
+
+- Per-IP register rate cap (counting successes is intentional — see Spec Change Log / deferred-work).
+  [`auth.py(register_throttle):164`](../../backend/app/services/auth.py#L164)
+
+- Email-canonical + 8–128 password bounds, mirroring admin creation.
+  [`auth.py(_EMAIL_RE):34`](../../backend/app/api/auth.py#L34)
+
+**Frontend surfaces**
+
+- `/register` page: form, client-side password bounds, success → navigate to home_path.
+  [`register/page.tsx:44`](../../frontend/app/register/page.tsx#L44)
+
+- Middleware: `/register` is now a public route (segment-anchored, no leak).
+  [`middleware.ts:185`](../../frontend/middleware.ts#L185)
+
+- `/expired` copy neutralized to fit new no-plan + expired alike.
+  [`expired/page.tsx:16`](../../frontend/app/expired/page.tsx#L16)
+
+- "Crear cuenta" link from the login card.
+  [`login/page.tsx:180`](../../frontend/app/login/page.tsx#L180)
+
+**Tests (supporting)**
+
+- Register: happy path (no-plan/expired row), duplicate, short password, rate-limit.
+  [`test_register.py:53`](../../backend/tests/test_register.py#L53)
+
+- Updated expiry contract: expired login is now 200-with-session, then /me 403.
+  [`test_plan_expiry.py:54`](../../backend/tests/test_plan_expiry.py#L54)
