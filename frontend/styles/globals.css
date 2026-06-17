@@ -52,7 +52,7 @@
   --field-background:             oklch(99.0% 0.004 280);
   --field-border:                 oklch(88.0% 0.016 286);
   --field-foreground:             oklch(23.0% 0.022 285);
-  --field-placeholder:            oklch(60.0% 0.022 286);
+  --field-placeholder:            oklch(55.0% 0.022 286);  /* AA: ≥4.5:1 on field-bg (was 60% → 3.85) */
 
   /* overlays / segments / scrollbar (HeroUI-required → mapped to neon surfaces) */
   --overlay:                      oklch(100% 0 0);
@@ -73,6 +73,15 @@
   --accent-from:                  oklch(60.0% 0.150 222);
   --accent-to:                    oklch(56.0% 0.260 332);
 
+  /* Deepened sibling of --brand-gradient for surfaces that carry WHITE TEXT
+     (primary button, selected pills). Every stop clears 4.5:1 against white in
+     both themes, so labels stay AA-legible across the sweep. The bright
+     --brand-gradient stays for text-free decorative moments (progress ring,
+     under-bars, soft washes). Theme-independent: defined once on :root. */
+  --gradient-button: linear-gradient(102deg,
+      oklch(52% 0.14 216) 0%, oklch(50% 0.20 260) 36%,
+      oklch(48% 0.23 300) 66%, oklch(50% 0.25 332) 100%);
+
   /* semantics */
   --success:                      oklch(58.0% 0.150 150);
   --success-foreground:           oklch(99.0% 0 0);
@@ -84,8 +93,12 @@
   /* the hero gradient + soft wash + circuit decoration */
   --brand-gradient: linear-gradient(102deg,
       var(--cyan) 0%, var(--blue) 34%, var(--accent) 62%, var(--magenta) 100%);
-  --brand-gradient-soft: linear-gradient(102deg,
-      oklch(60% 0.15 222 / .12) 0%, oklch(54% 0.23 295 / .12) 55%, oklch(56% 0.26 332 / .12) 100%);
+  /* Light wash kept to a faint cool hint — a 4-stop rainbow at .12 turned the
+     white auth card pastel/washed-out. A single violet-leaning sweep at low
+     alpha lets the card read as a clean white plate, separation carried by the
+     border. (Dark keeps its richer .18 tint — it reads as depth, not pastel.) */
+  --brand-gradient-soft: linear-gradient(165deg,
+      oklch(60% 0.15 222 / .05) 0%, oklch(54% 0.23 295 / .05) 55%, transparent 100%);
   --circuit: oklch(55% 0.14 255 / 0.18);
 
   /* radius + tunables (theme-independent: :root always matches).
@@ -196,6 +209,8 @@ body {
    free. Gradient-on-TEXT is now sanctioned (the wordmark) via `.gradient-text`. */
 .gradient-moment { background-image: var(--brand-gradient); }
 .brand-fill { background: var(--brand-gradient); }
+/* AA-safe gradient fill for white-text surfaces — see --gradient-button. */
+.btn-fill { background: var(--gradient-button); }
 .gradient-text {
   background: var(--brand-gradient);
   -webkit-background-clip: text; background-clip: text;

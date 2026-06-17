@@ -313,7 +313,7 @@ export default function AdminUsersPage() {
                   className={clsx(
                     "rx-focus flex-1 rounded-[var(--radius-sm)] px-2.5 py-2 font-display text-[13px] font-semibold tracking-[0.02em] transition-colors",
                     tab === id
-                      ? "brand-fill text-white"
+                      ? "btn-fill text-white"
                       : "text-muted hover:text-foreground",
                   )}
                   type="button"

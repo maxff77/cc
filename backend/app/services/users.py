@@ -107,6 +107,52 @@ async def create_account(
     return user
 
 
+async def register_account(
+    session: AsyncSession,
+    *,
+    email: str,
+    password: str,
+) -> User:
+    """Self-service signup: create a client (and its tenant) with NO plan.
+
+    The public-registration sibling of ``create_account`` (which an admin drives
+    with a plan). A self-registered user must be locked out until an owner
+    activates a plan, so:
+
+    - ``expires_at = now(UTC)`` → already-expired. ``is_plan_expired`` is True
+      the instant it is checked (boundary is ``<=``). It is deliberately NOT
+      ``None``: a ``None`` ``expires_at`` reads as *no plan limit* (not expired),
+      which would grant full access — the exact opposite of what we want.
+    - ``plan_id`` stays NULL and the fresh tenant keeps ``credit_balance = 0``;
+      no plan link, no credits, no sending until the owner acts.
+    - ``contact`` stays NULL (we collect email + password only).
+
+    Duplicate email → ``email_taken`` (case-insensitive pre-check + the racy
+    flush guard, same contract as ``create_account``). The caller commits.
+    """
+    email = email.lower()
+    if await users_repo.get_by_email(session, email) is not None:
+        raise email_taken()
+
+    tenant = await users_repo.create_tenant(session, name=email)
+
+    try:
+        return await users_repo.create_user(
+            session,
+            tenant_id=tenant.id,
+            email=email,
+            password_hash=hash_password(password),
+            role="client",
+            expires_at=datetime.now(UTC),
+            contact=None,
+        )
+    except IntegrityError as exc:
+        # Pre-check is racy: a concurrent insert of the same email only trips
+        # the unique constraint at flush. Map to the same email_taken contract
+        # instead of a 500 (get_session rolls back on the propagating AppError).
+        raise email_taken() from exc
+
+
 async def set_contact(
     session: AsyncSession, target: User, contact: str | None
 ) -> User:

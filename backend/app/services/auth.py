@@ -154,3 +154,14 @@ login_throttle = LoginThrottle(
     max_attempts=settings.throttle_max_attempts,
     window_seconds=settings.throttle_window_seconds,
 )
+
+# Public self-registration is an UNAUTHENTICATED write, so it gets its own
+# rate limiter to bound DB-spam from anonymous callers. Unlike the login
+# throttle (keyed per email+ip, counting only failures) this is a pure per-IP
+# rate cap: the router keys every attempt under a CONSTANT email so all signups
+# from one IP share a single bucket — an attacker can't dodge the cap by
+# rotating the email. Same per-process / reset-on-restart semantics.
+register_throttle = LoginThrottle(
+    max_attempts=settings.throttle_max_attempts,
+    window_seconds=settings.throttle_window_seconds,
+)

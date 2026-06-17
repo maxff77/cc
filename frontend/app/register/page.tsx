@@ -3,8 +3,6 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import { siteConfig } from "@/config/site";
-import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
 import { LabelCaps } from "@/components/ui/label-caps";
@@ -13,7 +11,7 @@ import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { Notice } from "@/components/ui/notice";
 
-interface LoginResponse {
+interface RegisterResponse {
   id: number;
   email: string;
   role: string;
@@ -21,63 +19,64 @@ interface LoginResponse {
   home_path: string;
 }
 
-// Code → Spanish copy. AC2/AC4 strings are verbatim from the UX spec; we map on
-// the client so the UI is stable even if a backend message changes.
+// Mirror the backend min (auth.py _PASSWORD_MIN). Guarding client-side keeps a
+// short password from reaching the API as an opaque 422 (the {detail} body the
+// fetch wrapper can only render as a generic "error inesperado").
+const PASSWORD_MIN = 8;
+
+// Code → Spanish copy, mapped client-side so the UI is stable if a backend
+// message changes (same pattern as the login page).
 const COPY: Record<string, string> = {
-  invalid_credentials: "Correo o contraseña incorrectos.",
-  account_blocked:
-    "Tu cuenta está bloqueada. Escríbenos por Telegram para reactivarla.",
+  email_taken: "Ya existe una cuenta con ese correo.",
   too_many_attempts: "Demasiados intentos. Espera unos minutos.",
 };
 
-type Notice = { kind: "blocked" } | { kind: "banner"; message: string } | null;
-
-export default function LoginPage() {
+export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [credentialError, setCredentialError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setCredentialError(null);
-    setNotice(null);
+    setPasswordError(null);
+    setBanner(null);
+
+    if (password.length < PASSWORD_MIN) {
+      setPasswordError(
+        `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres.`,
+      );
+
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const res = await api.post<LoginResponse>("/api/auth/login", {
+      const res = await api.post<RegisterResponse>("/api/auth/register", {
         email,
         password,
       });
 
-      // Full navigation so the new session cookie is picked up by middleware.
+      // Full navigation so the new session cookie is picked up by middleware,
+      // which routes the no-plan session on to /expired (the contact surface).
       window.location.assign(res.home_path);
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.code === "invalid_credentials") {
-          // AC2: inline field-level error; email stays filled; no redirect.
-          setCredentialError(COPY.invalid_credentials);
-        } else if (err.code === "plan_expired") {
-          // lib/api.ts already routed to /expired (the hard-lockout page);
-          // suppress the generic banner while that navigation lands.
-        } else if (err.code === "account_blocked") {
-          setNotice({ kind: "blocked" });
+        if (err.code === "email_taken") {
+          setBanner(COPY.email_taken);
         } else if (err.code === "too_many_attempts") {
-          setNotice({ kind: "banner", message: COPY.too_many_attempts });
+          setBanner(COPY.too_many_attempts);
         } else {
-          setNotice({ kind: "banner", message: err.message });
+          setBanner(err.message);
         }
       } else {
-        setNotice({
-          kind: "banner",
-          message: "No pudimos conectar. Intenta de nuevo.",
-        });
+        setBanner("No pudimos conectar. Intenta de nuevo.");
       }
     } finally {
-      // Always re-enable the form: window.location.assign() doesn't block, and
-      // bfcache can restore this page (Back button) with its last rendered
-      // state — a missed reset would leave the button stuck on "Entrando…".
+      // Always re-enable: window.location.assign() doesn't block and bfcache
+      // can restore this page (Back) with its last rendered state.
       setSubmitting(false);
     }
   }
@@ -100,16 +99,13 @@ export default function LoginPage() {
           style={{ backgroundImage: "var(--brand-gradient-soft)" }}
         >
           <h1 className="mb-6 text-center font-display text-[19px] font-extrabold uppercase tracking-[0.18em] text-foreground">
-            Iniciar sesión
+            Crear cuenta
           </h1>
 
-          {notice?.kind === "banner" && (
+          {banner && (
             <Notice className="mb-4" status="danger">
-              {notice.message}
+              {banner}
             </Notice>
-          )}
-          {notice?.kind === "blocked" && (
-            <ContactPanel className="mb-4" message={COPY.account_blocked} />
           )}
 
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
@@ -126,12 +122,12 @@ export default function LoginPage() {
             />
             <Field
               required
-              autoComplete="current-password"
-              error={credentialError}
+              autoComplete="new-password"
+              error={passwordError}
               icon="lock"
               label="Contraseña"
               name="password"
-              placeholder="••••••••"
+              placeholder="Mínimo 8 caracteres"
               rightSlot={
                 <button
                   aria-label={
@@ -148,7 +144,7 @@ export default function LoginPage() {
               value={password}
               onChange={(v) => {
                 setPassword(v);
-                if (credentialError) setCredentialError(null);
+                if (passwordError) setPasswordError(null);
               }}
             />
 
@@ -161,28 +157,16 @@ export default function LoginPage() {
               type="submit"
               variant="primary"
             >
-              {submitting ? "Entrando…" : "Iniciar sesión"}
+              {submitting ? "Creando…" : "Crear cuenta"}
             </Btn>
 
             <p className="m-0 flex items-center justify-center gap-2">
-              <LabelCaps>Soporte Telegram</LabelCaps>
+              <LabelCaps>¿Ya tienes cuenta?</LabelCaps>
               <a
                 className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
-                href={siteConfig.contact.telegram}
-                rel="noopener noreferrer"
-                target="_blank"
+                href="/login"
               >
-                @{siteConfig.contact.handle}
-              </a>
-            </p>
-
-            <p className="m-0 flex items-center justify-center gap-2 border-t border-border pt-4">
-              <LabelCaps>¿No tienes cuenta?</LabelCaps>
-              <a
-                className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
-                href="/register"
-              >
-                Crear cuenta
+                Iniciar sesión
               </a>
             </p>
           </form>

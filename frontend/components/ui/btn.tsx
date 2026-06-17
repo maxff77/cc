@@ -2,9 +2,10 @@
 
 // Native button (Ranger-X handoff lib.jsx `Btn`) — replaces HeroUI <Button>.
 // Saira display type, token-driven variants, field radius. Primary wears the
-// brand gradient + neon glow (the one gradient-on-a-surface moment); the glow
-// scales with --glow. It's a real <button>, so callers use onClick (not the
-// HeroUI onPress) and standard button attributes pass through.
+// AA-safe deepened brand gradient (--gradient-button via .btn-fill, every stop
+// ≥4.5:1 with the white label) + neon glow (the one gradient-on-a-surface
+// moment); the glow scales with --glow. It's a real <button>, so callers use
+// onClick (not the HeroUI onPress) and standard button attributes pass through.
 import type { ButtonHTMLAttributes } from "react";
 
 import clsx from "clsx";
@@ -29,7 +30,7 @@ const SIZE_CLASS: Record<BtnSize, string> = {
 // Variant surfaces. color-mix borders mirror the handoff's danger/warning
 // outline buttons; primary's gradient + glow ride inline style below.
 const VARIANT_CLASS: Record<BtnVariant, string> = {
-  primary: "text-white border-none brand-fill",
+  primary: "text-white border-none btn-fill",
   secondary: "bg-surface-secondary text-foreground border-border",
   ghost: "bg-transparent text-muted border-transparent hover:text-foreground",
   danger:

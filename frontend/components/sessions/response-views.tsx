@@ -307,6 +307,12 @@ interface ResponseViewsProps {
   exportPathFiltradaCompleta?: string;
   exportPathFiltrada?: string;
   className?: string;
+  // `fill` (cockpit): the parent is height-capped to the viewport, so stretch
+  // the panels to fill it (1fr rows) and let each list flex-scroll inside its
+  // panel — no `max-h` magic number, no dead space below short results. Absent
+  // (Historial detail): the page flows, so panels keep a viewport-relative
+  // `max-h` and the list scrolls within that.
+  fill?: boolean;
 }
 
 // Desktop recomposition: three side-by-side panels (handoff ResultPanel grid),
@@ -321,25 +327,39 @@ export function ResponseColumns({
   exportPathFiltradaCompleta,
   exportPathFiltrada,
   className,
+  fill,
 }: ResponseViewsProps) {
+  // fill ⇒ stretch to the capped parent; otherwise cap each list to the viewport.
+  const listClassName = fill ? undefined : COLUMN_LIST;
+  const panelClassName = fill ? "lg:h-full lg:min-h-0" : undefined;
+
   return (
-    <div className={clsx("grid grid-cols-3 gap-5", className)}>
+    <div
+      className={clsx(
+        "grid grid-cols-3 gap-5",
+        fill && "lg:h-full lg:min-h-0 lg:[grid-template-rows:minmax(0,1fr)]",
+        className,
+      )}
+    >
       <CompletaPanel
+        className={panelClassName}
         exportPath={exportPathCompleta}
-        listClassName={COLUMN_LIST}
+        listClassName={listClassName}
         responses={responses}
         total={responsesTotal}
       />
       <FiltradaConResponsePanel
+        className={panelClassName}
         exportPath={exportPathFiltradaCompleta}
-        listClassName={COLUMN_LIST}
+        listClassName={listClassName}
         responses={responses}
         total={responsesOkTotal}
       />
       <FiltradaPanel
         cc={cc}
+        className={panelClassName}
         exportPath={exportPathFiltrada}
-        listClassName={COLUMN_LIST}
+        listClassName={listClassName}
         total={ccTotal}
       />
     </div>

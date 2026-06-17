@@ -51,8 +51,14 @@ async def created() -> AsyncIterator[set[str]]:
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_login_as_expired_client_is_rejected(created: set[str]) -> None:
-    """A client whose plan already lapsed cannot log in; no cookie is set."""
+async def test_expired_client_logs_in_but_is_gated(created: set[str]) -> None:
+    """A client whose plan already lapsed CAN log in (gets a gated session).
+
+    A fresh login by a no-plan/expired client must set the cookie so the
+    /expired page can poll /me and auto-recover on renewal — without it the
+    client would 403 with no session and bounce in a /login↔/expired loop. The
+    session is harmless: every gated request is 403 plan_expired'd server-side.
+    """
     past = datetime.now(UTC) - timedelta(days=1)
     user = await _seed("client", expires_at=past)
     created.add(user.email)
@@ -62,9 +68,15 @@ async def test_login_as_expired_client_is_rejected(created: set[str]) -> None:
             "/api/auth/login",
             json={"email": user.email, "password": PASSWORD},
         )
-        assert res.status_code == 403, res.text
-        assert res.json()["code"] == "plan_expired"
-        assert settings.session_cookie_name not in client.cookies
+        assert res.status_code == 200, res.text
+        assert settings.session_cookie_name in client.cookies
+        # Role default; the middleware routes the no-plan session on to /expired.
+        assert res.json()["home_path"] == "/"
+
+        # The session exists but is gated: /me answers the repeatable 403.
+        me = await client.get("/api/auth/me")
+        assert me.status_code == 403, me.text
+        assert me.json()["code"] == "plan_expired"
 
 
 @pytest.mark.asyncio(loop_scope="session")

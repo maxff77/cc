@@ -169,18 +169,19 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Run on everything EXCEPT /login, /expired (must be reachable WITHOUT a
-  // session — a freshly-locked-out client has had theirs revoked), Next
-  // internals, the API (backend owns API auth), /ws (the backend owns WS auth
-  // via the cookie handshake — middleware must not consume a /me round-trip
-  // or interfere with the upgrade, Story 2.2), and static files — a KNOWN
-  // asset extension, so /public assets never burn a backend /me call. The
-  // exclusion is an explicit extension list, NOT `.+\.\w+$`: dynamic segments
-  // like /admin/tenants/1.2 contain a dot, and a bare any-extension exclusion
-  // would skip the /admin role gate on them (Story 3.6 review).
+  // Run on everything EXCEPT /login, /register, /expired (must be reachable
+  // WITHOUT a session — a fresh visitor signing up has no cookie, and a
+  // freshly-locked-out client has had theirs revoked), Next internals, the API
+  // (backend owns API auth), /ws (the backend owns WS auth via the cookie
+  // handshake — middleware must not consume a /me round-trip or interfere with
+  // the upgrade, Story 2.2), and static files — a KNOWN asset extension, so
+  // /public assets never burn a backend /me call. The exclusion is an explicit
+  // extension list, NOT `.+\.\w+$`: dynamic segments like /admin/tenants/1.2
+  // contain a dot, and a bare any-extension exclusion would skip the /admin
+  // role gate on them (Story 3.6 review).
   // Exclusions are anchored to a path segment (`login$`/`login/`) so unrelated
   // routes like `/logins` or `/api-keys` are still gated.
   matcher: [
-    "/((?!login(?:/|$)|expired(?:/|$)|api(?:/|$)|ws(?:/|$)|_next/|.+\\.(?:js|css|map|json|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|txt|xml)$).*)",
+    "/((?!login(?:/|$)|register(?:/|$)|expired(?:/|$)|api(?:/|$)|ws(?:/|$)|_next/|.+\\.(?:js|css|map|json|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|txt|xml)$).*)",
   ],
 };

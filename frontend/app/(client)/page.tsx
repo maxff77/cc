@@ -7,8 +7,9 @@
 // scrolls within a viewport-height grid, beside the three result panels —
 // side-by-side on desktop, segmented tabs on phone/tablet. The grid is capped to
 // the viewport on lg so the page never grows into a runaway scroll; each pane
-// scrolls on its own. The right panels keep their own internal scroll
-// (response-views), so the right column stays uncapped here.
+// scrolls on its own. BOTH columns inherit the cap (lg:h-full lg:min-h-0) and
+// the right column passes `fill` so its panels stretch to the cap — lists scroll
+// inside each panel and no dead space opens below short results.
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -111,7 +112,7 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="grid gap-5 lg:h-[calc(100dvh-7.5rem)] lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden">
+    <div className="grid gap-5 lg:h-[calc(100dvh-8.5rem)] lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden">
       {/* Master — ring, session, controls, form. On wide screens the grid is
           capped to the viewport (≈ chrome offset) and each column scrolls on its
           own, so the page itself never grows into a runaway scroll. Below lg the
@@ -155,15 +156,19 @@ export default function EnvioPage() {
       {/* Detail — the Completa/Filtrada views the operator watches. Three
           side-by-side panels on desktop; segmented tabs on phone/tablet. Always
           rendered (never gated on isLive): in idle it shows the empty states or
-          the still-active session's rows — the data survives the lote. */}
-      <div className="min-w-0">
-        <div className="hidden lg:block">
+          the still-active session's rows — the data survives the lote. On lg the
+          column inherits the grid's viewport cap and `fill` stretches the panels
+          to it, so each list scrolls INSIDE its panel and no dead space opens
+          below short/empty results. Below lg the tabs flow with the page. */}
+      <div className="min-w-0 lg:h-full lg:min-h-0">
+        <div className="hidden lg:block lg:h-full lg:min-h-0">
           <ResponseColumns
             cc={live.cc}
             ccTotal={live.ccNew}
             exportPathCompleta={exportCompleta}
             exportPathFiltrada={exportFiltrada}
             exportPathFiltradaCompleta={exportFiltradaCompleta}
+            fill
             responses={live.responses}
             responsesOkTotal={live.responsesOkTotal}
             responsesTotal={live.responsesTotal}

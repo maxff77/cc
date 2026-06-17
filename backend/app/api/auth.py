@@ -4,6 +4,7 @@ Implements the error contract from ``app.errors`` and sets the opaque
 server-side session cookie (see Dev Notes / architecture for exact flags).
 """
 
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -22,11 +23,17 @@ from app.errors import (
     forbidden,
     invalid_credentials,
     password_reuse,
-    plan_expired,
     too_many_attempts,
 )
 from app.services import auth as auth_service
 from app.services import plans as plans_service
+from app.services import users as users_service
+
+# Same canonical-email / min-length contract the admin create-user path uses
+# (admin.py _EMAIL_RE / _PASSWORD_MIN). Public registration must not be laxer.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PASSWORD_MIN = 8
+_PASSWORD_MAX = 128
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -37,6 +44,34 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    """Public self-signup body — email + password only (no plan, no contact)."""
+
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def _canonical_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("email inválido")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _password_bounds(cls, v: str) -> str:
+        # Lower bound mirrors admin creation (_PASSWORD_MIN = 8); the upper
+        # bound caps argon2 input so an unauthenticated caller can't use an
+        # unbounded body as a CPU-exhaustion vector (same reasoning as the
+        # change-password validator).
+        if len(v) < _PASSWORD_MIN:
+            raise ValueError("contraseña demasiado corta")
+        if len(v) > _PASSWORD_MAX:
+            raise ValueError("contraseña demasiado larga")
+        return v
 
 
 class PlanSummary(BaseModel):
@@ -134,6 +169,47 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+@router.post("/register", response_model=LoginResponse, status_code=201)
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> LoginResponse:
+    """Public self-signup: create a no-plan client, auto-log-in, route to lockout.
+
+    No auth dependency — this is the one unauthenticated write besides login.
+    The new user has NO plan, so every gated request answers 403 plan_expired;
+    ``home_path`` routes them to ``/`` where the middleware bounces the no-plan
+    session to ``/expired`` (the Telegram-contact surface). An owner activating
+    a plan later flips them in with no re-login (the /expired poll recovers).
+    Rate-limited per client IP so an anonymous caller can't spam tenant rows.
+    """
+    ip = _client_ip(request)
+    # Pure per-IP rate cap: a constant key so all signups from one IP share one
+    # bucket regardless of the email submitted. Count the attempt BEFORE doing
+    # work so the cap holds whether or not the email turns out to be a duplicate.
+    if auth_service.register_throttle.is_blocked("register", ip):
+        raise too_many_attempts()
+    auth_service.register_throttle.register_failure("register", ip)
+
+    user = await users_service.register_account(
+        session, email=body.email, password=body.password
+    )
+    auth_session = await auth_service.create_session(session, user)
+    await session.commit()
+    _set_session_cookie(response, auth_session.token)
+
+    return LoginResponse(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        tenant_id=user.tenant_id,
+        expires_at=user.expires_at,
+        home_path=_home_path_for(user.role),
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(
     body: LoginRequest,
@@ -169,14 +245,26 @@ async def login(
     # state (and one later typo would re-trip the 429).
     auth_service.login_throttle.reset(body.email, ip)
 
-    # Reveal expiry only AFTER the password checks out (same reasoning as the
-    # blocked check above). No session row is created for an expired client.
-    if plans_service.is_plan_expired(user):
-        raise plan_expired()
-
     auth_session = await auth_service.create_session(session, user)
     await session.commit()
     _set_session_cookie(response, auth_session.token)
+
+    # An expired client STILL gets a session (it is harmless — every gated
+    # request is 403 plan_expired'd server-side by deps). This is what the
+    # /expired page needs to poll /me and auto-recover on renewal; without it a
+    # fresh login by a no-plan/expired user (the common self-registration case)
+    # would 403 with no cookie and bounce in a /login↔/expired loop. home_path
+    # is the role default (/ for a client) — the middleware routes the no-plan
+    # session on to /expired. (Blocked stays a hard 403 above, no session.)
+    if plans_service.is_plan_expired(user):
+        return LoginResponse(
+            id=user.id,
+            email=user.email,
+            role=user.role,
+            tenant_id=user.tenant_id,
+            expires_at=user.expires_at,
+            home_path=_home_path_for(user.role),
+        )
 
     # The must_change_password flag never blocks login — it steers it (1.6):
     # a flagged user gets a normal session whose every subsequent request is
