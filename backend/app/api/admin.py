@@ -480,14 +480,24 @@ _PG_INT_MAX = 2**31 - 1  # gates.id is int4; larger ids overflow the bind
 
 
 def _validate_gate_value(value: str) -> str:
-    """Single copy of the gate-value policy: trimmed, non-empty, no inner
-    whitespace, ≤20 chars. Verbatim otherwise — the leading dot is data, not
-    a format requirement."""
+    """Single copy of the gate-value policy: trimmed, internal space-runs
+    collapsed, non-empty, ≤20 chars. A single inner ASCII space IS allowed
+    (e.g. ``/xx x`` — a space-separated checker command); tabs, newlines and
+    other invisible/non-printable chars are rejected. ``str.isprintable()``
+    keeps the plain ASCII space (0x20) but flags every other separator/control
+    char. Otherwise verbatim — the leading dot is data, not a format
+    requirement."""
     value = value.strip()
     if not value:
         raise ValueError("gate vacío")
-    if any(ch.isspace() or not ch.isprintable() for ch in value):
-        raise ValueError("el gate no puede contener espacios ni caracteres invisibles")
+    if any(not ch.isprintable() for ch in value):
+        raise ValueError(
+            "el gate no puede contener tabulaciones, saltos de línea ni caracteres invisibles"
+        )
+    # Collapse internal ASCII-space runs to one. A stored double space would
+    # desync apply_gate's ``startswith(gate_value + " ")`` dedup and silently
+    # double-prefix re-pasted lines — the send-corruption class this repo guards.
+    value = re.sub(r" {2,}", " ", value)
     if len(value) > GATE_VALUE_MAX:
         raise ValueError("gate demasiado largo")
     return value

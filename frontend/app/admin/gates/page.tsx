@@ -61,12 +61,26 @@ function validateCategoryName(raw: string): string | null {
 }
 
 // Client-side mirror of the backend `_validate_gate_value` policy, so the
-// owner gets an inline message instead of a raw 422 round-trip.
+// owner gets an inline message instead of a raw 422 round-trip. Inner ASCII
+// spaces are allowed (e.g. "/xx x"); other whitespace (tabs, NBSP, unicode
+// separators) and invisible/control chars are rejected — same net effect as
+// the backend `not ch.isprintable()` check.
 function validateGateValue(raw: string): string | null {
-  const value = raw.trim();
+  // Trim ends and collapse internal space-runs to mirror the backend, which
+  // stores a single inner space (a stored double space would desync apply_gate).
+  const value = raw.trim().replace(/ {2,}/g, " ");
 
   if (!value) return "Ingresá un gate.";
-  if (/\s/.test(value)) return "El gate no puede contener espacios.";
+  // `[^\S ]` = any whitespace except the plain ASCII space (tabs, NBSP, unicode
+  // separators). The second class adds the control/format/zero-width chars JS
+  // `\s` misses (soft hyphen, bidi overrides, isolates, BOM…) so this stays a
+  // superset-reject of the backend `not isprintable()` check — no silent 422s.
+  if (
+    /[^\S ]|[\u0000-\u001f\u007f-\u009f\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/.test(
+      value,
+    )
+  )
+    return "El gate solo admite un espacio simple, sin tabulaciones ni caracteres invisibles.";
   if (value.length > GATE_VALUE_MAX)
     return `Máximo ${GATE_VALUE_MAX} caracteres.`;
 

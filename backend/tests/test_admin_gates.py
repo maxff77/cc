@@ -335,15 +335,31 @@ async def test_unauthenticated_gates_read_is_401(ctx: dict[str, object]) -> None
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
     "bad_value",
-    ["", "   ", ".z o", ".tab\there", "." + "x" * 20, ".z\u200bo", ".z\x00o"],
+    [
+        "",
+        "   ",
+        ".tab\there",
+        ".nl\no",
+        "." + "x" * 20,
+        ".z\u200bo",
+        ".z\x00o",
+        ".a\xa0b",
+        ".a\u2003b",
+        ".a\u202eb",
+        ".a\xadb",
+    ],
     ids=[
         "empty",
         "whitespace-only",
-        "inner-space",
         "inner-tab",
+        "inner-newline",
         "too-long",
         "zero-width-space",
         "nul-byte",
+        "nbsp",
+        "em-space",
+        "bidi-override",
+        "soft-hyphen",
     ],
 )
 async def test_validation_rejects_bad_values(
@@ -402,6 +418,38 @@ async def test_name_allows_spaces_and_is_required(
         json={"value": unique_gate_value(), "category_id": category["id"]},
     )
     assert res.status_code == 422
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_value_allows_inner_spaces(
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
+) -> None:
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    # A space-separated checker command (e.g. "/xx x") is a valid gate value:
+    # inner ASCII spaces are kept verbatim; only tabs/invisible chars are barred.
+    value = f"{unique_gate_value()} x"
+    body = await _create_gate(
+        owner_client, value, gates_created, category_id=category["id"]
+    )
+    assert body["value"] == value
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_value_collapses_inner_space_runs(
+    ctx: dict[str, object], gates_created: set[str], category: dict[str, object]
+) -> None:
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    # A double inner space (operator typo) is collapsed to one — a stored double
+    # space would desync apply_gate's ``startswith(gate_value + " ")`` dedup.
+    base = unique_gate_value()
+    expected = f"{base} x"
+    body = await _create_gate(
+        owner_client, f"{base}   x", gates_created, category_id=category["id"]
+    )
+    gates_created.add(expected)
+    assert body["value"] == expected
 
 
 @pytest.mark.asyncio(loop_scope="session")
