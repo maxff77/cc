@@ -14,7 +14,7 @@ import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import { siteConfig } from "@/config/site";
+import { siteConfig, telegramHref } from "@/config/site";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
@@ -201,22 +201,24 @@ export function ClientNav() {
           )}
           {/* Permanent seller/support contact (clients only) — reachable any
               time. Desktop only here; mobile gets it in the bottom nav below. */}
-          {!isStaff && (
-            <Btn
-              className="hidden lg:inline-flex"
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                window.open(
-                  siteConfig.contact.telegram,
-                  "_blank",
-                  "noopener,noreferrer",
-                )
-              }
-            >
-              Soporte
-            </Btn>
-          )}
+          {!isStaff &&
+            siteConfig.contacts.map((c) => (
+              <Btn
+                key={c.handle}
+                className="hidden lg:inline-flex"
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  window.open(
+                    telegramHref(c.handle),
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                @{c.handle}
+              </Btn>
+            ))}
           <ThemeToggle />
           {/* Icon-only on phones (text returns at sm+) so the header clears the
               plan badge + theme toggle without overflow on a ~360px screen. */}
@@ -237,10 +239,10 @@ export function ClientNav() {
         {items("flex-1 text-center")}
         {/* Always-on support contact on mobile, clients only (header link is
             desktop-only). Hidden for staff so their nav doesn't overflow. */}
-        {!isStaff && (
+        {!isStaff && siteConfig.contacts[0] && (
           <a
             className="tap-44 rx-focus relative flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
-            href={siteConfig.contact.telegram}
+            href={telegramHref(siteConfig.contacts[0].handle)}
             rel="noopener noreferrer"
             target="_blank"
           >

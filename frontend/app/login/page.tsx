@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import { siteConfig } from "@/config/site";
+import { siteConfig, telegramHref } from "@/config/site";
 import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
@@ -164,16 +164,19 @@ export default function LoginPage() {
               {submitting ? "Entrando…" : "Iniciar sesión"}
             </Btn>
 
-            <p className="m-0 flex items-center justify-center gap-2">
+            <p className="m-0 flex flex-wrap items-center justify-center gap-2">
               <LabelCaps>Soporte Telegram</LabelCaps>
-              <a
-                className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
-                href={siteConfig.contact.telegram}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                @{siteConfig.contact.handle}
-              </a>
+              {siteConfig.contacts.map((c) => (
+                <a
+                  key={c.handle}
+                  className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"
+                  href={telegramHref(c.handle)}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  @{c.handle}
+                </a>
+              ))}
             </p>
 
             <p className="m-0 flex items-center justify-center gap-2 border-t border-border pt-4">

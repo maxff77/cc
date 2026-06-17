@@ -1,14 +1,19 @@
 export type SiteConfig = typeof siteConfig;
 
+// Telegram link from a bare handle — single derivation so the handle and the
+// link can never drift. UI shows `@${handle}`, hrefs go through this.
+export const telegramHref = (handle: string) => `https://t.me/${handle}`;
+
 export const siteConfig = {
   name: "Ranger-X Check",
   description: "Plataforma de envíos por Telegram.",
-  // Single seller/support Telegram contact, shown to clients on login, the
-  // /expired lockout, and the persistent "Soporte" link in the client header.
-  // One source of truth — change the handle here (redeploy) and every surface
-  // follows. Telegram-only by decision (WhatsApp dropped).
-  contact: {
-    telegram: "https://t.me/yesterWhite", // full link for href
-    handle: "yesterWhite", // bare handle; UI shows `@${handle}`
-  },
+  // Seller/support Telegram contacts, shown to clients on login, the /expired
+  // lockout, and the in-app "Soporte" link. One source of truth — change the
+  // handles here (redeploy) and every surface follows. Telegram-only by
+  // decision (WhatsApp dropped). Order = priority: index 0 is the primary
+  // contact (the mobile bottom-nav links to it).
+  contacts: [
+    { handle: "AionRanger" },
+    { handle: "AionRangerOwner" },
+  ],
 };

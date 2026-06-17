@@ -4,13 +4,16 @@
 // notice (login) and the /expired lockout page, so the two surfaces can't drift
 // apart. Native Notice + Btn (Ranger-X handoff `ContactPanel`); one danger
 // language across auth.
-import { siteConfig } from "@/config/site";
+import { siteConfig, telegramHref } from "@/config/site";
 import { Notice } from "@/components/ui/notice";
 import { Btn } from "@/components/ui/btn";
 
-const CHANNELS = [
-  { label: "Telegram", href: siteConfig.contact.telegram },
-] as const;
+// One button per configured Telegram contact. Label = the handle so the two
+// are distinguishable (no role label by decision).
+const CHANNELS = siteConfig.contacts.map((c) => ({
+  label: `@${c.handle}`,
+  href: telegramHref(c.handle),
+}));
 
 export function ContactPanel({
   message,
