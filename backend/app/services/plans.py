@@ -21,7 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Plan, User
 from app.db.repos import plans as plans_repo
 from app.db.repos import users as users_repo
-from app.errors import plan_in_use, plan_name_taken, plan_not_found
+from app.errors import (
+    invalid_plan,
+    plan_in_use,
+    plan_name_taken,
+    plan_not_found,
+)
 
 
 def is_plan_expired(user: User) -> bool:
@@ -208,6 +213,11 @@ async def update_plan(session: AsyncSession, plan_id: int, **fields: object) -> 
         and await plans_repo.get_by_name(session, new_name) is not None
     ):
         raise plan_name_taken()
+    # A retired plan can no longer be the gift-key default: a deactivated default
+    # would still carry the "Keys" flag yet break key generation with a
+    # misleading no_default_plan. Clear it in the same write (gift-keys feature).
+    if fields.get("is_active") is False:
+        fields = {**fields, "is_default": False}
     try:
         return await plans_repo.update(session, plan, **fields)
     except IntegrityError as exc:
@@ -248,6 +258,11 @@ async def set_default_plan(session: AsyncSession, plan_id: int) -> Plan:
     plan = await plans_repo.get_by_id(session, plan_id, for_update=True)
     if plan is None:
         raise plan_not_found()
+    # Only an ACTIVE plan can be the default: generate() rejects an inactive
+    # default with no_default_plan, so flagging one would set a default that
+    # visibly carries the "Keys" badge yet silently breaks key generation.
+    if not plan.is_active:
+        raise invalid_plan("Solo un plan activo puede ser el predeterminado de keys.")
     await plans_repo.clear_default(session)
     plan.is_default = True
     await session.flush()

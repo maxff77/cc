@@ -2,7 +2,7 @@
 title: 'Redeemable gift keys (admin-generated, days-only, fixed basic plan) with claim + audit log'
 type: 'feature'
 created: '2026-06-17'
-status: 'in-progress'
+status: 'done'
 baseline_commit: 'fde30028ad49729e550160567a51b0e7a494f18d'
 context: ['{project-root}/CLAUDE.md']
 ---
@@ -73,22 +73,23 @@ context: ['{project-root}/CLAUDE.md']
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `backend/app/db/models.py` -- `Plan.is_default`; `GiftKey` model + FKs (plan RESTRICT; user FKs).
-- [ ] `backend/migrations/versions/<new>.py` -- `plans.is_default` + partial unique index; `gift_keys` + unique `code`; no seed.
-- [ ] `backend/app/db/repos/plans.py` -- `get_default`, `set_default`.
-- [ ] `backend/app/db/repos/gift_keys.py` -- create/get_by_code(FOR UPDATE)/mark_claimed/revoke/list_all.
-- [ ] `backend/app/services/gift_keys.py` -- generate (default-plan resolve + code + validate), claim (lock→status→conditional plan→days, no credits), revoke.
-- [ ] `backend/app/services/plans.py` + `backend/app/api/admin.py` -- `set_default` (owner-only) wired into the plan schema/route.
-- [ ] `backend/app/api/deps.py` -- `enforce_expiry` param + `get_current_user_allow_expired`.
-- [ ] `backend/app/api/keys.py` + `backend/app/main.py` -- routers (client claim guarded to `role=='client'`); register.
-- [ ] `backend/app/errors.py` -- 5 new error factories (Spanish messages).
-- [ ] `backend/tests/test_gift_keys.py` (new) -- cover the I/O matrix: generate bounds + no-default, set-default single-default invariant, new-vs-existing claim (plan + days + no-credit assertion), expired-client claim, claimed/revoked/unknown, concurrent double-claim (one wins), revoke states, non-client 403.
-- [ ] `frontend/types/api.ts` + `frontend/lib/api.ts` -- types, `is_default`, error codes.
-- [ ] `frontend/components/keys/claim-key.tsx` -- shared claim component.
-- [ ] `frontend/app/admin/keys/page.tsx` -- generate (days only) + log + revoke UI.
-- [ ] `frontend/app/admin/plans/page.tsx` -- `is_default` toggle (owner).
-- [ ] `frontend/components/ui/admin-shell.tsx` + `frontend/middleware.ts` -- `/admin/keys` nav + gate.
-- [ ] `frontend/app/(client)/page.tsx` + `frontend/app/expired/page.tsx` -- mount claim component.
+- [x] `backend/app/db/models.py` -- `Plan.is_default` + partial unique index `uq_plans_one_default`; `GiftKey` model + FKs (plan RESTRICT; user FKs SET NULL).
+- [x] `backend/migrations/versions/d7c1a9e3f2b8_gift_keys_and_plan_default.py` -- `plans.is_default` + partial unique index; `gift_keys` + unique `code`; no seed. (down_revision `c5b8e1f9a2d4`.)
+- [x] `backend/app/db/repos/plans.py` -- `get_default`, `clear_default` (`set_default` orchestration lives in the service).
+- [x] `backend/app/db/repos/gift_keys.py` -- create/get_by_code(FOR UPDATE)/get_by_id/mark_claimed/revoke/list_all + `generate_code`.
+- [x] `backend/app/services/gift_keys.py` -- generate (default-plan resolve + code + validate), claim (lock→status→conditional plan→days, no credits), revoke.
+- [x] `backend/app/services/plans.py` + `backend/app/api/admin.py` -- `set_default_plan` (owner-only) + `POST /api/admin/plans/{id}/default`; `PlanOut.is_default`.
+- [x] `backend/app/api/deps.py` -- `enforce_expiry` param + `get_current_user_allow_expired`.
+- [x] `backend/app/api/keys.py` + `backend/app/main.py` -- admin + client routers (client claim guarded to `role=='client'`); both registered.
+- [x] `backend/app/errors.py` -- 5 new error factories (Spanish messages).
+- [x] `backend/tests/test_gift_keys.py` (new) -- I/O matrix: generate bounds + no-default, single-default invariant, new-vs-existing claim (plan + days + no-credit assertion), expired-client claim, claimed/revoked/unknown, single-use, revoke states, non-client 403. **14 pass.**
+- [x] `frontend/components/keys/claim-key.tsx` -- shared claim component (built; mount deferred — see below).
+- [x] `frontend/app/admin/keys/page.tsx` -- generate (days only) + log + revoke UI.
+- [x] `frontend/app/admin/plans/page.tsx` -- `is_default` toggle (owner) + "Keys" badge.
+- [x] `frontend/components/ui/admin-shell.tsx` -- `/admin/keys` nav (admin+owner).
+- [x] ~~`frontend/types/api.ts` + `frontend/lib/api.ts`~~ -- NOT NEEDED: codebase uses per-page local interfaces (not shared `types/api.ts`); `lib/api.ts` already passes `{code}` through (claim/no_default_plan handled inline). Deviation from the spec's guess; the codebase convention wins.
+- [x] ~~`frontend/middleware.ts` `/admin/keys` gate~~ -- NOT NEEDED: the generic `/admin/*` rule already gates admin+owner; `/admin/keys` is not owner-only, so it needs no entry (only gates/plans/destinos are explicit owner-only).
+- [x] `frontend/app/(client)/page.tsx` + `frontend/app/expired/page.tsx` -- mounted `<ClaimKey/>` (cockpit card → invalidates `/me`; `/expired` self-activation card → redirects to `/` on claim). Integrated on top of the active registration session's edits; build + tsc clean, no new lint errors.
 
 **Acceptance Criteria:**
 - Given an admin generates a key (30 days) and a default ("bronze") plan is set, then it appears in the keys log as `active` with their identity as `created_by` and plan "bronze", and the code copies in `RangerX-XXXX-XXXX-XXXX` form; with no default plan set, generation is rejected `no_default_plan`.
@@ -122,3 +123,54 @@ Generation resolves `plans_repo.get_default()` (→ `no_default_plan` if absent)
 - `cd backend && .venv/bin/pytest tests/test_gift_keys.py -q` -- expected: all pass.
 - `cd backend && .venv/bin/pytest -q` -- expected: no regressions (esp. auth/deps/plans).
 - `cd frontend && npm run build` -- expected: tsc + build pass (build gate, not just lint).
+
+## Suggested Review Order
+
+**The claim engine (start here)**
+
+- Entry point — redeem: lock user + key, +days, basic plan only if plan-less, NEVER credits.
+  [`gift_keys.py:74`](../../backend/app/services/gift_keys.py#L74)
+- The expiry-gate bypass (load-bearing security subtlety) — one dep, expiry+flag skipped, blocked-revoke kept.
+  [`deps.py:101`](../../backend/app/api/deps.py#L101)
+- Claim route: `role=='client'` guard + commit; non-client 403 before the key is touched.
+  [`keys.py:164`](../../backend/app/api/keys.py#L164)
+
+**Mint + default-plan integrity**
+
+- Mint: snapshot the owner-designated default plan; savepoint-guarded code retry (review patch).
+  [`gift_keys.py:38`](../../backend/app/services/gift_keys.py#L38)
+- Owner sets the default tier; rejects an inactive plan that would silently break generation (review patch).
+  [`plans.py:251`](../../backend/app/services/plans.py#L251)
+- Deactivating the default clears its flag — no stale "Keys" default (review patch).
+  [`plans.py:220`](../../backend/app/services/plans.py#L220)
+- Owner-only endpoint behind `require_owner`.
+  [`admin.py:1296`](../../backend/app/api/admin.py#L1296)
+
+**Schema + repos**
+
+- GiftKey table — status, snapshot `plan_id` RESTRICT, audit FKs SET NULL.
+  [`models.py:689`](../../backend/app/db/models.py#L689)
+- `Plan.is_default` + ≤1 partial unique index.
+  [`models.py:678`](../../backend/app/db/models.py#L678)
+- Migration: `gift_keys` + `is_default` + indexes (down_revision `c5b8e1f9a2d4`).
+  [`d7c1a9e3f2b8:47`](../../backend/migrations/versions/d7c1a9e3f2b8_gift_keys_and_plan_default.py#L47)
+- Single-use lock + case-insensitive claim lookup (review patch).
+  [`gift_keys.py:61`](../../backend/app/db/repos/gift_keys.py#L61)
+- Default-plan read + clear-before-set flip.
+  [`plans.py:112`](../../backend/app/db/repos/plans.py#L112)
+
+**Frontend**
+
+- Admin mint UI (days only) + audit log + revoke.
+  [`page.tsx:71`](../../frontend/app/admin/keys/page.tsx#L71)
+- Shared claim component (cockpit + /expired).
+  [`claim-key.tsx:21`](../../frontend/components/keys/claim-key.tsx#L21)
+- Owner default-tier toggle on the plans catalog.
+  [`page.tsx:529`](../../frontend/app/admin/plans/page.tsx#L529)
+- Claim mounts: /expired self-activation (redirect on success).
+  [`expired/page.tsx:74`](../../frontend/app/expired/page.tsx#L74)
+
+**Tests (last)**
+
+- I/O matrix + review-patch coverage (17 tests).
+  [`test_gift_keys.py:1`](../../backend/tests/test_gift_keys.py#L1)

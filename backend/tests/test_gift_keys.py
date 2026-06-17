@@ -323,3 +323,46 @@ async def test_revoke_unclaimed_then_claimed(ctx, plan_factory):
     finally:
         await http.aclose()
         await cleanup_users({user.email})
+
+
+# --- Default-plan integrity (review patches) ----------------------------------
+
+
+async def test_set_default_rejects_inactive_plan(ctx, plan_factory):
+    owner: AsyncClient = ctx["owner_client"]
+    pid = await plan_factory()  # active
+    assert (
+        await owner.patch(f"/api/admin/plans/{pid}", json={"is_active": False})
+    ).status_code == 200
+    # Flagging an inactive plan as default would set a "Keys" badge on a plan
+    # that breaks generation — rejected.
+    res = await owner.post(f"/api/admin/plans/{pid}/default")
+    assert res.status_code == 400 and res.json()["code"] == "invalid_plan"
+
+
+async def test_deactivating_default_clears_flag(ctx, plan_factory):
+    owner: AsyncClient = ctx["owner_client"]
+    pid = await plan_factory(default=True)
+    # Deactivating the current default must drop is_default (else generation
+    # would 409 no_default_plan while a default visibly remains flagged).
+    assert (
+        await owner.patch(f"/api/admin/plans/{pid}", json={"is_active": False})
+    ).status_code == 200
+    listing = (await owner.get("/api/admin/plans")).json()["items"]
+    row = next(p for p in listing if p["id"] == pid)
+    assert row["is_default"] is False
+
+
+async def test_claim_tolerates_case_and_whitespace(ctx, plan_factory):
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=2)
+    http, user = await _new_client()
+    try:
+        # Lowercased + stray interior/edge whitespace → still resolves.
+        messy = "  " + key["code"].lower().replace("-", "- ") + "  "
+        res = await http.post("/api/keys/claim", json={"code": messy})
+        assert res.status_code == 200, res.text
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})

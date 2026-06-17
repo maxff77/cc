@@ -439,8 +439,8 @@ def plan_in_use() -> AppError:
         status_code=409,
         code="plan_in_use",
         message=(
-            "No puedes eliminar un plan asignado a clientes. Desactívalo en su "
-            "lugar."
+            "No puedes eliminar un plan en uso (asignado a clientes o con keys "
+            "generadas). Desactívalo en su lugar."
         ),
     )
 

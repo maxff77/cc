@@ -33,6 +33,9 @@ interface PlanOut {
   // Credits granted on assign/renew (credits feature). 0 ⇒ time-only plan.
   credits: number;
   is_active: boolean;
+  // The gift-key default ("basic") tier — at most one plan true. Gift keys
+  // grant THIS plan to a plan-less claimer (gift-keys feature).
+  is_default: boolean;
   created_at: string;
 }
 
@@ -210,6 +213,9 @@ export default function AdminPlansPage() {
                         ) : (
                           <StatePill tone="muted">Inactivo</StatePill>
                         )}
+                        {plan.is_default && (
+                          <StatePill tone="cyan">Keys</StatePill>
+                        )}
                       </div>
                       <span className="font-mono text-[11px] text-muted tabular-nums">
                         {formatPrice(plan.price_usd)} · {plan.duration_days} d ·
@@ -220,6 +226,7 @@ export default function AdminPlansPage() {
                         {formatCreated(plan.created_at)}
                       </span>
                     </div>
+                    <SetDefaultAction plan={plan} onChanged={invalidate} />
                     <EditPlanAction plan={plan} onChanged={invalidate} />
                     <DeletePlanAction plan={plan} onDeleted={invalidate} />
                   </li>
@@ -510,6 +517,43 @@ function EditPlanAction({
         </div>
       </ConfirmDialog>
     </>
+  );
+}
+
+// --- Set as gift-key default ("basic" tier) ----------------------------------
+//
+// Owner-only (this whole page is owner-gated). Flagging one plan clears the
+// prior default server-side; gift keys then grant THIS plan to a plan-less
+// claimer. A plan already flagged shows the "Keys" badge instead of the button.
+
+function SetDefaultAction({
+  plan,
+  onChanged,
+}: {
+  plan: PlanOut;
+  onChanged: () => void;
+}) {
+  const mutation = useMutation({
+    mutationFn: () => api.post<PlanOut>(`/api/admin/plans/${plan.id}/default`),
+    onSuccess: onChanged,
+    onError: (err) => {
+      // Gone in another tab → just refresh; no other error path on this
+      // owner-only action.
+      if (err instanceof ApiError && err.code === "plan_not_found") onChanged();
+    },
+  });
+
+  if (plan.is_default) return null; // the "Keys" badge already marks it
+
+  return (
+    <Btn
+      disabled={mutation.isPending}
+      size="sm"
+      variant="secondary"
+      onClick={() => mutation.mutate()}
+    >
+      {mutation.isPending ? "…" : "Usar para keys"}
+    </Btn>
   );
 }
 

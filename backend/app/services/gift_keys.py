@@ -52,16 +52,20 @@ async def generate(
         if await gift_keys_repo.get_by_code(session, code) is not None:
             continue
         try:
-            key = await gift_keys_repo.create(
-                session,
-                code=code,
-                days=days,
-                plan_id=plan.id,
-                created_by_user_id=created_by_user_id,
-            )
+            # Savepoint: a unique-violation from the (astronomically unlikely)
+            # concurrent same-code race rolls back to HERE, leaving the OUTER
+            # transaction usable so the loop can retry. Without it the failed
+            # flush poisons the session and the next iteration would raise
+            # PendingRollbackError instead of retrying.
+            async with session.begin_nested():
+                key = await gift_keys_repo.create(
+                    session,
+                    code=code,
+                    days=days,
+                    plan_id=plan.id,
+                    created_by_user_id=created_by_user_id,
+                )
         except IntegrityError:
-            # A concurrent mint raced us onto the same code (essentially
-            # impossible at 31^12) — try a fresh one.
             continue
         return key, plan
     raise RuntimeError("could not generate a unique gift-key code")
@@ -76,11 +80,17 @@ async def claim(
     the same key serialize — exactly one wins; the rest see a non-active status.
     Returns ``(user, days_added)``; caller commits.
     """
+    # Tolerate manual entry: drop ALL whitespace and match case-insensitively
+    # (the copy button preserves case, but a typed code may lowercase or split).
+    # Generated codes are unique regardless of case, so this never collapses two.
+    code = "".join(code.split())
     user = await users_repo.get_user_by_id(session, user_id, for_update=True)
     if user is None:
         # The user came from a valid session — defensive only.
         raise key_not_found()
-    key = await gift_keys_repo.get_by_code(session, code, for_update=True)
+    key = await gift_keys_repo.get_by_code(
+        session, code, for_update=True, case_insensitive=True
+    )
     if key is None:
         raise key_not_found()
     if key.status == "revoked":

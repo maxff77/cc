@@ -11,7 +11,7 @@ Pure ORM, flush not commit — callers own the transaction.
 import secrets
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -59,15 +59,25 @@ async def create(
 
 
 async def get_by_code(
-    session: AsyncSession, code: str, *, for_update: bool = False
+    session: AsyncSession,
+    code: str,
+    *,
+    for_update: bool = False,
+    case_insensitive: bool = False,
 ) -> GiftKey | None:
-    """Return the key with this exact code, or ``None``.
+    """Return the key with this code, or ``None``.
 
     ``for_update=True`` locks the row until commit — the claim path is a
     read-modify-write and without it two simultaneous claims of the same code
     would both pass the status check and double-grant.
+
+    ``case_insensitive=True`` (the claim path) matches regardless of case so a
+    manually-typed code still resolves; generated codes are unique either way,
+    so this never collapses two distinct keys.
     """
-    stmt = select(GiftKey).where(GiftKey.code == code)
+    column = func.lower(GiftKey.code) if case_insensitive else GiftKey.code
+    target = code.lower() if case_insensitive else code
+    stmt = select(GiftKey).where(column == target)
     if for_update:
         stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalar_one_or_none()

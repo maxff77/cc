@@ -11,10 +11,11 @@
 // the right column passes `fill` so its panels stretch to the cap — lists scroll
 // inside each panel and no dead space opens below short results.
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
+import { ClaimKey } from "@/components/keys/claim-key";
 import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { FailedLines } from "@/components/batch/failed-lines";
@@ -46,6 +47,7 @@ interface GateListResponse {
 
 export default function EnvioPage() {
   const live = useLiveBatch();
+  const queryClient = useQueryClient();
   const gates = useQuery({
     queryKey: ["gates"],
     queryFn: () => api.get<GateListResponse>("/api/gates"),
@@ -151,6 +153,16 @@ export default function EnvioPage() {
           </Notice>
         )}
         {gates.data && <SendForm gates={gates.data.items} live={live} />}
+
+        {/* Redeem a gift key from the cockpit (active client): +days on the
+            current plan. On success refresh /me so the plan badge updates. */}
+        <SectionCard legend="Canjear key" legendAs="h2">
+          <ClaimKey
+            onClaimed={() =>
+              queryClient.invalidateQueries({ queryKey: ["me"] })
+            }
+          />
+        </SectionCard>
       </div>
 
       {/* Detail — the Completa/Filtrada views the operator watches. Three

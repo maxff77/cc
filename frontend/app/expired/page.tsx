@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import { Btn } from "@/components/ui/btn";
 import { ContactPanel } from "@/components/contact-panel";
+import { ClaimKey } from "@/components/keys/claim-key";
 import { AuthLayout } from "@/components/ui/auth-layout";
 import { ApiError, api } from "@/lib/api";
 
@@ -65,6 +66,13 @@ export default function ExpiredPage() {
   return (
     <AuthLayout title="Activa tu plan">
       <ContactPanel message={MESSAGE} />
+      {/* Self-activation: redeem a gift key right here. The claim endpoint
+          bypasses the expiry gate, so a just-registered / lapsed client CAN
+          claim despite being locked out — on success we send them into the
+          app (the plan is now active). */}
+      <div className="mt-5 border-t border-border pt-5">
+        <ClaimKey onClaimed={() => window.location.replace("/")} />
+      </div>
       <Btn
         className="mt-4"
         full
