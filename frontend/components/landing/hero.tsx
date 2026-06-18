@@ -1,7 +1,11 @@
 import { ReadoutMock } from "./readout-mock";
 import { LinkBtn } from "./link-btn";
 
-const TRUST = ["Resultados en vivo", "Multi-tenant", "Completa + Filtrada"];
+const TRUST = [
+  "Resultados en vivo",
+  "Completa + Filtrada",
+  "Listo cuando volvés",
+];
 
 // Hero: solid Saira headline (gradient energy carried by the rule + the CTA +
 // the product readout, never clipped onto the prose), operator subcopy, the two
@@ -16,25 +20,23 @@ export function Hero() {
             className="h-1.5 w-1.5 rounded-full"
             style={{ background: "var(--success)" }}
           />
-          Plataforma de envíos por Telegram
+          Checker masivo
         </span>
 
         <h1
           className="mt-5 font-display text-[clamp(2.3rem,6vw,4rem)] font-extrabold leading-[1.04] tracking-[-0.02em] text-foreground"
           style={{ textWrap: "balance" }}
         >
-          Miles de líneas, revisadas en vivo.
+          Elevate al siguiente nivel.
         </h1>
 
         {/* gradient rule — the energy moment, not the text */}
         <div className="brand-fill mt-5 h-1 w-28 rounded-full" />
 
         <p className="mt-5 max-w-[46ch] text-[15px] leading-relaxed text-muted">
-          Pegás tus líneas, elegís un gate y mirás las respuestas{" "}
-          <span className="font-semibold text-success">✅</span> /{" "}
-          <span className="font-semibold text-danger">❌</span> atribuidas al
-          instante. Pausá, reanudá y exportá. Con el ritmo justo para mantener
-          la cuenta viva.
+          Enviá tus líneas y dejá el trabajo. Volvés por tu café y ya tenés los
+          resultados <span className="font-semibold text-success">✅</span> /{" "}
+          <span className="font-semibold text-danger">❌</span> listos.
         </p>
 
         <div className="mt-7 flex flex-wrap items-center gap-3">

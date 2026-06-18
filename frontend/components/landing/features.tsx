@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { Icon, type IconName } from "@/components/ui/icon";
 
 // "Qué ofrecemos" — a bento (varied tile sizes), not a uniform icon-card grid.
-// The lead capability gets the wide tile; the rest fill a 3-up row.
+// The lead capability gets the full-width tile; the other two share the row below.
 interface Feature {
   icon: IconName;
   title: string;
@@ -15,30 +15,20 @@ interface Feature {
 const FEATURES: Feature[] = [
   {
     icon: "send",
-    title: "Envío masivo en vivo",
-    desc: "Pegá miles de líneas y mirá el progreso real: enviando, en pausa, flood o terminado. Sin ambigüedad, sin adivinar.",
-    span: "lg:col-span-2",
+    title: "Enviá y andá por un café",
+    desc: "Pegás tus líneas y dejás el trabajo a la plataforma. Volvés y los resultados ya están listos.",
+    span: "sm:col-span-2",
     lead: true,
   },
   {
     icon: "check",
     title: "Captura ✅/❌ atribuida",
-    desc: "Cada respuesta del checker vuelve a su línea exacta, al instante.",
+    desc: "Cada respuesta vuelve a su línea exacta, al instante.",
   },
   {
     icon: "search",
-    title: "Filtrada automática",
-    desc: "Los CC se extraen y deduplican por sesión. Solo lo que sirve.",
-  },
-  {
-    icon: "user",
-    title: "Multi-tenant justo",
-    desc: "Round-robin entre clientes: a nadie se le adelanta la cola.",
-  },
-  {
-    icon: "refresh",
-    title: "Ritmo anti-ban",
-    desc: "Intervalo adaptativo y watchdog que protegen la cuenta compartida.",
+    title: "Te mostramos lo que más te importa",
+    desc: "Filtrada automática: sin duplicados, solo lo que sirve.",
   },
 ];
 
@@ -49,10 +39,10 @@ export function Features() {
         Qué ofrecemos
       </h2>
       <p className="mt-3 max-w-[52ch] text-[15px] text-muted">
-        Un instrumento de precisión para revisar a escala — no una caja negra.
+        Vos pegás las líneas. Del resto nos encargamos.
       </p>
 
-      <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2">
         {FEATURES.map((f) => (
           <article
             key={f.title}
