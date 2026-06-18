@@ -7,6 +7,7 @@ import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { AdminShell } from "@/components/ui/admin-shell";
 import { Btn } from "@/components/ui/btn";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/field";
@@ -40,6 +41,9 @@ interface GateListResponse {
 interface CategoryOut {
   id: number;
   name: string;
+  // Special-mode feature: gates here capture in "special mode" (status from the
+  // `Approveds! ✅: N` count + Approveds!/Deads! stripping). Owner-only config.
+  special_mode: boolean;
   created_at: string;
 }
 
@@ -331,14 +335,19 @@ function CategoriesBlock({
   onChanged: () => void;
 }) {
   const [name, setName] = useState("");
+  const [special, setSpecial] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () =>
-      api.post<CategoryOut>("/api/admin/gate-categories", { name }),
+      api.post<CategoryOut>("/api/admin/gate-categories", {
+        name,
+        special_mode: special,
+      }),
     onSuccess: () => {
       setName("");
+      setSpecial(false);
       onChanged();
     },
     onError: (err) => {
@@ -385,6 +394,10 @@ function CategoriesBlock({
               if (fieldError) setFieldError(null);
             }}
           />
+
+          <Checkbox checked={special} onChange={setSpecial}>
+            Modo especial (validez por «Approveds! ✅: N», oculta créditos)
+          </Checkbox>
 
           <Btn
             full
@@ -454,6 +467,18 @@ function CategoryRow({
           : "No pudimos conectar. Intenta de nuevo.",
       );
     },
+  });
+
+  // Special-mode toggle (special-mode feature): an immediate PATCH that keeps
+  // the current name. Refetch on settle either way — the category list is the
+  // source of truth, so a failed/raced toggle self-corrects on the refresh.
+  const toggleSpecial = useMutation({
+    mutationFn: (next: boolean) =>
+      api.patch<CategoryOut>(`/api/admin/gate-categories/${category.id}`, {
+        name: category.name,
+        special_mode: next,
+      }),
+    onSettled: () => onChanged(),
   });
 
   const remove = useMutation({
@@ -562,6 +587,18 @@ function CategoryRow({
           )}
         </div>
       </div>
+
+      {mode === "view" && (
+        <Checkbox
+          checked={category.special_mode}
+          className="text-[13px]"
+          onChange={(next) => {
+            if (!toggleSpecial.isPending) toggleSpecial.mutate(next);
+          }}
+        >
+          Modo especial
+        </Checkbox>
+      )}
 
       <ConfirmDialog
         confirmLabel={remove.isPending ? "Eliminando…" : "Eliminar"}

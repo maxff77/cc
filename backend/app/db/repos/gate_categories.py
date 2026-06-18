@@ -34,9 +34,11 @@ async def get_by_name(session: AsyncSession, name: str) -> GateCategory | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def create(session: AsyncSession, *, name: str) -> GateCategory:
+async def create(
+    session: AsyncSession, *, name: str, special_mode: bool = False
+) -> GateCategory:
     """Insert and flush a fresh category."""
-    category = GateCategory(name=name)
+    category = GateCategory(name=name, special_mode=special_mode)
     session.add(category)
     await session.flush()
     return category

@@ -144,6 +144,15 @@ class GateCategory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
+    # Owner toggle (special-mode feature): gates in this category capture in
+    # "special mode" — reply status comes from the ``Approveds! ✅: N`` count
+    # (N≥1 ⇒ ok) instead of bare ✅-glyph presence, and the Approveds!/Deads!
+    # stats segments are stripped from the stored reply. Snapshotted onto the
+    # CaptureSession at batch start (the capture pipeline reads the snapshot,
+    # never this row), so toggling it never rewrites in-flight captures.
+    special_mode: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -453,6 +462,15 @@ class CaptureSession(Base):
     # the real gate_value.
     gate_display_value: Mapped[str] = mapped_column(String(80))
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Snapshot of the gate category's ``special_mode`` (same denormalize idiom
+    # as ``gate_value``): the capture pipeline reads THIS, never the live
+    # category. Set at session creation and refreshed to the gate's current
+    # value when a NEW batch reuses the active session (``resolve_for_batch``),
+    # so an owner's toggle takes effect on the tenant's next batch. CLOSED /
+    # historical sessions are never rewritten.
+    special_mode: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )

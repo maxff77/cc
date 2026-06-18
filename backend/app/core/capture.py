@@ -43,10 +43,10 @@ from sqlalchemy import exc as sa_exc
 from app.core import alerts, attribution
 from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
-from app.core.redact import redact_reply_text
+from app.core.redact import parse_approveds, redact_reply_text, strip_special_stats
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
-from app.db.models import Batch
+from app.db.models import Batch, CaptureSession
 from app.db.repos import responses as responses_repo
 from app.services import batches as batches_service
 
@@ -300,26 +300,63 @@ async def process_incoming(reply: IncomingReply) -> None:
             await alerts.note_unmatched()
             return
 
-        # 🔒 Strip the operator "Checked By" line BEFORE anything reads the
-        # text — dedup, storage, CC extraction and emission must all see the
-        # redacted version so the name never persists nor reaches a tenant.
-        clean_text = redact_reply_text(reply.text)
+        # 🔒 Strip the operator "Checked By" line + the global Credits segment
+        # BEFORE anything reads the text — dedup, storage, CC extraction and
+        # emission must all see the redacted version so neither the operator's
+        # name nor the owner's balance ever persists nor reaches a tenant.
+        redacted = redact_reply_text(reply.text)
+
+        # Special-mode sessions (special-mode feature): the gate category was
+        # flagged, so this session snapshots special_mode=True. There the
+        # checker's "Approveds! ✅: N" count drives the verdict — a bare ✅ glyph
+        # in "Approveds! ✅: 0" is NOT an approval (it was a false positive) —
+        # and the Approveds!/Deads! segments are scrubbed from the stored reply.
+        # Read from the SESSION snapshot (always present; batch_id may be NULL).
+        capture_session = await session.get(
+            CaptureSession, attributed.capture_session_id
+        )
+        special = capture_session is not None and capture_session.special_mode
+        # Parse the count from the redacted-but-not-yet-stripped text BEFORE the
+        # strip removes it; clean_text is what gets stored/dedup'd/emitted.
+        approveds = parse_approveds(redacted) if special else None
+        clean_text = strip_special_stats(redacted) if special else redacted
 
         previous = await responses_repo.last_full_revision(
             session, chat_id=reply.chat_id, message_id=reply.message_id
         )
-        if previous is not None and previous.text == clean_text:
-            return  # edition with no real change (legacy parity) — total no-op
-
         previous_status = previous.status if previous is not None else None
         status: str | None
-        if "✅" in clean_text:
+        if special:
+            # Validity = "Approveds! ✅: N" with N≥1. No Approveds line yet ⇒
+            # still processing — the legacy ⏳ intermediate state (keep previous).
+            if approveds is None:
+                status = previous_status
+            elif approveds >= 1:
+                status = responses_repo.STATUS_OK
+            else:
+                status = responses_repo.STATUS_REJECTED
+        elif "✅" in clean_text:
             status = responses_repo.STATUS_OK
         elif "❌" in clean_text:
             status = responses_repo.STATUS_REJECTED
         else:
             # Intermediate edit (⏳) keeps the previous state (legacy parity).
             status = previous_status
+
+        # No-op edit (legacy parity): the stored text AND the status are both
+        # unchanged. Status is part of the discriminator — NOT just the text —
+        # because special mode strips the Approveds!/Deads! count out of
+        # clean_text: a rejected→ok flip ("Approveds! ✅: 0" → "✅: 2") whose
+        # only other content is an unchanged "Time:" reduces to byte-identical
+        # clean_text, and a text-only no-op would silently drop the very
+        # approval this feature exists to catch (review 4 CRITICAL).
+        if (
+            previous is not None
+            and previous.text == clean_text
+            and previous.status == status
+        ):
+            return
+
         if status is None:
             # First ⏳ with no emoji: no row (legacy parity — recorded
             # decision). Its later ✅/❌ edit arrives with reply_to intact and

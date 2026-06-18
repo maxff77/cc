@@ -149,6 +149,54 @@ async def test_rename_persists(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_special_mode_create_default_rename_and_toggle(
+    ctx: dict[str, object], categories_created: set[str]
+) -> None:
+    """special_mode defaults off, persists a rename, and toggles explicitly."""
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+
+    # Default off when the field is omitted.
+    body = await _create_category(owner_client, categories_created)
+    assert body["special_mode"] is False
+
+    # Create with the flag on.
+    name = unique_category_name()
+    categories_created.add(name)
+    res = await owner_client.post(
+        "/api/admin/gate-categories", json={"name": name, "special_mode": True}
+    )
+    assert res.status_code == 201, res.text
+    cat = res.json()
+    assert cat["special_mode"] is True
+
+    # A plain rename (no special_mode key) must NOT reset the flag.
+    new_name = unique_category_name()
+    categories_created.add(new_name)
+    res = await owner_client.patch(
+        f"/api/admin/gate-categories/{cat['id']}", json={"name": new_name}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["special_mode"] is True
+
+    # Explicit toggle off, then back on.
+    res = await owner_client.patch(
+        f"/api/admin/gate-categories/{cat['id']}",
+        json={"name": new_name, "special_mode": False},
+    )
+    assert res.json()["special_mode"] is False
+    res = await owner_client.patch(
+        f"/api/admin/gate-categories/{cat['id']}",
+        json={"name": new_name, "special_mode": True},
+    )
+    assert res.json()["special_mode"] is True
+
+    # The list view carries the flag too.
+    listed = await owner_client.get("/api/admin/gate-categories")
+    match = [c for c in listed.json()["items"] if c["id"] == cat["id"]]
+    assert match and match[0]["special_mode"] is True
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_rename_to_existing_name_is_409(
     ctx: dict[str, object], categories_created: set[str]
 ) -> None:

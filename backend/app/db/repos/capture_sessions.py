@@ -101,13 +101,15 @@ async def create_active(
     gate_value: str,
     gate_name: str,
     gate_display_value: str,
+    special_mode: bool = False,
 ) -> CaptureSession:
     """Deactivate the previous active session and insert the new active one.
 
     Activation by replacement — legacy: "sessions are replaced by
     reassignment", never closed. The UPDATE runs first so the partial unique
     index (the belt) never trips on the honest path. ``gate_display_value`` is
-    the client-visible "Comando visible" snapshot.
+    the client-visible "Comando visible" snapshot; ``special_mode`` snapshots
+    the gate category's flag (special-mode feature).
     """
     await session.execute(
         update(CaptureSession)
@@ -119,6 +121,7 @@ async def create_active(
         gate_value=gate_value,
         gate_name=gate_name,
         gate_display_value=gate_display_value,
+        special_mode=special_mode,
         is_active=True,
     )
     session.add(capture_session)
@@ -162,6 +165,7 @@ async def resolve_for_batch(
     gate_value: str,
     gate_name: str,
     gate_display_value: str,
+    special_mode: bool = False,
 ) -> CaptureSession:
     """The AC 3 legacy semantics: reuse the active session when its gate
     matches, otherwise auto-create a fresh active one.
@@ -169,12 +173,20 @@ async def resolve_for_batch(
     Exact port of "/api/enviar reuses the active Sesion when its slug matches
     the submitted prefix, otherwise auto-creates one". Reuse still keys on the
     REAL ``gate_value`` (the gate's identity), not the display string.
+
+    On reuse, the session's ``special_mode`` is refreshed to the gate's current
+    value (special-mode feature): toggling the category takes effect on the
+    client's NEXT batch instead of waiting for a brand-new session — the gate
+    identity is unchanged, so this only ever tracks an owner's deliberate flip.
     """
     active = await get_active(session, tenant_id)
     if active is not None and active.gate_value == gate_value:
+        if active.special_mode != special_mode:
+            active.special_mode = special_mode
+            await session.flush()
         return active
     return await create_active(
-        session, tenant_id, gate_value, gate_name, gate_display_value
+        session, tenant_id, gate_value, gate_name, gate_display_value, special_mode
     )
 
 

@@ -940,6 +940,9 @@ def _validate_category_name(name: str) -> str:
 
 class CreateCategoryRequest(BaseModel):
     name: str
+    # Special-mode feature: gates in this category capture in special mode
+    # (Approveds-count validity + stats stripping). Defaults off.
+    special_mode: bool = False
 
     @field_validator("name")
     @classmethod
@@ -949,6 +952,9 @@ class CreateCategoryRequest(BaseModel):
 
 class UpdateCategoryRequest(BaseModel):
     name: str
+    # Optional: ``None`` leaves the flag untouched so a plain rename never
+    # resets it; the owner's toggle sends an explicit boolean.
+    special_mode: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -959,6 +965,7 @@ class UpdateCategoryRequest(BaseModel):
 class CategoryOut(BaseModel):
     id: int
     name: str
+    special_mode: bool
     created_at: datetime
 
 
@@ -969,7 +976,10 @@ class CategoryListResponse(BaseModel):
 
 def _category_to_out(category: GateCategory) -> CategoryOut:
     return CategoryOut(
-        id=category.id, name=category.name, created_at=category.created_at
+        id=category.id,
+        name=category.name,
+        special_mode=category.special_mode,
+        created_at=category.created_at,
     )
 
 
@@ -995,7 +1005,9 @@ async def create_gate_category(
     if await gate_categories_repo.get_by_name(session, body.name) is not None:
         raise category_exists()
     try:
-        category = await gate_categories_repo.create(session, name=body.name)
+        category = await gate_categories_repo.create(
+            session, name=body.name, special_mode=body.special_mode
+        )
         await session.commit()
     except IntegrityError as exc:
         # TOCTOU (2.1 review lesson): a concurrent insert of the same name
@@ -1011,12 +1023,15 @@ async def update_gate_category(
     actor: User = Depends(require_owner),
     session: AsyncSession = Depends(get_session),
 ) -> CategoryOut:
-    """Rename a category (gates keep pointing at it — nothing else moves)."""
+    """Rename a category and/or toggle its special mode (gates keep pointing at
+    it — nothing else moves). ``special_mode`` omitted ⇒ left untouched."""
     category = await _require_category(session, category_id)
     duplicate = await gate_categories_repo.get_by_name(session, body.name)
     if duplicate is not None and duplicate.id != category.id:
         raise category_exists()
     category.name = body.name
+    if body.special_mode is not None:
+        category.special_mode = body.special_mode
     try:
         await session.commit()
     except IntegrityError as exc:

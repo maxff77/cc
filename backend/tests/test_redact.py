@@ -1,8 +1,17 @@
-"""``core.redact`` — the operator "Checked By" line must never survive."""
+"""``core.redact`` — the operator "Checked By" line must never survive, the
+``Credits:`` segment is scrubbed everywhere, and special-mode strips the
+Approveds!/Deads! stats."""
 
-from app.core.redact import redact_reply_text
+from app.core.redact import (
+    parse_approveds,
+    redact_reply_text,
+    strip_special_stats,
+)
 
 _NAME_LINE = "⌿ Checked By : Richard [User]"
+
+# The canonical special-mode stats line (the user's false-positive example).
+_STATS = "↳ Approveds! ✅: 0 ヾ⌿ Deads! ❌: 1 ヾ⌿ Credits: 999996044 ヾ⌿ Time: 32.95s"
 
 
 def test_drops_the_checked_by_line_keeping_the_rest():
@@ -33,3 +42,58 @@ def test_idempotent():
 
 def test_empty_is_safe():
     assert redact_reply_text("") == ""
+
+
+# --- Credits scrub (GLOBAL — every category) --------------------------------
+
+
+def test_credits_segment_removed_globally():
+    # Non-special path: redact removes Credits but KEEPS Approveds!/Deads!.
+    out = redact_reply_text(_STATS)
+    assert "Credits" not in out
+    assert "999996044" not in out
+    assert "Approveds! ✅: 0" in out
+    assert "Deads! ❌: 1" in out
+    assert "Time: 32.95s" in out
+    # The separator a removed middle segment leaves is collapsed, not doubled.
+    assert "ヾ⌿ ヾ⌿" not in out
+
+
+def test_credits_scrub_on_a_plain_line():
+    assert "Credits" not in redact_reply_text("Credits: 42")
+
+
+def test_credits_scrub_is_idempotent():
+    once = redact_reply_text(_STATS)
+    assert redact_reply_text(once) == once
+
+
+# --- Special-mode stripping + validity --------------------------------------
+
+
+def test_parse_approveds_reads_the_count():
+    assert parse_approveds(_STATS) == 0
+    assert parse_approveds("↳ Approveds! ✅: 3 ヾ⌿ Deads! ❌: 0") == 3
+
+
+def test_parse_approveds_none_when_absent():
+    # No Approveds line yet ⇒ the legacy ⏳ intermediate state.
+    assert parse_approveds("⏳ procesando…") is None
+
+
+def test_special_strip_drops_stats_keeps_time():
+    # Capture applies redact (Credits gone) THEN strip_special_stats.
+    out = strip_special_stats(redact_reply_text(_STATS))
+    assert out == "↳ Time: 32.95s"
+    for token in ("Approveds", "Deads", "Credits", "999996044", "✅", "❌"):
+        assert token not in out
+
+
+def test_special_strip_is_idempotent():
+    out = strip_special_stats(redact_reply_text(_STATS))
+    assert strip_special_stats(out) == out
+
+
+def test_special_strip_leaves_non_stats_text_alone():
+    text = "✅ Approved\nCC: 4111111111111111|12|2026|123"
+    assert strip_special_stats(text) == text

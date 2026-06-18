@@ -32,6 +32,7 @@ from app.db.base import get_session
 from app.db.models import Batch, User
 from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
+from app.db.repos import gate_categories as gate_categories_repo
 from app.db.repos import gates as gates_repo
 from app.db.repos import plans as plans_repo
 from app.db.repos import tenants as tenants_repo
@@ -150,6 +151,13 @@ async def create_or_append_batch(
     # new batch below so re-pricing never re-charges it, and used by the
     # insufficient_credits guard. 0 ⇒ a free gate (no charge, no balance gate).
     gate_credit_cost = gate.credit_cost
+    # Special-mode flag of the gate's category (special-mode feature):
+    # snapshotted onto the capture session below so the capture pipeline parses
+    # THIS batch's replies in special mode. Loaded explicitly — the gate's
+    # ``category`` relation is not eager-loaded here (lazy access would raise
+    # MissingGreenlet); default False if the category vanished in a race.
+    gate_category = await gate_categories_repo.get_by_id(session, gate.category_id)
+    special_mode = gate_category.special_mode if gate_category is not None else False
 
     # FOR UPDATE: serialize the append against the worker's
     # complete_if_drained (which locks the same row) — without it, an append
@@ -216,7 +224,8 @@ async def create_or_append_batch(
             # away, and old replies attribute via send_log → line → batch,
             # never via the active session.
             capture_session = await capture_sessions_repo.resolve_for_batch(
-                session, tenant_id, gate_value, gate_name, gate_display_value
+                session, tenant_id, gate_value, gate_name, gate_display_value,
+                special_mode,
             )
             batch.capture_session_id = capture_session.id
             # Computed inside the transaction (post-flush id) so the POST
