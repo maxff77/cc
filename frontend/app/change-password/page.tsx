@@ -61,7 +61,7 @@ export default function ChangePasswordPage() {
         } else if (err.code === "forbidden") {
           // Flag already cleared (change completed in another tab): the session
           // is fully valid, so send the user home instead of stranding them.
-          window.location.assign("/");
+          window.location.assign("/app");
         } else {
           // Pydantic 422s carry no {code,message} body, so err.message can be
           // empty — never render a blank banner.

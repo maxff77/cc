@@ -31,8 +31,8 @@ interface Me {
 type NavLink = { href: string; label: string };
 
 const ITEMS: readonly NavLink[] = [
-  { href: "/", label: "Envío" },
-  { href: "/sessions", label: "Historial" },
+  { href: "/app", label: "Envío" },
+  { href: "/app/sessions", label: "Historial" },
 ];
 
 // Cross-links to admin, shown ONLY to staff. Gates/Destinos are owner-only.
@@ -152,10 +152,10 @@ export function ClientNav() {
         key={item.href}
         active={
           pathname === item.href ||
-          (item.href !== "/" && pathname.startsWith(item.href + "/"))
+          (item.href !== "/app" && pathname.startsWith(item.href + "/"))
         }
         className={itemClassName}
-        dot={item.href === "/" ? dot : null}
+        dot={item.href === "/app" ? dot : null}
         href={item.href}
         label={item.label}
       />
@@ -167,7 +167,7 @@ export function ClientNav() {
         <div className="flex min-w-0 items-center gap-6">
           <Link
             className="rx-focus flex shrink-0 items-center gap-2.5"
-            href="/"
+            href="/app"
           >
             <Mark size={28} />
             <Wordmark height={22} />

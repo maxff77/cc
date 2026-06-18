@@ -55,7 +55,7 @@ async def test_register_creates_no_plan_client_and_auto_logs_in(
 ) -> None:
     """Happy path: a fresh signup creates a no-plan, already-expired client,
     sets the session cookie (auto-login), and is immediately gated to /expired
-    (home_path "/" → middleware redirect; /me answers 403 plan_expired)."""
+    (home_path "/app" → middleware redirect; /me answers 403 plan_expired)."""
     email = unique_email("client", prefix="test-register")
 
     async with _client() as client:
@@ -68,7 +68,7 @@ async def test_register_creates_no_plan_client_and_auto_logs_in(
 
         body = res.json()
         assert body["role"] == "client"
-        assert body["home_path"] == "/"
+        assert body["home_path"] == "/app"
         assert settings.session_cookie_name in client.cookies
 
         # The session exists but is gated — no plan yet.

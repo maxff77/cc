@@ -138,8 +138,12 @@ class ChangePasswordResponse(BaseModel):
 
 
 def _home_path_for(role: str) -> str:
-    """Role → landing surface (AC1)."""
-    return "/" if role == "client" else "/admin/users"
+    """Role → landing surface (AC1).
+
+    Clients land on ``/app`` (the relocated cockpit — ``/`` is now the public
+    sales landing); owner/admin land on the admin console.
+    """
+    return "/app" if role == "client" else "/admin/users"
 
 
 def _client_ip(request: Request) -> str:
@@ -180,7 +184,7 @@ async def register(
 
     No auth dependency — this is the one unauthenticated write besides login.
     The new user has NO plan, so every gated request answers 403 plan_expired;
-    ``home_path`` routes them to ``/`` where the middleware bounces the no-plan
+    ``home_path`` routes them to ``/app`` where the middleware bounces the no-plan
     session to ``/expired`` (the Telegram-contact surface). An owner activating
     a plan later flips them in with no re-login (the /expired poll recovers).
     Rate-limited per client IP so an anonymous caller can't spam tenant rows.

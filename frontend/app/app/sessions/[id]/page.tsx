@@ -86,7 +86,7 @@ function NotFound() {
   return (
     <EmptyState
       action={
-        <Link className="text-accent underline" href="/sessions">
+        <Link className="text-accent underline" href="/app/sessions">
           Volver a Historial
         </Link>
       }
@@ -199,7 +199,7 @@ export default function SessionDetailPage() {
         </Notice>
         <Link
           className="self-start text-sm text-accent underline"
-          href="/sessions"
+          href="/app/sessions"
         >
           Volver a Historial
         </Link>
@@ -258,7 +258,7 @@ export default function SessionDetailPage() {
             </StatePill>
           </>
         }
-        back={{ href: "/sessions", label: "Historial" }}
+        back={{ href: "/app/sessions", label: "Historial" }}
         mono={`${data.gate_name} · ${data.gate_display_value} · ${fallbackName(data.created_at)}`}
         title={data.name ?? fallbackName(data.created_at)}
       />

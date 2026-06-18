@@ -136,7 +136,7 @@ export default function SessionsPage() {
     content = (
       <EmptyState
         action={
-          <Link className="text-accent underline" href="/">
+          <Link className="text-accent underline" href="/app">
             Ir a Envío
           </Link>
         }
@@ -320,7 +320,7 @@ function SessionRow({
           }}
         />
       ) : (
-        <Link className="min-w-0 flex-1" href={`/sessions/${session.id}`}>
+        <Link className="min-w-0 flex-1" href={`/app/sessions/${session.id}`}>
           <span className="block truncate text-sm font-medium">
             {session.name ?? fallbackName(session.created_at)}
           </span>

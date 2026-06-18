@@ -21,6 +21,16 @@ const SESSION_COOKIE = "cc_session";
 //   - 200 client on /admin/*  → /        (role gate, AC4 of Story 1.3)
 //   - otherwise               → continue
 export async function middleware(request: NextRequest) {
+  // `/` is the PUBLIC sales landing now (the cockpit moved to /app). Handle it
+  // in code rather than excluding it from the matcher: a fresh visitor with no
+  // cookie sees the landing, an authenticated visitor is sent to /app (where the
+  // usual plan/password gates re-run on a stale cookie).
+  if (request.nextUrl.pathname === "/") {
+    if (!request.cookies.has(SESSION_COOKIE)) return NextResponse.next();
+
+    return NextResponse.redirect(new URL("/app", request.url));
+  }
+
   if (!request.cookies.has(SESSION_COOKIE)) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -126,10 +136,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // /admin/* is role-gated: a client is redirected away to / (NO blocked
-  // screen). admin/owner fall through.
+  // /admin/* is role-gated: a client is redirected away to /app (the cockpit,
+  // NO blocked screen). admin/owner fall through.
   if (me.role === "client" && isAdminPath) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/app", request.url));
   }
 
   // /admin/gates is owner-only (Story 2.1): an admin is redirected to their

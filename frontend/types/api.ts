@@ -18,6 +18,29 @@ export type PlanErrorCode =
 
 export type ApiErrorCode = PlanErrorCode | (string & {});
 
+// --- Hand-maintained: public (no-auth) landing endpoints. These live on the
+// `/api/public/*` router the backend exposes for the sales landing and carry
+// only marketing-safe fields — never the gate `value`/`display_value` nor the
+// plan `antispam_seconds`. `price_usd` mirrors the catalog convention
+// (`number | string`: Decimal serialized as a string by asyncpg/pydantic).
+export interface PublicGatesResponse {
+    categories: { name: string; gates: string[] }[];
+    total: number;
+}
+
+export interface PublicPlansResponse {
+    items: {
+        name: string;
+        price_usd: number | string;
+        duration_days: number;
+        max_lines_per_batch: number;
+        credits: number;
+        credits_unlimited: boolean;
+        is_default: boolean;
+    }[];
+    total: number;
+}
+
 export interface paths {
     "/api/health": {
         parameters: {

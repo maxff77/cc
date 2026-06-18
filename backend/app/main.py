@@ -28,6 +28,7 @@ from app.api.health import router as health_router
 from app.api.keys import admin_router as keys_admin_router
 from app.api.keys import client_router as keys_client_router
 from app.api.observability import router as observability_router
+from app.api.public import router as public_router
 from app.api.sessions import router as sessions_router
 from app.api.targets import router as targets_router
 from app.api.watchdog import router as watchdog_router
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="cc-backend", lifespan=lifespan)
     app.add_exception_handler(AppError, _app_error_handler)  # type: ignore[arg-type]
     app.include_router(health_router)
+    app.include_router(public_router)
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(keys_admin_router)

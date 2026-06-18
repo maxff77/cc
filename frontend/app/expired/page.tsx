@@ -38,7 +38,7 @@ export default function ExpiredPage() {
         const me = await api.get<{ role: string }>("/api/auth/me");
 
         if (cancelled) return;
-        window.location.replace(me.role === "client" ? "/" : "/admin/users");
+        window.location.replace(me.role === "client" ? "/app" : "/admin/users");
       } catch (err) {
         if (cancelled || !(err instanceof ApiError)) return;
         // 401 → session gone, log in again. 403 password_change_required → the
@@ -71,7 +71,7 @@ export default function ExpiredPage() {
           claim despite being locked out — on success we send them into the
           app (the plan is now active). */}
       <div className="mt-5 border-t border-border pt-5">
-        <ClaimKey onClaimed={() => window.location.replace("/")} />
+        <ClaimKey onClaimed={() => window.location.replace("/app")} />
       </div>
       <Btn
         className="mt-4"

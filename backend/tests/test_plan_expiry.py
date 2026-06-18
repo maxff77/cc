@@ -71,7 +71,7 @@ async def test_expired_client_logs_in_but_is_gated(created: set[str]) -> None:
         assert res.status_code == 200, res.text
         assert settings.session_cookie_name in client.cookies
         # Role default; the middleware routes the no-plan session on to /expired.
-        assert res.json()["home_path"] == "/"
+        assert res.json()["home_path"] == "/app"
 
         # The session exists but is gated: /me answers the repeatable 403.
         me = await client.get("/api/auth/me")

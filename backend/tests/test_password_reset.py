@@ -149,7 +149,7 @@ async def test_forced_change_happy_path(ctx: dict[str, object]) -> None:
             json={"current_password": temp, "new_password": new_password},
         )
         assert changed.status_code == 200, changed.text
-        assert changed.json()["home_path"] == "/"  # client role home
+        assert changed.json()["home_path"] == "/app"  # client role home
 
         # Same cookie now passes — flag cleared, session kept (no re-login).
         me = await session.get("/api/auth/me")
@@ -167,7 +167,7 @@ async def test_forced_change_happy_path(ctx: dict[str, object]) -> None:
             json={"email": client.email, "password": new_password},
         )
         assert ok.status_code == 200, ok.text
-        assert ok.json()["home_path"] == "/"
+        assert ok.json()["home_path"] == "/app"
 
 
 @pytest.mark.asyncio(loop_scope="session")
