@@ -114,7 +114,7 @@ export default function EnvioPage() {
   const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="grid gap-5 lg:h-[calc(100dvh-8.5rem)] lg:grid-cols-[320px_minmax(0,1fr)] lg:overflow-hidden">
+    <div className="grid gap-5 overflow-hidden lg:h-[calc(100dvh-8.5rem)] lg:grid-cols-[320px_minmax(0,1fr)]">
       {/* Master — ring, session, controls, form. On wide screens the grid is
           capped to the viewport (≈ chrome offset) and each column scrolls on its
           own, so the page itself never grows into a runaway scroll. Below lg the
