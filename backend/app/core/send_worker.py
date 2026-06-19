@@ -67,17 +67,26 @@ import time
 from collections import Counter
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerts, capture
 from app.core.broadcaster import broadcaster
+from app.core.cookie_verdict import CookieVerdict
+from app.core.cookie_verdict import drain as drain_cookie_verdicts
+from app.core.redact import (
+    VERDICT_APPROVED,
+    VERDICT_COOKIE_DEAD,
+    VERDICT_DECLINED,
+    VERDICT_FORMAT_ERROR,
+)
 from app.core.scheduler import scheduler
 from app.core.telegram import FloodWaitError, SessionLostError, gateway
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
-from app.db.models import Batch, BatchLine
+from app.db.models import Batch, BatchLine, CaptureSession
 from app.db.repos import batches as batches_repo
+from app.db.repos import gate_cookies as gate_cookies_repo
 from app.db.repos import send_log as send_log_repo
 from app.db.repos import users as users_repo
 from app.services import admission as admission_service
@@ -94,6 +103,27 @@ _ERROR_RETRY_SECONDS = 2.0
 # A PRODUCT rule from architecture's Risk Deep-Dive, NOT configuration.
 # Counted per claim (a release/re-claim resets it); FloodWaits don't count.
 _MAX_SEND_ATTEMPTS = 3
+
+# --- Amazon cookie-mode serialize gate (Phase 2) -----------------------------
+#
+# A cookie-mode batch sends the atomic ``.cookie <active_value>`` then
+# ``.amz <line>`` pair in ONE worker turn (no ``scheduler.pick_next`` between
+# them) and then HOLDS the tenant until the bot's ``⌿ Status:`` verdict for that
+# ``.amz`` line arrives. ``awaiting_verdict_until`` (DB clock) is the durable
+# serialize gate; ``core.cookie_verdict`` is the fast-path signal.
+#
+# Verdict-timeout window: hardcoded (pipeline internals are not configuration —
+# 2.5 rule). On elapse the line is retried ONCE with a fresh cookie + a NEW
+# awaited ``message_id``; a SECOND silent elapse pauses the batch
+# ``verdict_timeout`` + owner alert.
+_VERDICT_TIMEOUT_SECONDS = 90
+
+# The verdict-timeout retry-once budget is now DURABLE on the line
+# (``BatchLine.verdict_timeout_retries``), NOT process memory — so a crash loop
+# around the 90s timeout can no longer grant a fresh retry (and a fresh
+# ``.cookie``+``.amz`` resend on the shared account) per restart. Read/written in
+# ``_resend_cookie_line`` / ``_sweep_verdict_timeouts`` via the repo helpers
+# (``mark_verdict_retried`` / the requeue reset).
 
 # Per-tenant sent counter — process memory ON PURPOSE (mirror of the legacy
 # "counters never reset"); structured-log + GET observability, never durable.
@@ -181,6 +211,18 @@ async def _locked_batch(session: AsyncSession, batch_id: int) -> Batch | None:
             select(Batch).where(Batch.id == batch_id).with_for_update()
         )
     ).scalar_one_or_none()
+
+
+async def _is_cookie_mode_batch(session: AsyncSession, batch: Batch) -> bool:
+    """Is this batch bound to a cookie-mode capture session (Phase 2)?
+
+    Reads the ``cookie_mode`` snapshot off the bound ``CaptureSession`` (the
+    same source ``step()``/capture read). NULL ``capture_session_id`` (pre-3.1)
+    ⇒ never cookie-mode."""
+    if not batch.capture_session_id:
+        return False
+    cs = await session.get(CaptureSession, batch.capture_session_id)
+    return cs is not None and cs.cookie_mode
 
 
 async def _admit_waiting() -> None:
@@ -331,12 +373,39 @@ async def step() -> bool:
             tenant_id = line.tenant_id
             position = line.position
             text = line.text
+            # Cookie-mode resolution (Phase 2): a cookie-mode session snapshots
+            # ``cookie_mode=True`` and the batch snapshots ``gate_id`` (the
+            # active-cookie key). Read both off the just-claimed batch + its
+            # bound capture session INSIDE this open session (MissingGreenlet).
+            # Non-cookie-mode batches fall through to the unchanged Phase-1 path.
+            cookie_mode = False
+            gate_id = None
+            claimed_batch = await session.get(Batch, batch_id)
+            if claimed_batch is not None and claimed_batch.capture_session_id:
+                cs = await session.get(
+                    CaptureSession, claimed_batch.capture_session_id
+                )
+                cookie_mode = cs is not None and cs.cookie_mode
+                gate_id = claimed_batch.gate_id
 
     if expired:
         # Close the claim session WITHOUT claiming, cancel, and let the next
         # loop rotate (same pattern as the 2.4 selection↔stop race).
         await _cancel_expired_batch(pick.tenant_id, pick.batch_id)
         return False
+
+    # 1b. Amazon cookie-mode branch (Phase 2): the checker stores the cookie
+    #     PER ACCOUNT and the account is shared, so each ``.amz <line>`` MUST be
+    #     immediately preceded by its own ``.cookie <value>`` with NO other
+    #     message between them. Send the atomic pair in THIS one turn (no
+    #     ``scheduler.pick_next`` between ``.cookie`` and ``.amz``), then HOLD
+    #     the tenant (``awaiting_verdict_until``) until the verdict for the
+    #     ``.amz`` line arrives — the serialize gate in ``active_senders`` SQL.
+    if cookie_mode:
+        sent = await _send_cookie_pair(
+            tenant_id, batch_id, line_id, position, text, gate_id
+        )
+        return sent
 
     # 2. Send — in-place retry on the SAME line, no DB session held. The
     #    state re-check inside may yield to a pause (release) or stop (abort);
@@ -379,6 +448,8 @@ async def _record_sent(
     text: str,
     chat_id: int,
     message_id: int,
+    *,
+    complete_on_drain: bool = True,
 ) -> None:
     """Post-send record phase: 'sent' + ``(chat_id, message_id)`` on the intent
     (AC 2/5).
@@ -387,7 +458,13 @@ async def _record_sent(
     AC 5: a sent-but-unrecorded line blocks any further send ("no attribution
     possible = no sends"). Safe to re-run after a partially lost commit: the
     line UPDATE and ``set_message_id`` are idempotent by construction.
-    """
+
+    ``complete_on_drain`` is ``True`` for the normal Phase-1 path (a drained
+    batch lands 'completed' right here). The cookie-mode pair passes ``False``:
+    its ``.amz`` line is 'sent' but the batch must STAY 'sending' to await the
+    verdict — completion happens only when the verdict CONSUMES the last line
+    (``_apply_verdict`` → ``complete_if_drained``). A stop landing mid-send
+    still finalizes 'stopped' in both modes (the line did go out)."""
     state_payload: dict | None = None
     progress: dict | None = None
     while True:
@@ -412,13 +489,18 @@ async def _record_sent(
                         # Epic 3 history).
                         batch.state = batches_repo.STATE_STOPPED
                         state_payload = batches_service.state_data(batch, "idle")
-                    else:
+                    elif complete_on_drain:
                         drained = await batches_repo.complete_if_drained(
                             session, batch
                         )
                         progress = await batches_service.progress_data(session, batch)
                         if drained:
                             state_payload = batches_service.state_data(batch, "idle")
+                    else:
+                        # Cookie-mode: do NOT complete on drain — the batch
+                        # holds 'sending' until the verdict consumes the line.
+                        # Still refresh progress so the ring advances on send.
+                        progress = await batches_service.progress_data(session, batch)
                 await session.commit()
             break
         except asyncio.CancelledError:
@@ -461,6 +543,592 @@ async def _record_sent(
         await broadcaster.emit(tenant_id, "batch.progress", progress)
     if state_payload is not None:
         await broadcaster.emit(tenant_id, "batch.state", state_payload)
+
+
+# --- Amazon cookie-mode send + rotation (Phase 2) ---------------------------
+
+
+async def _pause_cookie_batch(
+    tenant_id: int, batch_id: int, reason: str
+) -> None:
+    """Pause a cookie-mode batch (``cookies_exhausted`` / ``verdict_timeout``).
+
+    An ORDINARY ``STATE_PAUSED`` discriminated by ``pause_reason`` (no new
+    state — the partial unique index and admission slot stay intact). Locks the
+    batch FOR UPDATE, re-queues the awaited line via the attempt-fence and THEN
+    clears the await fields, and emits ``batch.state`` carrying the reason so the
+    cockpit renders the right prompt. Retry-forever fail-stop, same as the record
+    phases. A batch already finalized (stopped/cancelled) is left untouched.
+    """
+    state_payload: dict | None = None
+    while True:
+        try:
+            async with async_session_factory() as session:
+                batch = await _locked_batch(session, batch_id)
+                if batch is None or batch.state not in batches_repo.LIVE_STATES:
+                    return
+                batch.state = batches_repo.STATE_PAUSED
+                await batches_repo.set_pause_reason(session, batch, reason)
+                # Re-queue the awaited line via the attempt-fence BEFORE clearing
+                # the await: clear_awaiting_verdict NULLs the fence, after which
+                # resume's requeue_failed_cookie_line can no longer resolve the
+                # LINE_SENT line and would strand it (the verdict_timeout path).
+                # The cookies_exhausted path already re-queued the line, so this
+                # is an idempotent no-op there.
+                await batches_repo.requeue_failed_cookie_line(session, batch)
+                await batches_repo.clear_awaiting_verdict(session, batch)
+                # The ``pause_reason`` rides the ``batch.state`` frame so the
+                # cockpit renders the right prompt the moment the worker pauses.
+                state_payload = batches_service.state_data(
+                    batch, "paused", pause_reason=reason
+                )
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=cookie_pause batch=%s reason=%s — "
+                "retrying until the DB returns",
+                batch_id,
+                reason,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
+    if state_payload is not None:
+        await broadcaster.emit(tenant_id, "batch.state", state_payload)
+
+
+async def _arm_await(
+    batch_id: int,
+    line_id: int,
+    chat_id: int,
+    message_id: int,
+    cookie_id: int | None,
+) -> None:
+    """Arm the serialize gate after a cookie-mode ``.amz`` send (retry-forever).
+
+    Stores the awaited ``.amz`` ``(chat_id, message_id)`` + ``func.now()+90s``
+    under the batch FOR UPDATE so ``active_senders`` excludes the tenant until a
+    matching verdict or the timeout. Idempotent (a bare UPDATE of the await
+    columns) — safe to re-run after a partially lost commit, same fail-stop as
+    ``_record_sent``.
+
+    🔒 Also stamps ``BatchLine.failed_cookie_id = cookie_id`` (the cookie ACTUALLY
+    sent for THIS attempt). A ``cookie_dead`` verdict reads it back to mark the
+    exact cookie dead — never re-derives "oldest active" across unlocked sessions
+    (which could burn a healthy cookie if the vault changed during the 90s await).
+    """
+    while True:
+        try:
+            async with async_session_factory() as session:
+                batch = await _locked_batch(session, batch_id)
+                if batch is None:
+                    return
+                await batches_repo.set_awaiting_verdict(
+                    session,
+                    batch,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    timeout_seconds=_VERDICT_TIMEOUT_SECONDS,
+                )
+                line = await session.get(BatchLine, line_id)
+                if line is not None:
+                    line.failed_cookie_id = cookie_id
+                    await session.flush()
+                await session.commit()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=cookie_arm batch=%s — retrying "
+                "until the DB returns (the serialize gate must be armed)",
+                batch_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
+
+
+async def _send_cookie_pair(
+    tenant_id: int,
+    batch_id: int,
+    line_id: int,
+    position: int,
+    text: str,
+    gate_id: int | None,
+) -> bool:
+    """Send the atomic ``.cookie <value>`` then ``.amz <line>`` pair (Phase 2).
+
+    🔒 The two sends happen in ONE worker turn with NO ``scheduler.pick_next``
+    (and no other tenant/line) between them — the cookie-per-account invariant.
+    Up-front the SAME account guards as a normal send (``watchdog.is_paused`` /
+    ``scheduler.flood_remaining``); if blocked, NOTHING goes out — the line is
+    released and re-queued. The ``.cookie`` half is SIDE-BAND: a bare guarded
+    send with NO ``send_log``/``batch_line`` row and NO ``watchdog.note_sent``
+    (it is not a tenant line); its confirmation reply is content-sniffed away in
+    capture. The ``.amz`` half rides the EXISTING write-ahead path (intent
+    already recorded at claim; ``message_id`` recorded after).
+
+    Returns ``True`` iff the ``.amz`` line went out (the loop then paces the
+    account); ``False`` on any release/re-queue (guard blocked, exhausted,
+    SessionLost, FloodWait, or pair-abort).
+
+    🔒 The cookie VALUE is NEVER logged/echoed — only ``(tenant_id, gate_id,
+    cookie_id, MASKED)``. A ``.cookie`` send failure routes as release with a
+    masked, value-free log and NEVER emits the per-attempt ``error`` event
+    (which interpolates ``str(e)`` and could echo the outgoing text).
+    """
+    # Up-front account guards (BEFORE the ``.cookie``): a latched watchdog or an
+    # open FloodWait window means nothing sends this turn. Release the line
+    # (nothing went out) and re-queue — resume re-picks a FRESH cookie.
+    if watchdog.is_paused or scheduler.flood_remaining() > 0:
+        await _release_line(tenant_id, batch_id, line_id)
+        return False
+
+    # Resolve the active cookie FOR UPDATE SKIP LOCKED (FIFO by id). No active
+    # cookie (or no gate_id snapshot) ⇒ pause ``cookies_exhausted`` + re-queue;
+    # the client adds cookies and resumes from this line.
+    async with async_session_factory() as session:
+        cookie = (
+            await gate_cookies_repo.get_active_for_rotation(
+                session, tenant_id, gate_id
+            )
+            if gate_id is not None
+            else None
+        )
+        cookie_value = cookie.value if cookie is not None else None
+        cookie_id = cookie.id if cookie is not None else None
+        # Hold the cookie row's lock only as long as needed to read the value;
+        # the send happens with NO session held (a FloodWait may sleep minutes).
+        await session.commit()
+    if cookie_value is None:
+        logger.warning(
+            "event=cookies_exhausted tenant=%s gate=%s batch=%s line=%s",
+            tenant_id,
+            gate_id,
+            batch_id,
+            line_id,
+        )
+        await _release_line(tenant_id, batch_id, line_id)
+        await _pause_cookie_batch(
+            tenant_id, batch_id, batches_repo.PAUSE_COOKIES_EXHAUSTED
+        )
+        return False
+
+    # (a) SIDE-BAND ``.cookie`` send — guarded, value never logged.
+    try:
+        await gateway.send(f".cookie {cookie_value}")
+    except FloodWaitError as e:
+        scheduler.note_flood_wait(float(e.seconds))
+        logger.warning(
+            "event=cookie_flood_wait seconds=%s tenant=%s gate=%s cookie=%s "
+            "batch=%s — release + re-queue (no bare retry)",
+            e.seconds,
+            tenant_id,
+            gate_id,
+            cookie_id,
+            batch_id,
+        )
+        await broadcaster.emit_global("flood.wait", {"seconds": e.seconds})
+        await alerts.note_flood_wait()
+        await _release_line(tenant_id, batch_id, line_id)
+        return False
+    except asyncio.CancelledError:
+        raise
+    except SessionLostError as e:
+        logger.warning(
+            "event=cookie_session_lost tenant=%s gate=%s cookie=%s batch=%s "
+            "— release + latch watchdog",
+            tenant_id,
+            gate_id,
+            cookie_id,
+            batch_id,
+        )
+        await _release_line(tenant_id, batch_id, line_id)
+        await watchdog.session_lost(str(e))
+        return False
+    except Exception:
+        # MASKED, value-free log (NO ``error`` event — it interpolates str(e)
+        # which could echo the ``.cookie`` text). The pair never completed:
+        # release + re-queue; resume re-sends the FULL pair fresh.
+        logger.exception(
+            "event=cookie_send_error tenant=%s gate=%s cookie=%s batch=%s "
+            "value=MASKED — release + re-queue",
+            tenant_id,
+            gate_id,
+            cookie_id,
+            batch_id,
+        )
+        await _release_line(tenant_id, batch_id, line_id)
+        return False
+
+    # (b) ``.amz`` send via the write-ahead path (intent already recorded). NO
+    #     ``pick_next`` between the two. A FloodWait HERE is a PAIR-ABORT (the
+    #     ``.cookie`` is already out and the global window is opening — another
+    #     tenant's ``.cookie`` could clobber the account context): never a bare
+    #     ``.amz`` retry — release + re-queue so resume re-sends the WHOLE pair.
+    try:
+        chat_id, message_id = await gateway.send(text)
+    except FloodWaitError as e:
+        scheduler.note_flood_wait(float(e.seconds))
+        logger.warning(
+            "event=flood_wait_pair_abort seconds=%s tenant=%s gate=%s "
+            "cookie=%s batch=%s line=%s — pair-abort (no bare .amz retry)",
+            e.seconds,
+            tenant_id,
+            gate_id,
+            cookie_id,
+            batch_id,
+            line_id,
+        )
+        await broadcaster.emit_global("flood.wait", {"seconds": e.seconds})
+        await alerts.note_flood_wait()
+        await _release_line(tenant_id, batch_id, line_id)
+        return False
+    except asyncio.CancelledError:
+        raise
+    except SessionLostError as e:
+        await _release_line(tenant_id, batch_id, line_id)
+        await watchdog.session_lost(str(e))
+        return False
+    except Exception:
+        # Generic ``.amz`` failure: the pair never completed, the cookie
+        # context is burned — pair-abort (release + re-queue), never a bare
+        # ``.amz`` retry. No value in ``text`` (it is the ``.amz`` line, not the
+        # cookie) but no per-attempt error event either — keep cookie-mode
+        # failures uniform and value-free.
+        logger.exception(
+            "event=amz_send_error tenant=%s batch=%s line=%s — pair-abort, "
+            "release + re-queue",
+            tenant_id,
+            batch_id,
+            line_id,
+        )
+        await _release_line(tenant_id, batch_id, line_id)
+        return False
+
+    # Record the ``.amz`` delivery (the write-ahead fail-stop) — ``.cookie`` is
+    # NOT recorded. ``complete_on_drain=False``: the batch must STAY 'sending'
+    # to await the verdict (the verdict, not the send, completes a drained
+    # cookie-mode batch). Then ARM the serialize gate so the next ``step()``
+    # skips this tenant until the verdict (or the 90s timeout).
+    await _record_sent(
+        tenant_id,
+        batch_id,
+        line_id,
+        position,
+        text,
+        chat_id,
+        message_id,
+        complete_on_drain=False,
+    )
+    await _arm_await(batch_id, line_id, chat_id, message_id, cookie_id)
+    logger.info(
+        "event=cookie_pair_sent tenant=%s gate=%s cookie=%s batch=%s line=%s "
+        "chat_id=%s message_id=%s",
+        tenant_id,
+        gate_id,
+        cookie_id,
+        batch_id,
+        line_id,
+        chat_id,
+        message_id,
+    )
+    return True
+
+
+async def _resend_cookie_line(
+    tenant_id: int,
+    batch_id: int,
+    line_id: int,
+) -> None:
+    """Re-queue the SAME line for a TIMEOUT resend (per-attempt attribution).
+
+    The verdict-timeout retry-once path: the bot went silent past the 90s
+    window, so there is no dead cookie to mark — only RESET the line's write-
+    ahead intent (clear ``message_id``) so the reused ``send_log`` row carries
+    the NEW send's id, re-queue the line at its original position, and clear the
+    await so the next ``step()`` re-sends the pair with a freshly-picked cookie.
+    A late verdict for the superseded ``message_id`` is dropped by the attempt-
+    fence in ``_apply_verdict``.
+
+    The line is ``LINE_SENT`` (the ``.amz`` went out; the ``send_log`` row holds
+    the OLD pair) — ``requeue_line_with_intent_reset`` flips it back to 'queued'
+    and clears the pair. Burns the line's one timeout-retry DURABLY in the same
+    txn (``mark_verdict_retried`` — the requeue just zeroed it) so the second
+    elapse pauses even across a restart.
+
+    Retry-forever fail-stop (the line must not strand mid-resend). The cookie-
+    dead ROTATION path no longer uses this — it rotates atomically inside
+    ``_apply_verdict`` under the held lock (FIX 2)."""
+    while True:
+        try:
+            async with async_session_factory() as session:
+                batch = await _locked_batch(session, batch_id)
+                if batch is None:
+                    return
+                line = await session.get(BatchLine, line_id)
+                if line is not None:
+                    await batches_repo.requeue_line_with_intent_reset(
+                        session, line
+                    )
+                    # Durable +1 in THIS txn (the requeue zeroed it): the second
+                    # silent elapse pauses ``verdict_timeout`` even across a restart.
+                    await batches_repo.mark_verdict_retried(session, line)
+                await batches_repo.clear_awaiting_verdict(session, batch)
+                await session.commit()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=db_unreachable phase=cookie_resend batch=%s line=%s — "
+                "retrying until the DB returns",
+                batch_id,
+                line_id,
+            )
+            await sleep_paced(_ERROR_RETRY_SECONDS)
+
+
+async def _apply_verdict(verdict: CookieVerdict) -> None:
+    """Drive one cookie-mode verdict signal (attempt-fenced, Phase 2).
+
+    🔒 ATTEMPT-FENCE: accept the verdict ONLY if its ``message_id`` matches the
+    batch's ``awaiting_message_id`` AND the await is still set — verified in-txn
+    under the batch FOR UPDATE. A verdict for a superseded attempt (rotation/
+    timeout resend) or an already-cleared await is logged and DROPPED (closes
+    verdict-edit double-fire, timeout-then-late-verdict, pause-race signals).
+
+    Routing (capture already persisted the durable ``kind='full'`` row + any CC
+    / line-failure before signalling, so the reconciler is already idempotent):
+    - ``approved``/``declined`` ⇒ clear the await; the tenant resumes to the
+      next line (capture saved Filtrada+ok / the rejected full row).
+    - ``format_error`` ⇒ the line is already ``failed`` by capture; clear the
+      await; next line (cookie NOT rotated).
+    - ``cookie_dead`` ⇒ ``mark_dead`` the current cookie + reset intent +
+      re-queue the SAME line at its position; the next ``step()`` resends with
+      the next-oldest active cookie. If none remain ⇒ pause ``cookies_exhausted``.
+    """
+    line_id = verdict.line_id
+    # Resolve which batch this line belongs to + attempt-fence under its lock.
+    async with async_session_factory() as session:
+        line = await session.get(BatchLine, line_id)
+        if line is None:
+            logger.info(
+                "event=cookie_verdict_dropped reason=line_gone message_id=%s "
+                "line=%s kind=%s",
+                verdict.message_id,
+                line_id,
+                verdict.verdict_kind,
+            )
+            return
+        batch_id = line.batch_id
+        tenant_id = line.tenant_id
+        batch = await _locked_batch(session, batch_id)
+        if (
+            batch is None
+            or batch.awaiting_message_id is None
+            or batch.awaiting_message_id != verdict.message_id
+            or batch.awaiting_chat_id != verdict.chat_id
+        ):
+            # Superseded attempt or already-cleared await: drop (no double-
+            # advance, no double-save, no rotating a healthy cookie).
+            logger.info(
+                "event=cookie_verdict_dropped reason=attempt_fence "
+                "message_id=%s awaited=%s batch=%s line=%s kind=%s",
+                verdict.message_id,
+                batch.awaiting_message_id if batch is not None else None,
+                batch_id,
+                line_id,
+                verdict.verdict_kind,
+            )
+            await session.commit()
+            return
+        if batch.state != batches_repo.STATE_SENDING:
+            # The batch is no longer sending (a manual pause / stop / cancel
+            # landed). Drop the verdict — never mutate a non-sending batch behind
+            # the user's back. The pause/resume + timeout-sweep path recovers the
+            # line (a manual pause already re-queued the awaited line and cleared
+            # the await; a stop/cancel discards it). The fence above may still
+            # pass briefly if the pause raced this drain, so this is the second
+            # guard.
+            logger.info(
+                "event=cookie_verdict_dropped reason=not_sending state=%s "
+                "message_id=%s batch=%s line=%s kind=%s",
+                batch.state,
+                verdict.message_id,
+                batch_id,
+                line_id,
+                verdict.verdict_kind,
+            )
+            await session.commit()
+            return
+        kind = verdict.verdict_kind
+        if kind in (VERDICT_APPROVED, VERDICT_DECLINED, VERDICT_FORMAT_ERROR):
+            # Consumed / line-failed: release the gate; the tenant resumes on
+            # the next step (capture already persisted the terminal row + any
+            # CC / line-failure). If this consumed the LAST pending line, the
+            # batch drains 'completed' HERE (the send deliberately did NOT —
+            # ``complete_on_drain=False`` — so a cookie-mode batch completes only
+            # once its final line's verdict lands).
+            await batches_repo.clear_awaiting_verdict(session, batch)
+            drained = await batches_repo.complete_if_drained(session, batch)
+            state_payload = (
+                batches_service.state_data(batch, "idle") if drained else None
+            )
+            progress = await batches_service.progress_data(session, batch)
+            await session.commit()
+            logger.info(
+                "event=cookie_verdict_consumed kind=%s tenant=%s batch=%s "
+                "line=%s drained=%s",
+                kind,
+                tenant_id,
+                batch_id,
+                line_id,
+                drained,
+            )
+            await broadcaster.emit(tenant_id, "batch.progress", progress)
+            if state_payload is not None:
+                await broadcaster.emit(tenant_id, "batch.state", state_payload)
+            return
+        if kind != VERDICT_COOKIE_DEAD:
+            # Unknown kind (defensive): clear and move on.
+            await batches_repo.clear_awaiting_verdict(session, batch)
+            await session.commit()
+            return
+
+        # 🔒 cookie_dead — rotate ATOMICALLY in THIS one txn (still holding the
+        # batch FOR UPDATE from the attempt-fence above). Mark the cookie that
+        # was ACTUALLY sent for this attempt (``BatchLine.failed_cookie_id``,
+        # stamped by ``_arm_await``) — NOT a re-derived "oldest active" across
+        # unlocked sessions, which could burn a healthy cookie if the vault
+        # changed during the 90s await. ``count_active_for`` in the SAME session
+        # excludes the just-dead row (the ``status`` filter sees the flushed
+        # ``mark_dead``), so the exhaustion decision is consistent.
+        gate_id = batch.gate_id
+        dead_cookie_id = line.failed_cookie_id
+        if dead_cookie_id is not None:
+            await gate_cookies_repo.mark_dead(session, dead_cookie_id, tenant_id)
+        remaining = (
+            await gate_cookies_repo.count_active_for(session, tenant_id, gate_id)
+            if gate_id is not None
+            else 0
+        )
+        # Re-queue the SAME line at its position with its write-ahead intent
+        # reset (capture already persisted the dead attempt's terminal full row,
+        # so its later edits resolve via the OLD pair). The dead cookie is
+        # already flushed dead in this txn, so the next ``step()`` cannot
+        # re-pick it.
+        await batches_repo.requeue_line_with_intent_reset(session, line)
+        if remaining == 0:
+            # No active cookie left ⇒ pause ``cookies_exhausted`` (the re-queued
+            # line waits for the client to add cookies + resume). Clears the
+            # await so resume's fence-based re-queue is a clean no-op (the line
+            # is already 'queued' here). All in this ONE committed txn.
+            batch.state = batches_repo.STATE_PAUSED
+            await batches_repo.set_pause_reason(
+                session, batch, batches_repo.PAUSE_COOKIES_EXHAUSTED
+            )
+            await batches_repo.clear_awaiting_verdict(session, batch)
+            exhausted_payload = batches_service.state_data(
+                batch, "paused", pause_reason=batches_repo.PAUSE_COOKIES_EXHAUSTED
+            )
+        else:
+            # Cookie remains: clear the await so the next ``step()`` picks the
+            # next-oldest active cookie fresh and resends this line.
+            await batches_repo.clear_awaiting_verdict(session, batch)
+            exhausted_payload = None
+        await session.commit()
+
+    logger.info(
+        "event=cookie_rotated tenant=%s gate=%s dead_cookie=%s batch=%s "
+        "line=%s remaining_active=%s",
+        tenant_id,
+        gate_id,
+        dead_cookie_id,
+        batch_id,
+        line_id,
+        remaining,
+    )
+    if exhausted_payload is not None:
+        await broadcaster.emit(tenant_id, "batch.state", exhausted_payload)
+
+
+async def _sweep_verdict_timeouts() -> None:
+    """Verdict-timeout sweep (Phase 2): a cookie-mode batch whose
+    ``awaiting_verdict_until`` elapsed with no verdict.
+
+    The line is ``LINE_SENT`` (the ``.amz`` went out) so it never reappears in
+    ``active_senders`` (which needs a 'queued' line) once the gate clears — the
+    timeout MUST be swept explicitly here (mirror of ``_admit_waiting``).
+
+    🔒 The awaited line is resolved via the ATTEMPT-FENCE
+    (``batches_repo.awaited_line_id`` — ``send_log.(chat_id, message_id) ==
+    batch.(awaiting_chat_id, awaiting_message_id)`` under the batch ``FOR
+    UPDATE``), NOT "the batch's single ``LINE_SENT`` row". A consumed
+    (approved/declined) line STAYS ``LINE_SENT`` like any normal sent line, so a
+    multi-line cookie batch can hold several ``LINE_SENT`` rows while only ONE is
+    actually awaiting a verdict — keying off ``LINE_SENT`` would re-send already-
+    consumed lines. If the fence resolves nothing (the await was cleared), the
+    batch is skipped.
+
+    First elapse ⇒ retry the line ONCE with a fresh cookie + a NEW awaited
+    ``message_id`` (reset the intent + re-queue so ``step()`` re-sends the pair).
+    Second elapse ⇒ pause ``verdict_timeout`` + owner alert. A late verdict for
+    the superseded ``message_id`` is dropped by the attempt-fence in
+    ``_apply_verdict``."""
+    timed_out: list[tuple[int, int, int, int]] = []  # (tenant, batch, line, retries)
+    async with async_session_factory() as session:
+        stmt = (
+            select(Batch.tenant_id, Batch.id)
+            .where(
+                Batch.state == batches_repo.STATE_SENDING,
+                Batch.awaiting_verdict_until.is_not(None),
+                Batch.awaiting_verdict_until <= func.now(),
+            )
+        )
+        rows = (await session.execute(stmt)).all()
+        for tenant_id, batch_id in rows:
+            # Lock the batch + resolve the awaited line via the attempt-fence
+            # (the single in-flight line, identified by send_log, not by
+            # LINE_SENT state). The fence read is consistent under the lock.
+            batch = await _locked_batch(session, batch_id)
+            if batch is None:
+                continue
+            line_id = await batches_repo.awaited_line_id(session, batch)
+            if line_id is not None:
+                # Read the DURABLE retry budget under the same lock (replaces the
+                # old process-memory ``_timeout_retried`` set — survives a restart,
+                # so a crash loop can't grant a fresh retry per restart).
+                line = await session.get(BatchLine, line_id)
+                retries = line.verdict_timeout_retries if line is not None else 0
+                timed_out.append((tenant_id, batch_id, line_id, retries))
+        await session.commit()
+
+    for tenant_id, batch_id, line_id, retries in timed_out:
+        if retries >= 1:
+            # Second silent elapse (the one durable retry already burned) ⇒ pause
+            # + owner alert (structured WARNING, the codebase's alert shape). The
+            # resume re-queue zeroes the budget for a fresh attempt.
+            logger.warning(
+                "event=verdict_timeout_pause tenant=%s batch=%s line=%s — "
+                "bot silent past retry-once; pausing for owner",
+                tenant_id,
+                batch_id,
+                line_id,
+            )
+            await _pause_cookie_batch(
+                tenant_id, batch_id, batches_repo.PAUSE_VERDICT_TIMEOUT
+            )
+        else:
+            # First elapse ⇒ retry once with a fresh cookie + new awaited id.
+            logger.warning(
+                "event=verdict_timeout_retry tenant=%s batch=%s line=%s — "
+                "retrying once with a fresh cookie",
+                tenant_id,
+                batch_id,
+                line_id,
+            )
+            await _resend_cookie_line(tenant_id, batch_id, line_id)
 
 
 async def _record_failed(
@@ -841,6 +1509,24 @@ async def _boot_recovery() -> None:
                     if batch is not None:
                         if batch.state == batches_repo.STATE_STOPPING:
                             batch.state = batches_repo.STATE_STOPPED
+                        elif await _is_cookie_mode_batch(session, batch):
+                            # Cookie-mode (Phase 2): a confirmed ``.amz`` is
+                            # awaiting its verdict — RECONSTRUCT the serialize
+                            # gate (a ``.cookie`` outgoing message never matches
+                            # a line: its ``.cookie `` prefix differs from the
+                            # ``.amz `` line text, so it is never reconciled
+                            # here). Without this the post-boot ``step()`` would
+                            # never re-send (the line is 'sent') but also never
+                            # wait for the verdict — the line would silently
+                            # stall, never consumed. Arming it lets the verdict/
+                            # timeout drive it exactly as in-process.
+                            await batches_repo.set_awaiting_verdict(
+                                session,
+                                batch,
+                                chat_id=match_pair[0],
+                                message_id=match_pair[1],
+                                timeout_seconds=_VERDICT_TIMEOUT_SECONDS,
+                            )
                         else:
                             await batches_repo.complete_if_drained(session, batch)
                     outcome = "confirmed"
@@ -861,12 +1547,44 @@ async def _boot_recovery() -> None:
         capture.boot_recovered()
 
 
+async def _drain_verdicts() -> None:
+    """Apply every pending cookie-mode verdict signal (Phase 2).
+
+    Drained at the top of each loop turn (the FAST path; the 90s timeout is the
+    durable backstop). Each verdict is BOTH attempt-fenced AND state-gated under
+    the batch FOR UPDATE inside ``_apply_verdict`` — a stale/superseded signal,
+    OR a verdict for a non-sending (paused/stopping/stopped/cancelled) batch, is
+    logged and dropped there (the pause/resume + timeout path recovers the line).
+    A failure on one verdict must not wedge the loop: it is logged and the rest
+    still drain (the durable ``awaiting_verdict_until`` gate + timeout recover
+    a dropped one)."""
+    for verdict in drain_cookie_verdicts():
+        try:
+            await _apply_verdict(verdict)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "event=cookie_verdict_failed message_id=%s line=%s kind=%s — "
+                "dropped (timeout gate recovers)",
+                verdict.message_id,
+                verdict.line_id,
+                verdict.verdict_kind,
+            )
+
+
 async def run_worker() -> None:
     """Infinite drain loop (created as a task in the lifespan)."""
     await _boot_recovery()
 
     while True:
         try:
+            # Cookie-mode (Phase 2): apply pending verdicts (rotate/consume/
+            # fail) and sweep elapsed verdict timeouts BEFORE the send step, so
+            # a rotated/timed-out line is re-queued in time for this turn's
+            # claim. Both are no-ops with zero cookie-mode batches in flight.
+            await _drain_verdicts()
+            await _sweep_verdict_timeouts()
             sent = await step()
         except asyncio.CancelledError:
             raise

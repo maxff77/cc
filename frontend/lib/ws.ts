@@ -120,6 +120,12 @@ export interface LiveBatchState {
   // FIFO admission position (Story 4.2) — non-null only while `state` is
   // "waiting"; the server assigns it (snapshot + every batch.state).
   queuePosition: number | null;
+  // Why a batch is paused (amazon-gate-send-rotation Phase 2): a machine code
+  // carried on `batch.state` when `state === "paused"`. `'cookies_exhausted'`
+  // ⇒ the cockpit renders the add-cookies prompt; null = an ordinary pause
+  // (operator Pausar) with no special reason. Cleared on any non-paused state
+  // and on a session change — never lingers across a resume.
+  pauseReason: string | null;
   // The tenant's credit balance (credits feature). TENANT-scoped (like the
   // session fields): it survives the idle reset and seedFromBatch — only the
   // snapshot or a `credits.updated` event moves it. The cockpit shows it and
@@ -158,6 +164,10 @@ interface SnapshotData {
   eta_seconds: number;
   // Story 4.2: admission position — null unless state === "waiting".
   queue_position: number | null;
+  // Phase 2 (amazon-gate-send-rotation): the pause reason on a reconnect —
+  // present only when state === "paused"; null/absent otherwise. Snapshot-first:
+  // a tab connecting into a `cookies_exhausted` pause rebuilds the prompt here.
+  pause_reason?: string | null;
   cc_new: number;
   // Story 3.2: the active capture session's slice — rows capped server-side,
   // totals real.
@@ -224,6 +234,10 @@ interface BatchStateData {
   session_id: number | null;
   // Story 4.2: travels in EVERY batch.state — null outside "waiting".
   queue_position: number | null;
+  // Phase 2 (amazon-gate-send-rotation): the pause reason, present only when
+  // `state === "paused"` (e.g. "cookies_exhausted" / "verdict_timeout"); null
+  // otherwise. The backend's `state_data(... pause_reason=...)` builds it.
+  pause_reason?: string | null;
 }
 
 // VERBATIM mirror of the `response.captured` emit (backend core/capture.py).
@@ -315,6 +329,7 @@ const IDLE: LiveBatchState = {
   floodUntil: null,
   watchdog: { paused: false, reason: null, detail: null, pausedAt: null },
   queuePosition: null,
+  pauseReason: null,
   creditBalance: 0,
 };
 
@@ -403,6 +418,9 @@ function reduce(event: string, data: unknown) {
         // Admission position (4.2): a tab connecting mid-wait renders its
         // place from the snapshot alone.
         queuePosition: d.queue_position ?? null,
+        // Pause reason (Phase 2): only meaningful while paused — a reconnect
+        // into a `cookies_exhausted` pause rebuilds the prompt; null otherwise.
+        pauseReason: d.state === "paused" ? (d.pause_reason ?? null) : null,
         // Credits balance (credits feature): authoritative on reconnect.
         creditBalance: d.credit_balance,
       });
@@ -491,6 +509,9 @@ function reduce(event: string, data: unknown) {
           // System state, not batch state (4.1): a draining batch never
           // clears the global-pause banner.
           watchdog: store.watchdog,
+          // Idle is a non-paused state (Phase 2): drop any pause reason — the
+          // add-cookies prompt belongs only to a live `cookies_exhausted` pause.
+          pauseReason: null,
           // Tenant-scoped (credits feature): a draining batch never resets it.
           creditBalance: store.creditBalance,
         });
@@ -541,6 +562,14 @@ function reduce(event: string, data: unknown) {
           // Admission position (4.2): assigned, never guessed — the server
           // sends null on every non-waiting state.
           queuePosition: d.queue_position ?? null,
+          // Pause reason (Phase 2): only a paused batch carries one — when it
+          // is paused take the frame's reason, on any non-paused state (sending/
+          // stopping/waiting) clear it. A session swap also clears it, so a
+          // stale `cookies_exhausted` prompt never bleeds into the new session.
+          pauseReason:
+            sessionChanged || d.state !== "paused"
+              ? null
+              : (d.pause_reason ?? null),
         });
       }
       break;
@@ -825,6 +854,9 @@ export function clearSession(sessionId: number) {
     responsesTotal: 0,
     responsesOkTotal: 0,
     awaitingReply: 0,
+    // Session change (Phase 2): a stale `cookies_exhausted` prompt must not
+    // outlive the session it belonged to.
+    pauseReason: null,
   });
 }
 
@@ -878,6 +910,9 @@ export function seedFromBatch(batch: {
     total: batch.total,
     etaSeconds: 0,
     queuePosition: waiting ? (batch.queue_position ?? null) : null,
+    // The seed flips into "sending"/"waiting" — never a paused state, so there
+    // is no pause reason (Phase 2). batch.state remains the source of truth.
+    pauseReason: null,
     // The session fields belong to the SESSION, not the batch — never seeded
     // away (3.2). If this batch activated ANOTHER session, the batch.state
     // the POST emits right after carries the new session_id and the reducer

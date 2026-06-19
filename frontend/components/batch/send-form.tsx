@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
+import { CookieManager } from "@/components/batch/cookie-manager";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
 import { SectionCard } from "@/components/ui/section-card";
@@ -30,6 +31,11 @@ export interface GateOut {
   credit_cost: number;
   category_id: number;
   category_name: string;
+  // Cookie-vault Phase 1: a plain UX boolean (sourced from
+  // `gate.category.cookie_mode`) — when true the cockpit shows the cookie
+  // manager for this gate. Never carries the gate `value`. Optional so a backend
+  // that predates the field (or a non-cookie gate) reads as `undefined` → false.
+  cookie_mode?: boolean;
   created_at: string;
 }
 
@@ -124,6 +130,15 @@ export function SendForm({
   const gatesInCategory = useMemo(
     () => gates.filter((g) => g.category_name === categoryKey),
     [gates, categoryKey],
+  );
+
+  // The gate currently PICKED in the idle selector (null while live or until a
+  // gate is chosen). Drives the cookie-vault manager: it shows ONLY for a
+  // cookie-mode gate while the surface is idle (cookie-vault Phase 1) — appending
+  // to a live lote locks the selector, so there is no gate to manage then.
+  const pickedGate = useMemo(
+    () => gatesInCategory.find((g) => String(g.id) === gateKey) ?? null,
+    [gatesInCategory, gateKey],
   );
 
   // On append the backend validates the id but applies the LIVE gate's value
@@ -273,108 +288,127 @@ export function SendForm({
   );
 
   return (
-    // Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote plate of
-    // the cockpit; legendAs="h2" keeps a heading in the outline.
-    <SectionCard
-      className="flex flex-col gap-4"
-      legend="Nuevo lote"
-      legendAs="h2"
-    >
-      {banner && <Notice status="danger">{banner}</Notice>}
-      <form className="flex flex-col gap-3.5" onSubmit={onSubmit}>
-        {isLive ? (
-          // Active-gate chip (UX-DR9): name · comando visible.
-          <div className="flex flex-wrap items-center gap-2">
-            <LabelCaps>Gate activo</LabelCaps>
-            <MonoChip>
-              {live.gateName} · {live.gateDisplayValue}
-            </MonoChip>
-            {selectError && (
-              <Notice className="w-full" status="danger">
-                {selectError}
-              </Notice>
-            )}
-          </div>
-        ) : (
-          // Stacked vertical selects (ui-polish-spec §4.5): inside the cockpit
-          // column there is no side-by-side; the shared selectError anchors to
-          // the guilty select.
-          <div className="flex flex-col gap-3">
-            <Select
-              error={
-                selectError !== null && categoryKey == null ? selectError : null
-              }
-              label="Categoría"
-              options={categoryOptions}
-              placeholder="Elige una categoría"
-              value={categoryKey}
-              onChange={(key) => {
-                setCategoryKey(key);
-                setGateKey(null); // changing category resets the gate pick
-                if (selectError) setSelectError(null);
-              }}
-            />
-            <Select
-              disabled={categoryKey == null}
-              error={
-                selectError !== null && categoryKey != null ? selectError : null
-              }
-              label="Gate"
-              options={gateOptions}
-              placeholder="Elige un gate"
-              value={gateKey}
-              onChange={(key) => {
-                setGateKey(key);
-                if (selectError) setSelectError(null);
-              }}
-            />
-          </div>
-        )}
-        {/* Credits strip (credits feature): the tenant's live balance + the
+    <div className="flex flex-col gap-4">
+      {/* Rack instrument (ui-polish-spec §4.1): the form is the Nuevo lote plate of
+        the cockpit; legendAs="h2" keeps a heading in the outline. */}
+      <SectionCard
+        className="flex flex-col gap-4"
+        legend="Nuevo lote"
+        legendAs="h2"
+      >
+        {banner && <Notice status="danger">{banner}</Notice>}
+        <form className="flex flex-col gap-3.5" onSubmit={onSubmit}>
+          {isLive ? (
+            // Active-gate chip (UX-DR9): name · comando visible.
+            <div className="flex flex-wrap items-center gap-2">
+              <LabelCaps>Gate activo</LabelCaps>
+              <MonoChip>
+                {live.gateName} · {live.gateDisplayValue}
+              </MonoChip>
+              {selectError && (
+                <Notice className="w-full" status="danger">
+                  {selectError}
+                </Notice>
+              )}
+            </div>
+          ) : (
+            // Stacked vertical selects (ui-polish-spec §4.5): inside the cockpit
+            // column there is no side-by-side; the shared selectError anchors to
+            // the guilty select.
+            <div className="flex flex-col gap-3">
+              <Select
+                error={
+                  selectError !== null && categoryKey == null
+                    ? selectError
+                    : null
+                }
+                label="Categoría"
+                options={categoryOptions}
+                placeholder="Elige una categoría"
+                value={categoryKey}
+                onChange={(key) => {
+                  setCategoryKey(key);
+                  setGateKey(null); // changing category resets the gate pick
+                  if (selectError) setSelectError(null);
+                }}
+              />
+              <Select
+                disabled={categoryKey == null}
+                error={
+                  selectError !== null && categoryKey != null
+                    ? selectError
+                    : null
+                }
+                label="Gate"
+                options={gateOptions}
+                placeholder="Elige un gate"
+                value={gateKey}
+                onChange={(key) => {
+                  setGateKey(key);
+                  if (selectError) setSelectError(null);
+                }}
+              />
+            </div>
+          )}
+          {/* Credits strip (credits feature): the tenant's live balance + the
             selected gate's per-✅ cost. Turns into a warning when a costed gate
             has no balance (the send is blocked). Clients only — owner/admin are
             exempt from credits, so the strip would only show a misleading
             "Créditos: 0". */}
-        {isMetered && (
-          <div className="flex items-center justify-between text-[11px]">
-            <span
-              className={live.creditBalance <= 0 ? "text-danger" : "text-muted"}
-            >
-              Créditos:{" "}
-              <span className="tabular-nums">{live.creditBalance}</span>
-            </span>
-            {gateCost > 0 && (
-              <span className={blockedByCredits ? "text-danger" : "text-muted"}>
-                {gateCost} créd./✅
+          {isMetered && (
+            <div className="flex items-center justify-between text-[11px]">
+              <span
+                className={
+                  live.creditBalance <= 0 ? "text-danger" : "text-muted"
+                }
+              >
+                Créditos:{" "}
+                <span className="tabular-nums">{live.creditBalance}</span>
               </span>
-            )}
-          </div>
-        )}
-        <Area
-          error={textError}
-          label="Líneas"
-          placeholder="Pega tus líneas"
-          rows={5}
-          value={text}
-          onChange={(v) => {
-            setText(v);
-            if (textError) setTextError(null);
-          }}
-        />
-        {/* The commit action wears the brand gradient (a text-free-ish commit
+              {gateCost > 0 && (
+                <span
+                  className={blockedByCredits ? "text-danger" : "text-muted"}
+                >
+                  {gateCost} créd./✅
+                </span>
+              )}
+            </div>
+          )}
+          <Area
+            error={textError}
+            label="Líneas"
+            placeholder="Pega tus líneas"
+            rows={5}
+            value={text}
+            onChange={(v) => {
+              setText(v);
+              if (textError) setTextError(null);
+            }}
+          />
+          {/* The commit action wears the brand gradient (a text-free-ish commit
             moment); appending while 'stopping' is rejected server-side. */}
-        <Btn
-          full
-          disabled={
-            mutation.isPending || live.state === "stopping" || blockedByCredits
-          }
-          icon="send"
-          type="submit"
-          variant="primary"
-        >
-          {mutation.isPending ? "Enviando…" : "Enviar"}
-        </Btn>
-      </form>
-    </SectionCard>
+          <Btn
+            full
+            disabled={
+              mutation.isPending ||
+              live.state === "stopping" ||
+              blockedByCredits
+            }
+            icon="send"
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Enviando…" : "Enviar"}
+          </Btn>
+        </form>
+      </SectionCard>
+
+      {/* Cookie vault (cookie-vault Phase 1): the manager mounts ONLY for a
+          cookie-mode gate while the surface is idle — a live lote locks the
+          selector, so there's no picked gate to manage. */}
+      {!isLive && pickedGate?.cookie_mode && (
+        <CookieManager gateId={pickedGate.id} />
+      )}
+    </div>
   );
 }

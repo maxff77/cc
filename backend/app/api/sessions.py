@@ -370,6 +370,7 @@ async def new_session(
             active.gate_name,
             active.gate_display_value,
             active.special_mode,
+            active.cookie_mode,
         )
         await session.commit()
     except IntegrityError:

@@ -520,3 +520,98 @@ def key_revoked() -> AppError:
         code="key_revoked",
         message="Esa key fue revocada.",
     )
+
+
+# --- Codes the cookie-vault feature defines (Phase 1) --------------------
+
+
+def invalid_cookie() -> AppError:
+    # The posted cookie value failed validation (empty/whitespace-only,
+    # oversized, or contains unprintable characters). Raised INSIDE the router
+    # body — never via a pydantic field validator — so the rejected value can
+    # never surface in a default 422 body or an access log. The message is
+    # deliberately value-free.
+    return AppError(
+        status_code=400,
+        code="invalid_cookie",
+        message="La cookie no es válida (vacía, demasiado larga o con caracteres no permitidos).",
+    )
+
+
+def gate_not_cookie_mode() -> AppError:
+    # The gate is visible to the tenant but its category is NOT in cookie mode,
+    # so it has no vault. Evaluated only AFTER the gate is confirmed visible
+    # (resolve/authorize first → identical 404 for unknown/foreign/retired).
+    return AppError(
+        status_code=409,
+        code="gate_not_cookie_mode",
+        message="Ese gate no admite cookies.",
+    )
+
+
+def cookie_not_found() -> AppError:
+    # Unknown id, another tenant's id, id > int4 — existence is never leaked
+    # (idiom session_not_found); the id is never logged.
+    return AppError(
+        status_code=404,
+        code="cookie_not_found",
+        message="Esa cookie no existe.",
+    )
+
+
+def cookie_limit_reached() -> AppError:
+    # The tenant already holds the per-(tenant, gate) cookie cap; storing
+    # another distinct value is rejected.
+    return AppError(
+        status_code=409,
+        code="cookie_limit_reached",
+        message="Alcanzaste el máximo de cookies para este gate. Elimina alguna para agregar otra.",
+    )
+
+
+def cookie_conflict_retry() -> AppError:
+    # Raced unique violation: the conflicting cookie was deleted between the
+    # IntegrityError and the re-fetch, so there is no row to dedup to. Surface a
+    # mapped, retryable conflict (keeps the {code,message} contract) instead of
+    # letting the bare IntegrityError become an unmapped 500. Value-free.
+    return AppError(
+        status_code=409,
+        code="cookie_conflict_retry",
+        message="No pudimos guardar la cookie por una operación simultánea. Vuelve a intentar.",
+    )
+
+
+# --- Cookie-mode pause reasons (cookie rotation feature, Phase 2) ---------
+#
+# NOT ``AppError`` factories: a ``cookies_exhausted`` / ``verdict_timeout``
+# pause is an ORDINARY ``STATE_PAUSED`` batch discriminated by
+# ``Batch.pause_reason`` (the same string codes live as the canonical constants
+# ``PAUSE_COOKIES_EXHAUSTED`` / ``PAUSE_VERDICT_TIMEOUT`` in
+# ``repos.batches``). The reason rides the ``batch.state`` WS frame's
+# ``pause_reason``; the cockpit renders the prompt off the CODE (the
+# add-cookies notice has its own inlined copy). This mapping keeps the
+# machine-code → Spanish-copy contract of this module in ONE place so any
+# server-side surface (logs, a future REST read, an alert) renders the same
+# user-facing sentence the {code, message} contract guarantees everywhere else.
+
+PAUSE_REASON_MESSAGES: dict[str, str] = {
+    "cookies_exhausted": (
+        "Se agotaron las cookies de este gate. Agrega más cookies y reanuda "
+        "para continuar desde la línea pendiente."
+    ),
+    "verdict_timeout": (
+        "El checker dejó de responder. Reanuda para reintentar la línea "
+        "pendiente; si persiste, vuelve a intentarlo más tarde."
+    ),
+}
+
+
+def pause_reason_message(reason: str | None) -> str | None:
+    """Spanish cockpit copy for a cookie-mode ``pause_reason`` code, or ``None``.
+
+    ``None`` for a plain client pause (no reason) and for an unknown code — the
+    caller falls back to a generic "pausado" copy, never leaking a raw code.
+    """
+    if reason is None:
+        return None
+    return PAUSE_REASON_MESSAGES.get(reason)

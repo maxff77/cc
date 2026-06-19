@@ -13,12 +13,22 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from app.core import alerts, capture, send_worker
+from app.core import alerts, capture, cookie_verdict, send_worker
 from app.core.scheduler import scheduler
 from app.core.telegram import gateway
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
-from app.db.models import Gate, GateCategory, Tenant, User
+from app.db.models import (
+    Batch,
+    BatchLine,
+    CaptureSession,
+    Gate,
+    GateCategory,
+    Response,
+    SendLog,
+    Tenant,
+    User,
+)
 from app.db.repos import users as users_repo
 from app.main import app
 from app.services.auth import hash_password
@@ -201,6 +211,58 @@ def reset_capture() -> Iterator[None]:
     capture.reset()
     yield
     capture.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_send_worker() -> Iterator[None]:
+    """Wipe the send worker's process-memory singletons around every test.
+
+    The conftest predates cookie-mode (Phase 2), so its siblings
+    (``reset_scheduler``/``reset_capture``) never covered the send worker's own
+    globals: the per-tenant sent counter (``_sent_by_tenant``) and the
+    capture→worker verdict-signal queue (``cookie_verdict._queue``). Without this
+    they leak across the session-scoped run — a verdict one module signals, or a
+    bumped sent count, bleeds into LATER tests (the isolation flake; the same
+    trap as the 2.4 governor). The verdict-timeout retry budget is DURABLE on
+    ``BatchLine`` now, so there is no process-memory retry set left to reset.
+    """
+    send_worker._sent_by_tenant.clear()
+    cookie_verdict.reset()
+    yield
+    send_worker._sent_by_tenant.clear()
+    cookie_verdict.reset()
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def clean_send_capture_domain() -> AsyncIterator[None]:
+    """Give every test a clean send/capture slate (DB-isolation).
+
+    The DB-level sibling of ``reset_send_worker``. The send-worker queries are
+    GLOBAL by design — ``count_active_senders`` spans every tenant, and reply
+    attribution keys on ``(chat_id, message_id)``, which the ``FakeGateway``
+    restarts at 1 each test. A test that posts a batch via a session-scoped
+    tenant (owner/admin) and never stops/drains it, or whose ``send_log`` rows
+    outlive it, leaks into a LATER test's global count or attribution (the
+    isolation flake — e.g. ``test_paused_tenant_is_excluded_then_rejoins`` /
+    ``test_delete_guarded_by_live_batch_then_cascades_clean``). Wipe AFTER each
+    test (post-body, so it never deletes the running test's own rows); every
+    test has this teardown, so the NEXT test starts clean. Tenant-scoped
+    fixtures (users/gates) survive — only the per-test send/capture rows are
+    deleted, child→parent so it is FK-safe.
+
+    Best-effort: the suite shares ONE session-scoped event loop + connection
+    pool, so a pooled connection can occasionally carry a prior test's broken
+    transaction; swallow any cleanup error rather than turn an unrelated test
+    into an ERROR (the next wipe catches up).
+    """
+    yield
+    try:
+        async with async_session_factory() as session:
+            for model in (Response, SendLog, BatchLine, Batch, CaptureSession):
+                await session.execute(delete(model))
+            await session.commit()
+    except Exception:  # noqa: BLE001 — isolation cleanup is best-effort
+        pass
 
 
 @pytest.fixture(autouse=True)

@@ -43,12 +43,42 @@ from sqlalchemy import exc as sa_exc
 from app.core import alerts, attribution
 from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
-from app.core.redact import parse_approveds, redact_reply_text, strip_special_stats
+from app.core.cookie_verdict import CookieVerdict
+from app.core.cookie_verdict import signal as cookie_verdict_signal
+from app.core.redact import (
+    COOKIE_CONFIRMATION_MARKER,
+    VERDICT_APPROVED,
+    VERDICT_COOKIE_DEAD,
+    VERDICT_DECLINED,
+    VERDICT_FORMAT_ERROR,
+    normalize_cookie_cc,
+    parse_amazon_verdict,
+    parse_approveds,
+    redact_reply_text,
+    strip_special_stats,
+)
 from app.core.watchdog import watchdog
 from app.db.base import async_session_factory
-from app.db.models import Batch, CaptureSession
+from app.db.models import Batch, BatchLine, CaptureSession
+from app.db.repos import batches as batches_repo
 from app.db.repos import responses as responses_repo
 from app.services import batches as batches_service
+
+# Fail code recorded on a cookie-mode line whose reply is the bot's ``Format :``
+# help message (a malformed ``.amz`` line) — a LINE-level terminal failure, NOT
+# a cookie-dead rotation. The frontend maps it to Spanish copy.
+_AMAZON_FORMAT_ERROR = "amazon_format_error"
+
+# Verdict kinds that consume/rotate a cookie-mode line and therefore hand a
+# signal to the send worker (``none``/``confirmation`` never signal).
+_SIGNALLING_VERDICTS = frozenset(
+    {
+        VERDICT_APPROVED,
+        VERDICT_DECLINED,
+        VERDICT_COOKIE_DEAD,
+        VERDICT_FORMAT_ERROR,
+    }
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +293,24 @@ async def process_incoming(reply: IncomingReply) -> None:
     """
     global _unmatched_total
 
+    # 🔒 Side-band ``.cookie`` confirmation drop (Amazon cookie-mode, Phase 2).
+    # The ``.cookie`` half of the atomic pair is side-band — no ``send_log``/
+    # ``batch_line`` row — so its ``…almacenó tu cookie correctamente. ✅``
+    # confirmation attributes to NOTHING. A content-sniff (not the
+    # attribution-miss path) drops it at the very top: every cookie-mode line
+    # yields one confirmation, so routing it through attribution-miss would
+    # steadily inflate ``_unmatched_total`` and trip the ban guardrail. No
+    # attribution, no unmatched retry, no ``alerts.note_unmatched``, no
+    # ``_unmatched_total`` bump, no verdict signal. ``watchdog.note_reply`` was
+    # already fed at ``enqueue`` (liveness, unchanged) — that stays.
+    if reply.text and COOKIE_CONFIRMATION_MARKER in reply.text:
+        logger.info(
+            "event=cookie_confirmation_dropped message_id=%s chat_id=%s",
+            reply.message_id,
+            reply.chat_id,
+        )
+        return
+
     async with async_session_factory() as session:
         attributed = await attribution.resolve(
             session,
@@ -316,8 +364,19 @@ async def process_incoming(reply: IncomingReply) -> None:
             CaptureSession, attributed.capture_session_id
         )
         special = capture_session is not None and capture_session.special_mode
+        # Cookie-mode sessions (Amazon cookie-vault, Phase 2): the session
+        # snapshots cookie_mode=True. There the verdict is OWNED by the bot's
+        # ``⌿ Status:`` token (Approved/Declined carry NO ✅/❌ glyph), a hard
+        # short-circuit that REPLACES the legacy glyph chain — never falls
+        # through to previous_status. Classification happens ONLY here (inside
+        # the attributed branch); an unattributed ``⌿ Status:`` reply was
+        # already bucketed unmatched above, exactly like today.
+        cookie_mode = (
+            capture_session is not None and capture_session.cookie_mode
+        )
         # Parse the count from the redacted-but-not-yet-stripped text BEFORE the
         # strip removes it; clean_text is what gets stored/dedup'd/emitted.
+        # ``strip_special_stats`` is NEVER applied to cookie-mode replies.
         approveds = parse_approveds(redacted) if special else None
         clean_text = strip_special_stats(redacted) if special else redacted
 
@@ -326,7 +385,45 @@ async def process_incoming(reply: IncomingReply) -> None:
         )
         previous_status = previous.status if previous is not None else None
         status: str | None
-        if special:
+        # Cookie-mode classification state (only meaningful when cookie_mode):
+        # the verdict kind handed to the worker, the CC values extracted from
+        # the Approved card, and whether this reply marks the line failed.
+        cookie_verdict_kind: str | None = None
+        cookie_cc_values: list[str] = []
+        cookie_line_failed = False
+        if cookie_mode:
+            # 🔒 HARD short-circuit OWNING status — runs on the REDACTED text
+            # (Checked By / Credits already scrubbed); NO special-mode strip.
+            kind, _token = parse_amazon_verdict(redacted)
+            cookie_verdict_kind = kind
+            if kind == VERDICT_APPROVED:
+                # Approved → ok + the bare card. Normalize the inline ``⌿`` /
+                # leading ``☇`` separators to newlines BEFORE extract_cc so the
+                # ``CC:`` line terminates before ``Status:`` (yields the bare
+                # ``377481016137504|05|2033|3845``, no trailing ``⌿``).
+                status = responses_repo.STATUS_OK
+                cookie_cc_values = extract_cc(normalize_cookie_cc(clean_text))
+            elif kind == VERDICT_DECLINED:
+                # Declined → rejected: line consumed, cookie ALIVE, NOTHING to
+                # Filtrada, but a full rejected revision IS persisted.
+                status = responses_repo.STATUS_REJECTED
+            elif kind == VERDICT_COOKIE_DEAD:
+                # Cookie dead → a full dead-verdict revision (rejected status)
+                # so the reconciler stops re-feeding; the worker rotates+resends
+                # on the signal.
+                status = responses_repo.STATUS_REJECTED
+            elif kind == VERDICT_FORMAT_ERROR:
+                # Malformed ``.amz`` → LINE-level terminal failure (no rotation,
+                # cookie stays active). Persist a terminal marker revision +
+                # mark the line failed.
+                status = responses_repo.STATUS_REJECTED
+                cookie_line_failed = True
+            else:
+                # confirmation (already content-sniffed away normally) / none:
+                # a pure no-verdict edit — keep previous, write nothing, no
+                # signal (mirrors the legacy ⏳ intermediate state).
+                status = previous_status
+        elif special:
             # Validity = "Approveds! ✅: N" with N≥1. No Approveds line yet ⇒
             # still processing — the legacy ⏳ intermediate state (keep previous).
             if approveds is None:
@@ -403,8 +500,37 @@ async def process_incoming(reply: IncomingReply) -> None:
             status=status,
             text=clean_text,
         )
+        # Cookie-mode: a Format-error reply is a LINE-level terminal failure —
+        # mark the line failed (fail_code) so the batch keeps draining (no
+        # rotation). The worker clears the await on the signal. Guarded on
+        # line_id (a SET-NULL'd batch leaves it None).
+        if (
+            cookie_mode
+            and cookie_line_failed
+            and attributed.line_id is not None
+        ):
+            line = await session.get(BatchLine, attributed.line_id)
+            if line is not None:
+                await batches_repo.mark_failed(
+                    session, line, _AMAZON_FORMAT_ERROR
+                )
         new_cc: list[str] = []
-        if status == responses_repo.STATUS_OK:
+        if cookie_mode:
+            # CC only on a true Approved verdict — the card already extracted
+            # from the separator-normalized text above (never Declined/dead/
+            # format noise into Filtrada).
+            if cookie_verdict_kind == VERDICT_APPROVED and cookie_cc_values:
+                new_cc = await responses_repo.add_new_cc(
+                    session,
+                    tenant_id=attributed.tenant_id,
+                    capture_session_id=attributed.capture_session_id,
+                    batch_id=attributed.batch_id,
+                    line_id=attributed.line_id,
+                    chat_id=reply.chat_id,
+                    message_id=reply.message_id,
+                    values=cookie_cc_values,
+                )
+        elif status == responses_repo.STATUS_OK:
             new_cc = await responses_repo.add_new_cc(
                 session,
                 tenant_id=attributed.tenant_id,
@@ -430,7 +556,43 @@ async def process_incoming(reply: IncomingReply) -> None:
         tenant_id = attributed.tenant_id
         capture_session_id = attributed.capture_session_id
         batch_id = attributed.batch_id
+        line_id = attributed.line_id
         await session.commit()
+
+    # 🔒 Capture→worker verdict signal (Amazon cookie-mode, Phase 2). Emit AFTER
+    # the commit so the worker, draining this verdict, sees the persisted full
+    # row (and any line-failure) and resolves the attempt-fence against durable
+    # state. ONLY when cookie_mode, the verdict consumes/rotates the line
+    # (approved/declined/cookie_dead/format_error — never none/confirmation),
+    # and the line is attributed. It carries ONLY ids + the kind — the cookie
+    # VALUE is never part of it. A reconciler replay returns early at the no-op
+    # guard above, so the signal fires AT MOST once per real verdict (no
+    # spurious re-rotation). The worker attempt-fences it under the batch FOR
+    # UPDATE and drops a stale/superseded signal.
+    if (
+        cookie_mode
+        and cookie_verdict_kind in _SIGNALLING_VERDICTS
+        and line_id is not None
+        # 🔒 The fence key IS ``reply.reply_to_msg_id`` (the ``.amz`` message the
+        # bot is replying to). A verdict with ``reply_to_msg_id=None`` is
+        # un-fenceable — it could never match ``Batch.awaiting_message_id`` and
+        # would only churn the worker — so never signal it (PATCH 5).
+        and reply.reply_to_msg_id is not None
+    ):
+        cookie_verdict_signal(
+            CookieVerdict(
+                chat_id=reply.chat_id,
+                # 🔒 ATTEMPT-FENCE KEY: the worker awaits the ``.amz`` send's own
+                # message_id (``Batch.awaiting_message_id``). The bot verdict
+                # REPLIES TO that ``.amz`` message, so the answered id is
+                # ``reply.reply_to_msg_id`` — NOT this bot reply's own
+                # ``reply.message_id`` (which would never match the fence, and a
+                # reconciler edit-replay keeps the same ``reply_to_msg_id``).
+                message_id=reply.reply_to_msg_id,
+                line_id=line_id,
+                verdict_kind=cookie_verdict_kind,
+            )
+        )
 
     # Credits balance update (credits feature): emitted ONLY on a real debit
     # (charged_balance is None for free gates and for an already-charged

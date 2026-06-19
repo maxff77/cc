@@ -15,6 +15,14 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine, Plan, User
+from app.db.repos import send_log as send_log_repo
+
+# Pause reasons for a cookie-mode batch (Phase 2). Both are an ORDINARY
+# ``STATE_PAUSED`` batch discriminated by ``Batch.pause_reason`` — NO new
+# state, so the live/admitted predicates and the partial unique index stay
+# intact, and the paused batch keeps its admission slot (``ADMITTED_STATES``).
+PAUSE_COOKIES_EXHAUSTED = "cookies_exhausted"
+PAUSE_VERDICT_TIMEOUT = "verdict_timeout"
 
 # Lifecycle states (2.2 + 2.3 + 2.5 + 4.2) — plain strings, no DB enum (see
 # the model docstring). 'cancelled' (2.5, plan expiry) is terminal and NOT
@@ -139,6 +147,7 @@ async def create_batch(
     priority: int,
     gate_credit_cost: int = 0,
     state: str = STATE_SENDING,
+    gate_id: int | None = None,
 ) -> Batch:
     """Insert and flush a fresh live batch (gate strings snapshotted verbatim).
 
@@ -149,6 +158,13 @@ async def create_batch(
     ``gate_credit_cost`` is the gate's per-✅ credit cost snapshotted at start
     (credits feature) — the capture pipeline charges THIS, so re-pricing the
     gate never re-charges this batch.
+
+    ``gate_id`` is the SNAPSHOT of the gate's catalog id (Phase 2 cookie-mode):
+    the cookie-rotation layer keys the active-cookie pick on
+    ``(tenant_id, gate_id)``. Snapshotted (no FK / no relationship) so history
+    survives a gate edit, the same denormalize-on-purpose stance as the gate
+    strings. ``None`` for a non-cookie-mode batch (the worker never reads it
+    there).
     """
     batch = Batch(
         tenant_id=tenant_id,
@@ -158,6 +174,7 @@ async def create_batch(
         gate_credit_cost=gate_credit_cost,
         state=state,
         priority=priority,
+        gate_id=gate_id,
     )
     session.add(batch)
     await session.flush()
@@ -319,6 +336,17 @@ async def active_senders(
     # the belt-and-braces ``role == 'client'`` predicate keeps a shared tenant
     # from joining a staff row.)
     antispam = func.coalesce(Plan.antispam_seconds, 0.0)
+    # Cookie-mode SERIALIZE GATE (Phase 2): a cookie-mode batch sends the
+    # atomic ``.cookie``/``.amz`` pair then HOLDS the tenant until the bot's
+    # verdict for that line arrives. While ``awaiting_verdict_until`` is set and
+    # in the future, the tenant is simply not returned here (so the scheduler
+    # never re-picks it). The skip is resolved against DB ``func.now()`` — NOT
+    # the scheduler's ``time.monotonic`` clock (mixing the two is meaningless);
+    # this also makes the gate survive a worker restart for free. NULL (every
+    # non-cookie-mode batch) never gates.
+    awaiting_clear = (Batch.awaiting_verdict_until.is_(None)) | (
+        Batch.awaiting_verdict_until <= func.now()
+    )
     stmt = (
         select(Batch.tenant_id, Batch.id, Batch.priority, antispam)
         .select_from(Batch)
@@ -326,7 +354,7 @@ async def active_senders(
             User, (User.tenant_id == Batch.tenant_id) & (User.role == "client")
         )
         .outerjoin(Plan, Plan.id == User.plan_id)
-        .where(Batch.state == STATE_SENDING, has_queued)
+        .where(Batch.state == STATE_SENDING, has_queued, awaiting_clear)
         .order_by(Batch.tenant_id)
     )
     rows = (await session.execute(stmt)).all()
@@ -463,6 +491,164 @@ async def mark_failed(session: AsyncSession, line: BatchLine, code: str) -> None
     line.state = LINE_FAILED
     line.fail_code = code
     await session.flush()
+
+
+# --- Cookie-mode serialize gate / rotation (Phase 2) -------------------------
+#
+# All of these mutate the cookie-mode serialize gate on ``Batch``. They are
+# flush-not-commit; the caller (the send worker / the resume handler) owns the
+# transaction and holds the batch ``FOR UPDATE`` lock around the read-verify-
+# mutate so a verdict signal is attempt-fenced against a concurrent
+# rotation/timeout/pause.
+
+
+async def set_awaiting_verdict(
+    session: AsyncSession,
+    batch: Batch,
+    *,
+    chat_id: int,
+    message_id: int,
+    timeout_seconds: int,
+) -> None:
+    """Arm the serialize gate after a cookie-mode ``.amz`` send.
+
+    Stores the awaited ``.amz`` ``(chat_id, message_id)`` (the attempt-fence)
+    and sets ``awaiting_verdict_until = func.now() + timeout_seconds`` (DB clock
+    — the single time source). While this is set and in the future,
+    ``active_senders`` excludes the tenant (the serialize hold). A resend
+    (rotation/timeout) re-arms with the NEW ``message_id``, superseding the old
+    fence.
+    """
+    batch.awaiting_chat_id = chat_id
+    batch.awaiting_message_id = message_id
+    batch.awaiting_verdict_until = func.now() + func.make_interval(
+        0, 0, 0, 0, 0, 0, timeout_seconds
+    )
+    await session.flush()
+
+
+async def clear_awaiting_verdict(session: AsyncSession, batch: Batch) -> None:
+    """Release the serialize gate (verdict consumed the line, or resume).
+
+    NULLs all three await fields so ``active_senders`` returns the tenant again
+    on the next step. Pairs with ``set_awaiting_verdict`` — a consumed/rejected
+    verdict, a line-failure, and the resume handler all call this.
+    """
+    batch.awaiting_chat_id = None
+    batch.awaiting_message_id = None
+    batch.awaiting_verdict_until = None
+    await session.flush()
+
+
+async def awaited_line_id(session: AsyncSession, batch: Batch) -> int | None:
+    """The single in-flight line of a cookie-mode batch, via the ATTEMPT-FENCE.
+
+    🔒 The awaited line is the ONE whose ``send_log.(chat_id, message_id)`` ==
+    the batch's ``(awaiting_chat_id, awaiting_message_id)`` — NOT "the batch's
+    ``LINE_SENT`` row". A consumed (approved/declined) line correctly STAYS
+    ``LINE_SENT`` (same as a normal sent line), so a multi-line cookie batch can
+    hold two ``LINE_SENT`` rows while only ONE is actually awaiting a verdict;
+    keying off ``LINE_SENT`` re-sends already-consumed lines (duplicate
+    ``.amz``/Completa/CC/charge). The fence is the single source of "which line
+    is in-flight".
+
+    Returns ``None`` when the await is already cleared (e.g. the
+    ``cookies_exhausted`` case where the line was already re-queued before the
+    pause) — the caller no-ops. The caller holds the batch ``FOR UPDATE`` so the
+    fence is read consistently against a concurrent verdict/timeout/pause.
+    """
+    if batch.awaiting_message_id is None or batch.awaiting_chat_id is None:
+        return None
+    row = await send_log_repo.get_by_chat_and_message_id(
+        session, batch.awaiting_chat_id, batch.awaiting_message_id
+    )
+    return row.line_id if row is not None else None
+
+
+async def set_pause_reason(
+    session: AsyncSession, batch: Batch, reason: str | None
+) -> None:
+    """Set/clear the cookie-mode pause discriminator (rides the WS frame).
+
+    ``'cookies_exhausted'`` / ``'verdict_timeout'`` on pause; ``None`` on
+    resume. The batch is an ordinary ``STATE_PAUSED`` (no new state) — only
+    this column distinguishes a cookie-mode pause from a client pause.
+    """
+    batch.pause_reason = reason
+    await session.flush()
+
+
+async def requeue_line_with_intent_reset(
+    session: AsyncSession, line: BatchLine
+) -> None:
+    """Reset a line back to 'queued' AND clear its write-ahead send intent.
+
+    The rotation/timeout resend path: the SAME line is re-sent as a NEW ``.amz``
+    message with a NEW ``message_id``, but ``send_log`` REUSES the line's one
+    row (``uq_send_log_line_id``). The caller MUST already have persisted the
+    dead attempt's terminal ``kind='full'`` row (so its later edits resolve via
+    the OLD ``(chat_id, message_id)``) before this runs. Clearing the intent's
+    ``message_id`` here lets the reused row carry the NEXT send's id — no
+    orphaned, unattributable ``send_log.message_id`` remains, and Completa shows
+    the line once via latest-revision-per-``message_id`` across attempts. Runs
+    under the batch ``FOR UPDATE`` lock the caller holds.
+    """
+    line.state = LINE_QUEUED
+    # Every fresh ``.amz`` attempt flows through here (cookie-dead rotation,
+    # pause-resume, and the timeout-resend base) — reset the durable verdict-
+    # timeout retry budget so the new cookie attempt owns its own one-retry.
+    # ``_resend_cookie_line`` then calls ``mark_verdict_retried`` to bump it to 1.
+    line.verdict_timeout_retries = 0
+    await session.flush()
+    await send_log_repo.clear_intent(session, line.id)
+
+
+async def mark_verdict_retried(session: AsyncSession, line: BatchLine) -> None:
+    """Burn the line's ONE durable verdict-timeout retry (Phase 2).
+
+    Called by ``_resend_cookie_line`` in the SAME txn as the timeout resend,
+    AFTER ``requeue_line_with_intent_reset`` zeroed the budget — net +1. The
+    sweep reads ``verdict_timeout_retries >= 1`` and pauses ``verdict_timeout``
+    on the second silent elapse instead of resending forever. Durable across a
+    restart — the crash-loop fix the old process-memory ``_timeout_retried`` set
+    could not provide (boot recovery re-arms the await; this counter survives).
+    """
+    line.verdict_timeout_retries += 1
+    await session.flush()
+
+
+async def requeue_failed_cookie_line(session: AsyncSession, batch: Batch) -> None:
+    """Resume of a cookie-mode pause: re-queue the batch's AWAITED line.
+
+    🔒 Resolves the awaited line via the ATTEMPT-FENCE (``awaited_line_id`` —
+    ``send_log.(chat_id, message_id) == batch.(awaiting_chat_id,
+    awaiting_message_id)``), NOT "every ``LINE_SENT`` row". A multi-line cookie
+    batch can hold several ``LINE_SENT`` rows (consumed lines stay ``LINE_SENT``
+    like any normal sent line) — re-queueing them all would re-send already-
+    consumed lines. Only the ONE in-flight line is re-queued.
+
+    A ``verdict_timeout`` pause (second silent elapse) leaves the awaited line
+    in ``LINE_SENT`` (the ``.amz`` went out) — it never reappears in
+    ``active_senders`` (which needs a 'queued' line), so resume MUST hand it
+    back to the queue with its write-ahead intent reset (the resend is a NEW
+    ``.amz`` ``message_id``; a stale verdict for the OLD one is attempt-fenced
+    and dropped). A ``cookies_exhausted`` pause already CLEARED the await and
+    re-queued the line before the pause, so ``awaited_line_id`` returns ``None``
+    here and this is a clean no-op.
+
+    Runs in the SAME transaction as the resume's ``state=sending`` flip + the
+    await-field clear, under the batch ``FOR UPDATE`` the handler holds — never
+    split across commits, else the just-resumed batch would be instantly skipped
+    by the serialize gate (or its stale ``send_log`` pair would orphan). The
+    caller MUST call this BEFORE ``clear_awaiting_verdict`` (the fence needs the
+    await fields).
+    """
+    line_id = await awaited_line_id(session, batch)
+    if line_id is None:
+        return
+    line = await session.get(BatchLine, line_id)
+    if line is not None and line.state == LINE_SENT:
+        await requeue_line_with_intent_reset(session, line)
 
 
 async def cancel_queued_lines(session: AsyncSession, batch_id: int) -> int:

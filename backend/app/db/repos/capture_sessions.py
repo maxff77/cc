@@ -102,6 +102,7 @@ async def create_active(
     gate_name: str,
     gate_display_value: str,
     special_mode: bool = False,
+    cookie_mode: bool = False,
 ) -> CaptureSession:
     """Deactivate the previous active session and insert the new active one.
 
@@ -109,7 +110,9 @@ async def create_active(
     reassignment", never closed. The UPDATE runs first so the partial unique
     index (the belt) never trips on the honest path. ``gate_display_value`` is
     the client-visible "Comando visible" snapshot; ``special_mode`` snapshots
-    the gate category's flag (special-mode feature).
+    the gate category's special-mode flag; ``cookie_mode`` snapshots its
+    cookie-vault flag (cookie-vault feature — the snapshot WRITE path; the
+    reader is Phase 2).
     """
     await session.execute(
         update(CaptureSession)
@@ -122,6 +125,7 @@ async def create_active(
         gate_name=gate_name,
         gate_display_value=gate_display_value,
         special_mode=special_mode,
+        cookie_mode=cookie_mode,
         is_active=True,
     )
     session.add(capture_session)
@@ -166,6 +170,7 @@ async def resolve_for_batch(
     gate_name: str,
     gate_display_value: str,
     special_mode: bool = False,
+    cookie_mode: bool = False,
 ) -> CaptureSession:
     """The AC 3 legacy semantics: reuse the active session when its gate
     matches, otherwise auto-create a fresh active one.
@@ -174,19 +179,29 @@ async def resolve_for_batch(
     the submitted prefix, otherwise auto-creates one". Reuse still keys on the
     REAL ``gate_value`` (the gate's identity), not the display string.
 
-    On reuse, the session's ``special_mode`` is refreshed to the gate's current
-    value (special-mode feature): toggling the category takes effect on the
-    client's NEXT batch instead of waiting for a brand-new session — the gate
-    identity is unchanged, so this only ever tracks an owner's deliberate flip.
+    On reuse, the session's ``special_mode`` AND ``cookie_mode`` are refreshed
+    to the gate's current values (special-mode + cookie-vault features):
+    toggling the category takes effect on the client's NEXT batch instead of
+    waiting for a brand-new session — the gate identity is unchanged, so this
+    only ever tracks an owner's deliberate flip.
     """
     active = await get_active(session, tenant_id)
     if active is not None and active.gate_value == gate_value:
         if active.special_mode != special_mode:
             active.special_mode = special_mode
             await session.flush()
+        if active.cookie_mode != cookie_mode:
+            active.cookie_mode = cookie_mode
+            await session.flush()
         return active
     return await create_active(
-        session, tenant_id, gate_value, gate_name, gate_display_value, special_mode
+        session,
+        tenant_id,
+        gate_value,
+        gate_name,
+        gate_display_value,
+        special_mode,
+        cookie_mode,
     )
 
 
@@ -196,9 +211,18 @@ async def resolve_for_backfill(
     gate_value: str,
     gate_name: str,
     gate_display_value: str,
+    cookie_mode: bool = False,
 ) -> CaptureSession:
     """Late-reply backfill (attribution path): like ``resolve_for_batch`` but
     it NEVER changes which session is active (review 3-1).
+
+    ``cookie_mode`` is accepted for signature parity with ``resolve_for_batch``
+    (cookie-vault feature) but, like the absent ``special_mode``, is NOT applied
+    to the INACTIVE fallback insert: a stray late reply must not snapshot a flag
+    onto a session it never activates — the fallback relies on the column's
+    ``server_default false`` and is rewritten properly when a real batch
+    activates the session. The current caller (``attribution.py``) does not pass
+    it.
 
     A stray late reply to an unbound batch must not deactivate the tenant's
     live session as a side effect — that would silently move the snapshot's

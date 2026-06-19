@@ -614,17 +614,34 @@ async def test_flood_window_gates_the_next_claim(
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Top-of-step gate: an open window delays ANY claim/send until it
-    elapses — including the window-owning tenant's (no exemption)."""
+    """Top-of-step gate: an OPEN window delays ANY claim/send until it elapses —
+    including the window-owning tenant's (no exemption).
+
+    Deterministic — no wall-clock sleep, no cancellation. ``step()`` sleeps the
+    window out at the TOP (``sleep_paced(flood_remaining())``) BEFORE any DB
+    claim; stub that sleep to record its duration and return instantly. An open
+    30s window makes step sleep ~30s first, then claim + send. Replaces the old
+    0.4s-window vs 2.0s-timeout wall-clock flake (and the cancellation race —
+    ``sleep_paced`` is uninterruptible, so ``wait_for`` could not cancel it)."""
     http, _ = client_user
     await _post_batch(http, "uno", gate["id"])
-    scheduler.note_flood_wait(0.4)
 
-    start = time.monotonic()
-    assert await asyncio.wait_for(send_worker.step(), timeout=2.0) is True
-    assert time.monotonic() - start >= 0.4  # slept the window out first
-    assert len(fake_gateway.sent) == 1
+    slept: list[float] = []
+
+    async def fake_sleep_paced(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(send_worker, "sleep_paced", fake_sleep_paced)
+
+    scheduler.note_flood_wait(30.0)
+    assert scheduler.flood_remaining() > 0.0
+
+    # step() must sleep the open window out at the top BEFORE claiming/sending.
+    assert await send_worker.step() is True
+    assert slept and slept[0] >= 29.0  # slept ~the full window before the claim
+    assert len(fake_gateway.sent) == 1  # then sent exactly the one queued line
 
 
 # --- Structured logs (AC 8) ---------------------------------------------------------

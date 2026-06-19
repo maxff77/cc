@@ -41,6 +41,25 @@ export interface PublicPlansResponse {
     total: number;
 }
 
+// --- Hand-maintained: gate-cookie vault (amazon-gate-cookie-vault, Phase 1).
+// The client-facing cookie shape served by `/api/cookies` — the stored value is
+// SENSITIVE and is NEVER echoed: the list/store endpoints return only
+// `masked_value` (e.g. `ab••••yz`), never the raw credential. `status` is a
+// Phase-2 rotation field (always `'active'` for now). Mirrors backend
+// `CookieOut`.
+export interface CookieOut {
+    id: number;
+    label: string | null;
+    masked_value: string;
+    status: string;
+    created_at: string;
+}
+
+export interface CookieListResponse {
+    items: CookieOut[];
+    total: number;
+}
+
 export interface paths {
     "/api/health": {
         parameters: {
@@ -870,6 +889,13 @@ export interface components {
             category_id: number;
             /** Category Name */
             category_name: string;
+            /**
+             * Cookie Mode
+             * @description Plain UX boolean (cookie-vault Phase 1) sourced from
+             *     `gate.category.cookie_mode` — tells the cockpit when to show the cookie
+             *     manager. Never carries `gate.value`.
+             */
+            cookie_mode?: boolean;
             /**
              * Created At
              * Format: date-time

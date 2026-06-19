@@ -45,6 +45,9 @@ interface CategoryOut {
   // Special-mode feature: gates here capture in "special mode" (status from the
   // `Approveds! ✅: N` count + Approveds!/Deads! stripping). Owner-only config.
   special_mode: boolean;
+  // Cookie-mode (Amazon gate, Phase 1): clients store per-account cookies for
+  // gates in this category; the cockpit shows the cookie manager. Owner-only.
+  cookie_mode: boolean;
   created_at: string;
 }
 
@@ -404,6 +407,7 @@ function CategoriesBlock({
 }) {
   const [name, setName] = useState("");
   const [special, setSpecial] = useState(false);
+  const [cookieMode, setCookieMode] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [okMsg, flashOk] = useFlash();
@@ -413,10 +417,12 @@ function CategoriesBlock({
       api.post<CategoryOut>("/api/admin/gate-categories", {
         name,
         special_mode: special,
+        cookie_mode: cookieMode,
       }),
     onSuccess: () => {
       setName("");
       setSpecial(false);
+      setCookieMode(false);
       flashOk("Categoría creada");
       onChanged();
     },
@@ -468,6 +474,10 @@ function CategoriesBlock({
 
           <Checkbox checked={special} onChange={setSpecial}>
             Modo especial (validez por «Approveds! ✅: N», oculta créditos)
+          </Checkbox>
+
+          <Checkbox checked={cookieMode} onChange={setCookieMode}>
+            Modo cookies (gate Amazon: el cliente guarda sus cookies)
           </Checkbox>
 
           <Btn
@@ -527,6 +537,9 @@ function CategoryRow({
   const [optimisticSpecial, setOptimisticSpecial] = useState<boolean | null>(
     null,
   );
+  const [optimisticCookie, setOptimisticCookie] = useState<boolean | null>(
+    null,
+  );
 
   const rename = useMutation({
     mutationFn: () =>
@@ -567,6 +580,22 @@ function CategoryRow({
     // a failed/raced toggle self-corrects back to the server value.
     onSettled: () => {
       setOptimisticSpecial(null);
+      onChanged();
+    },
+  });
+
+  // Cookie-mode toggle (Amazon gate, Phase 1): mirrors toggleSpecial. Sends only
+  // {name, cookie_mode} so the backend's None-leaves-untouched rule preserves
+  // special_mode. Refetch on settle reconciles a failed/raced toggle.
+  const toggleCookie = useMutation({
+    mutationFn: (next: boolean) =>
+      api.patch<CategoryOut>(`/api/admin/gate-categories/${category.id}`, {
+        name: category.name,
+        cookie_mode: next,
+      }),
+    onMutate: (next) => setOptimisticCookie(next),
+    onSettled: () => {
+      setOptimisticCookie(null);
       onChanged();
     },
   });
@@ -691,6 +720,21 @@ function CategoryRow({
           }}
         >
           Modo especial
+        </Checkbox>
+      )}
+
+      {mode === "view" && (
+        <Checkbox
+          checked={optimisticCookie ?? category.cookie_mode}
+          className={clsx(
+            "text-[13px]",
+            toggleCookie.isPending && "opacity-60",
+          )}
+          onChange={(next) => {
+            if (!toggleCookie.isPending) toggleCookie.mutate(next);
+          }}
+        >
+          Modo cookies
         </Checkbox>
       )}
 

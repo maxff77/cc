@@ -943,6 +943,9 @@ class CreateCategoryRequest(BaseModel):
     # Special-mode feature: gates in this category capture in special mode
     # (Approveds-count validity + stats stripping). Defaults off.
     special_mode: bool = False
+    # Cookie-vault feature: gates in this category accept per-account cookies
+    # (the cockpit shows the cookie manager). Defaults off.
+    cookie_mode: bool = False
 
     @field_validator("name")
     @classmethod
@@ -955,6 +958,9 @@ class UpdateCategoryRequest(BaseModel):
     # Optional: ``None`` leaves the flag untouched so a plain rename never
     # resets it; the owner's toggle sends an explicit boolean.
     special_mode: bool | None = None
+    # Optional: ``None`` leaves cookie mode untouched (cookie-vault feature),
+    # same rename-safe semantics as ``special_mode``.
+    cookie_mode: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -966,6 +972,7 @@ class CategoryOut(BaseModel):
     id: int
     name: str
     special_mode: bool
+    cookie_mode: bool
     created_at: datetime
 
 
@@ -979,6 +986,7 @@ def _category_to_out(category: GateCategory) -> CategoryOut:
         id=category.id,
         name=category.name,
         special_mode=category.special_mode,
+        cookie_mode=category.cookie_mode,
         created_at=category.created_at,
     )
 
@@ -1008,6 +1016,11 @@ async def create_gate_category(
         category = await gate_categories_repo.create(
             session, name=body.name, special_mode=body.special_mode
         )
+        # cookie_mode (cookie-vault feature) is set on the flushed ORM row
+        # before commit — the ``gate_categories_repo.create`` signature stays
+        # untouched (out of this stage's scope), same effect as the column
+        # default plus this explicit value.
+        category.cookie_mode = body.cookie_mode
         await session.commit()
     except IntegrityError as exc:
         # TOCTOU (2.1 review lesson): a concurrent insert of the same name
@@ -1023,8 +1036,9 @@ async def update_gate_category(
     actor: User = Depends(require_owner),
     session: AsyncSession = Depends(get_session),
 ) -> CategoryOut:
-    """Rename a category and/or toggle its special mode (gates keep pointing at
-    it — nothing else moves). ``special_mode`` omitted ⇒ left untouched."""
+    """Rename a category and/or toggle its special mode / cookie mode (gates
+    keep pointing at it — nothing else moves). ``special_mode``/``cookie_mode``
+    omitted ⇒ left untouched."""
     category = await _require_category(session, category_id)
     duplicate = await gate_categories_repo.get_by_name(session, body.name)
     if duplicate is not None and duplicate.id != category.id:
@@ -1032,6 +1046,8 @@ async def update_gate_category(
     category.name = body.name
     if body.special_mode is not None:
         category.special_mode = body.special_mode
+    if body.cookie_mode is not None:
+        category.cookie_mode = body.cookie_mode
     try:
         await session.commit()
     except IntegrityError as exc:

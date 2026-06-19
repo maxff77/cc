@@ -153,6 +153,17 @@ class GateCategory(Base):
     special_mode: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
+    # Owner toggle (cookie-vault feature, Phase 1): gates in this category run
+    # in "cookie mode" — the client stores per-account cookies (``gate_cookies``)
+    # that Phase 2 will prepend before each line. Phase 1 is the vault only; this
+    # boolean drives (a) the cockpit's cookie-manager visibility via the public
+    # gate payload and (b) the POST /api/cookies cookie-mode gate. Snapshotted
+    # onto the CaptureSession at batch start (same idiom as ``special_mode``),
+    # so toggling it never rewrites in-flight sessions; the snapshot READER is
+    # Phase 2 (no capture-pipeline code reads it yet).
+    cookie_mode: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -224,6 +235,89 @@ class Gate(Base):
     # NO lazy default on purpose: async lazy-loads raise MissingGreenlet.
     # Loaders eager-load explicitly (``selectinload``) or refresh the attribute.
     category: Mapped["GateCategory"] = relationship()
+
+
+class GateCookie(Base):
+    """One stored per-account cookie for a tenant on a cookie-mode gate
+    (cookie-vault feature, Phase 1).
+
+    TENANT-SCOPED — unlike the global ``gates``/``gate_categories`` catalog,
+    every cookie belongs to exactly one tenant: a client stores, lists and
+    deletes only their own. ``tenant_id`` always comes from the session at the
+    route, never from body/path.
+
+    🔒 ``value`` holds the credential PLAINTEXT in Postgres — the deliberate CC
+    precedent (access-control + TLS at rest); real encryption is Phase 2. The
+    value is NEVER echoed to a client (the API returns a masked form only) and
+    is never logged. ``value_hash`` is the sha256 hex of the canonical
+    (``value.strip()``) string: the unique index keys on the HASH, not the
+    value, because a cookie can exceed the ~2704-byte btree row limit that the
+    ``uq_responses_session_cc`` text index runs into. Dedup is DB-enforced by
+    ``uq_gate_cookies_tenant_gate_hash`` — store-first / catch-IntegrityError,
+    never SELECT-then-INSERT.
+
+    ``gate_id`` has an FK to ``gates`` but NO ``ondelete`` and no relationship:
+    gates are SOFT-deleted (``deleted_at``), so a retired gate's row persists and
+    its cookies stay listable/deletable — the vault outlives an *active* gate,
+    mirroring the batch/session snapshot stance. ``status`` is reserved for
+    Phase-2 rotation
+    (``'active'`` on every row, no reader yet) — plain String, no DB enum (the
+    2.2 decision).
+    """
+
+    __tablename__ = "gate_cookies"
+    __table_args__ = (
+        # Per-(tenant, gate) dedup, guaranteed by Postgres — not by code. Keyed
+        # on the sha256 hash (not the raw value) so an oversized cookie still
+        # fits the btree; mirrors the ``uq_responses_session_cc`` precedent but
+        # over a fixed-width hash instead of a length-truncated text.
+        Index(
+            "uq_gate_cookies_tenant_gate_hash",
+            "tenant_id",
+            "gate_id",
+            "value_hash",
+            unique=True,
+        ),
+        # FIFO active-cookie pick (Phase 2 rotation): the worker selects the
+        # oldest ``status='active'`` cookie by ``id ASC`` for ``(tenant, gate)``
+        # (``repos.gate_cookies.get_active_for_rotation``). This composite index
+        # keeps that pick — run on every cookie-mode send — off a full
+        # partition scan; the trailing ``id`` makes the ORDER BY index-only.
+        Index(
+            "ix_gate_cookies_tenant_gate_status_id",
+            "tenant_id",
+            "gate_id",
+            "status",
+            "id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    # The gate the client filed this cookie under. FK to ``gates`` but no
+    # ``ondelete``/relationship: gates soft-delete (``deleted_at``), so a retired
+    # gate's row persists and its cookies stay listable/deletable — the vault
+    # outlives an active gate (same stance as the batch/session snapshots).
+    gate_id: Mapped[int] = mapped_column(ForeignKey("gates.id"))
+    # PLAINTEXT credential (CC precedent). NEVER echoed to a client and never
+    # logged. The full value lives here (Text, unbounded); the hash, not this,
+    # sits in the unique btree.
+    value: Mapped[str] = mapped_column(Text)
+    # sha256 hex digest (64 chars) of the canonical ``value.strip()`` — the
+    # dedup key. Computed by the router (the repo stays dumb), so the same bytes
+    # the validator saw key the index.
+    value_hash: Mapped[str] = mapped_column(String(64))
+    # Optional client-authored label shown next to the masked value.
+    label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Reserved for Phase-2 rotation — ``'active'`` on every row, no reader yet.
+    status: Mapped[str] = mapped_column(
+        String(10), server_default=text("'active'"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class SendTarget(Base):
@@ -327,6 +421,47 @@ class Batch(Base):
         nullable=True,
         index=True,
     )
+    # --- Amazon cookie-mode serialize gate (Phase 2) ------------------------
+    # All five are NULL on every non-cookie-mode batch (and on every existing
+    # row — backfill is NULL, no behavior change). They are the durable,
+    # authoritative serialize gate + attempt-fence for the cookie-mode send
+    # flow: the worker sends the atomic ``.cookie``/``.amz`` pair then HOLDS the
+    # tenant until the bot's verdict for that line arrives.
+    #
+    # ``awaiting_verdict_until`` is the serialize gate: while it is set and in
+    # the future, ``repos.batches.active_senders`` excludes this tenant (the
+    # skip is resolved in SQL against DB ``now()``, NOT the scheduler's
+    # ``time.monotonic`` clock — mixing the two is meaningless and this also
+    # makes the gate survive a restart for free). ``func.now() + 90s`` on send;
+    # cleared on a matching verdict.
+    awaiting_verdict_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The ``.amz`` ``(chat_id, message_id)`` the worker is currently awaiting —
+    # the attempt-fence. A rotation/timeout resend is a NEW ``message_id`` for
+    # the SAME line, so a verdict signal is accepted ONLY if it matches the
+    # message_id stored here (verified in-txn under the batch FOR UPDATE); a
+    # verdict for a superseded attempt or an already-cleared await is dropped.
+    # BigInteger because channel/supergroup message-id sequences ride alongside
+    # ``-100…`` chat ids (see SendLog).
+    awaiting_message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    awaiting_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Why a paused cookie-mode batch is paused: ``'cookies_exhausted'`` (no
+    # active cookie left to rotate to) or ``'verdict_timeout'`` (the bot went
+    # silent past the retry-once). Both are ordinary ``STATE_PAUSED`` (no new
+    # state) discriminated by THIS reason — it rides the ``batch.state`` WS
+    # frame so the cockpit can render the right prompt. NULL for a plain
+    # client-initiated pause.
+    pause_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # SNAPSHOT of the gate's catalog id at cookie-mode batch creation — keys the
+    # active-cookie pick ``(tenant_id, gate_id)``. NO FK / no relationship, by
+    # design: same denormalize-on-purpose stance as ``gate_value``/``gate_name``
+    # (history survives a gate edit). Never re-resolve gate_id from
+    # ``gate_value`` at send time — a retired+recreated value would mis-key
+    # cookies across gate generations. NULL on non-cookie-mode + existing rows.
+    gate_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -368,6 +503,27 @@ class BatchLine(Base):
     # Machine-readable failure code (snake_case of the exception class name,
     # Story 2.5) — the frontend maps it to Spanish copy; NULL unless 'failed'.
     fail_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The cookie that produced this line's last dead verdict (Phase 2 cookie
+    # rotation) — diagnostic/audit only, FK to ``gate_cookies`` with NO
+    # relationship and no ``ondelete`` (the vault outlives a retired cookie the
+    # same way it outlives a retired gate). NULL until a cookie-dead verdict
+    # rotates the line.
+    failed_cookie_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gate_cookies.id"), nullable=True
+    )
+    # Durable Phase-2 verdict-timeout retry budget. The cookie-mode timeout sweep
+    # retries a silent ``.amz`` line ONCE, then pauses ``verdict_timeout``. This
+    # counter (0 = fresh, >=1 = the one retry already burned) replaces the old
+    # process-memory ``send_worker._timeout_retried`` set so the budget survives a
+    # restart — a crash loop around the 90s timeout no longer grants a fresh retry
+    # (and a fresh ``.cookie``+``.amz`` resend on the shared account) per restart.
+    # Reset to 0 at every fresh ``.amz`` attempt (``requeue_line_with_intent_reset``
+    # — rotation / resume / timeout-resend base); bumped in ``_resend_cookie_line``.
+    # ``server_default="0"`` (string literal, not ``text("0")``) — inside this
+    # class body the imported ``text`` is shadowed by the ``text`` column above.
+    verdict_timeout_retries: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -469,6 +625,15 @@ class CaptureSession(Base):
     # so an owner's toggle takes effect on the tenant's next batch. CLOSED /
     # historical sessions are never rewritten.
     special_mode: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
+    # Snapshot of the gate category's ``cookie_mode`` (same denormalize idiom as
+    # ``special_mode``): set at session creation and refreshed to the gate's
+    # current value when a NEW batch reuses the active session
+    # (``resolve_for_batch``), so an owner's toggle takes effect on the tenant's
+    # next batch. The WRITE path ships in Phase 1; the READER (cookie rotation in
+    # the send/capture pipeline) is Phase 2 — nothing reads this column yet.
+    cookie_mode: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
     is_active: Mapped[bool] = mapped_column(

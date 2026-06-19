@@ -37,6 +37,10 @@ class PublicGateOut(BaseModel):
     credit_cost: int
     category_id: int
     category_name: str
+    # Whether this gate's category is in cookie mode (cookie-vault feature): a
+    # plain UX boolean so the cockpit knows when to show the cookie manager.
+    # Safe to expose — it is NOT ``gate.value`` (which is never serialized).
+    cookie_mode: bool
     created_at: datetime
 
 
@@ -55,6 +59,7 @@ def gate_to_public_out(gate: Gate) -> PublicGateOut:
         credit_cost=gate.credit_cost,
         category_id=gate.category_id,
         category_name=gate.category.name,
+        cookie_mode=gate.category.cookie_mode,
         created_at=gate.created_at,
     )
 

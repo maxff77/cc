@@ -158,6 +158,17 @@ async def create_or_append_batch(
     # MissingGreenlet); default False if the category vanished in a race.
     gate_category = await gate_categories_repo.get_by_id(session, gate.category_id)
     special_mode = gate_category.special_mode if gate_category is not None else False
+    # Cookie-mode flag of the gate's category (cookie-vault feature): snapshotted
+    # onto the capture session below so Phase-2's per-account cookie sending knows
+    # this session is a cookie-mode session. Same load/default-False stance as
+    # ``special_mode`` (no reader yet — the snapshot WRITE path ships now).
+    cookie_mode = gate_category.cookie_mode if gate_category is not None else False
+    # Snapshot of the gate's catalog id for the cookie-rotation key (Phase 2):
+    # the active cookie is picked by ``(tenant_id, gate_id)``. Snapshotted onto
+    # the batch (no FK) so a retired+recreated value never mis-keys cookies
+    # across gate generations — NEVER re-resolved from ``gate_value`` at send
+    # time. NULL for non-cookie-mode batches (the worker never reads it there).
+    batch_gate_id = gate.id if cookie_mode else None
 
     # FOR UPDATE: serialize the append against the worker's
     # complete_if_drained (which locks the same row) — without it, an append
@@ -212,6 +223,7 @@ async def create_or_append_batch(
                 gate_credit_cost=gate_credit_cost,
                 priority=priority,
                 state=state,
+                gate_id=batch_gate_id,
             )
             created_lines = await batches_repo.add_lines(
                 session, batch=batch, texts=lines, start_position=0
@@ -225,7 +237,7 @@ async def create_or_append_batch(
             # never via the active session.
             capture_session = await capture_sessions_repo.resolve_for_batch(
                 session, tenant_id, gate_value, gate_name, gate_display_value,
-                special_mode,
+                special_mode, cookie_mode,
             )
             batch.capture_session_id = capture_session.id
             # Computed inside the transaction (post-flush id) so the POST
@@ -386,7 +398,16 @@ async def pause_batch(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """sending → paused. Idempotent on 'paused' (two tabs): 204, no event."""
+    """sending → paused. Idempotent on 'paused' (two tabs): 204, no event.
+
+    A manual pause landing DURING a cookie-mode verdict-await (Phase 2) must
+    tear the serialize gate down: with the await left armed, resume would not
+    re-send (the line is ``LINE_SENT``) and the batch would silently stall until
+    the 90s timeout swept it. So when the paused batch has a live await
+    (``awaiting_message_id is not None``), clear the await AND re-queue the
+    awaited line (resolved via the attempt-fence) in the SAME FOR UPDATE txn, so
+    resume re-sends it fresh. Normal (non-cookie) pause is unchanged.
+    """
     batch = await _controlled_batch(session, user.tenant_id, batch_id)
     if batch.state == batches_repo.STATE_PAUSED:
         return  # no-op — no duplicate event
@@ -397,6 +418,12 @@ async def pause_batch(
         raise batch_waiting()
     if batch.state != batches_repo.STATE_SENDING:
         raise batch_not_live()
+    if batch.awaiting_message_id is not None:
+        # Cookie-mode mid-await pause: re-queue the awaited line FIRST (the
+        # fence needs the await fields), THEN clear the await — both in this txn
+        # under the lock ``_controlled_batch`` holds, so resume re-sends fresh.
+        await batches_repo.requeue_failed_cookie_line(session, batch)
+        await batches_repo.clear_awaiting_verdict(session, batch)
     batch.state = batches_repo.STATE_PAUSED
     await session.commit()
     await broadcaster.emit(
@@ -411,7 +438,17 @@ async def resume_batch(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """paused → sending. Idempotent on 'sending': 204, no event."""
+    """paused → sending. Idempotent on 'sending': 204, no event.
+
+    A cookie-mode pause (``pause_reason='cookies_exhausted'``/``'verdict_timeout'``,
+    Phase 2) resumes through the SAME endpoint — but its resume is ONE FOR UPDATE
+    transaction (the lock is already held by ``_controlled_batch``) that flips
+    ``state=sending``, clears every await field + the ``pause_reason``, AND
+    re-queues the failed line. It must NOT split across commits: a half-applied
+    resume (state flipped but the stale ``awaiting_verdict_until`` still set, or
+    the in-flight line still ``LINE_SENDING``) would have the just-resumed batch
+    instantly skipped by the serialize gate until the stale timeout elapses.
+    """
     batch = await _controlled_batch(session, user.tenant_id, batch_id)
     if batch.state == batches_repo.STATE_SENDING:
         return  # no-op — no duplicate event
@@ -422,6 +459,19 @@ async def resume_batch(
         raise batch_waiting()
     if batch.state != batches_repo.STATE_PAUSED:
         raise batch_not_live()
+    # Cookie-mode pause (Phase 2): tear down the serialize gate + re-queue the
+    # failed line in the SAME txn as the state flip, so the previously-failed
+    # line is the very next thing the worker sends (a stale future
+    # ``awaiting_verdict_until`` must not skip it post-resume).
+    cookie_pause = batch.pause_reason is not None
+    if cookie_pause:
+        # Re-queue the awaited line FIRST — ``requeue_failed_cookie_line``
+        # resolves it via the attempt-fence (the await fields), so it must run
+        # BEFORE ``clear_awaiting_verdict`` NULLs them. A no-op when the await is
+        # already cleared (the ``cookies_exhausted`` path re-queued before pause).
+        await batches_repo.requeue_failed_cookie_line(session, batch)
+        await batches_repo.clear_awaiting_verdict(session, batch)
+        await batches_repo.set_pause_reason(session, batch, None)
     batch.state = batches_repo.STATE_SENDING
     await session.commit()
     await broadcaster.emit(

@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.batches import router as batches_router
+from app.api.cookies import router as cookies_router
 from app.api.gates import router as gates_router
 from app.api.health import router as health_router
 from app.api.keys import admin_router as keys_admin_router
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(keys_client_router)
     app.include_router(gates_router)
     app.include_router(batches_router)
+    app.include_router(cookies_router)
     app.include_router(sessions_router)
     app.include_router(targets_router)
     app.include_router(watchdog_router)

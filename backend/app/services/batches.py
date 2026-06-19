@@ -72,24 +72,34 @@ async def awaiting_reply_count(
 ) -> int:
     """Lines delivered in this capture session that have NO ✅/❌ reply yet.
 
-    ``delivered − distinct-answered`` over the whole session (counters never
-    reset between batches). Clamped at ≥0: the subtrahend counts only
-    message_ids that also exist in send_log (attribution links a reply back to
-    a delivered line), so it can never exceed the minuend — the clamp is a
-    belt-and-suspenders guard, not expected to trigger. ``None`` (a batch with
-    no session bound yet) ⇒ 0. A line the bot never answers stays counted
+    ``delivered − distinct-answered-LINES`` over the whole session (counters
+    never reset between batches). The answered side counts DISTINCT ``line_id``
+    among 'full' rows (``responded_line_count``), so a multi-attempt (rotated)
+    Amazon cookie-mode line — which yields two answered message rows but ONE
+    line — counts ONCE, matching the minuend (``sent_count_for_session`` counts
+    each line once; send_log reuses one row per line). For non-cookie lines this
+    is equivalent to the old distinct-message count (one reply message per line).
+
+    Clamped at ≥0: the subtrahend counts only lines that also exist in send_log
+    (attribution links a reply back to a delivered line), so it can never exceed
+    the minuend — the clamp is a belt-and-suspenders guard. ``None`` (a batch
+    with no session bound yet) ⇒ 0. A line the bot never answers stays counted
     (honest "still waiting") — intended, not a leak."""
     if capture_session_id is None:
         return 0
     sent = await send_log_repo.sent_count_for_session(session, capture_session_id)
-    responded = await responses_repo.responded_message_count(
+    responded = await responses_repo.responded_line_count(
         session, capture_session_id
     )
     return max(0, sent - responded)
 
 
 def state_data(
-    batch: Batch, state: str, *, queue_position: int | None = None
+    batch: Batch,
+    state: str,
+    *,
+    queue_position: int | None = None,
+    pause_reason: str | None = None,
 ) -> dict:
     """``batch.state`` event payload — full context, single source of truth.
 
@@ -103,6 +113,13 @@ def state_data(
     session → ignore". ``queue_position`` (Story 4.2) travels in EVERY
     ``batch.state`` — ``None`` unless the surface state is ``waiting`` — so
     the reducer assigns instead of guessing.
+
+    ``pause_reason`` (Phase 2 cookie-mode) rides EVERY ``batch.state`` —
+    ``None`` unless the surface state is ``paused`` AND the batch was paused by
+    the cookie-mode engine (``'cookies_exhausted'`` / ``'verdict_timeout'``).
+    A plain client-initiated pause leaves it ``None``. The reducer renders the
+    add-cookies prompt off this discriminator; clearing it on every non-paused
+    state is the caller's job (pass ``None``, the default).
     """
     return {
         "batch_id": batch.id,
@@ -113,6 +130,10 @@ def state_data(
         "gate_display_value": batch.gate_display_value,
         "session_id": batch.capture_session_id,
         "queue_position": queue_position,
+        # Why a cookie-mode batch is paused (cookies_exhausted/verdict_timeout)
+        # so the cockpit renders the right prompt; None for every other state
+        # and for a plain client pause.
+        "pause_reason": pause_reason,
     }
 
 

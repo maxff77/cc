@@ -68,6 +68,28 @@ async def set_message_id(
     )
 
 
+async def clear_intent(session: AsyncSession, line_id: int) -> None:
+    """Reset a line's write-ahead intent to "unconfirmed": NULL its
+    ``chat_id``/``message_id`` (Phase 2 cookie rotation/timeout resend).
+
+    A rotation/timeout resend is a NEW ``.amz`` message with a NEW
+    ``message_id`` for the SAME line, but ``record_intent`` REUSES the line's
+    one ``send_log`` row (keyed on ``uq_send_log_line_id``). Before the resend
+    the worker persists the dead attempt's terminal ``kind='full'`` row (so its
+    later edits still resolve via attribution's prior-responses path keyed on
+    the OLD ``(chat_id, message_id)``) and then calls THIS to clear the row so
+    the reused intent carries the NEW send's pair — no orphaned, unattributable
+    ``send_log.message_id`` remains. A plain UPDATE keyed on ``line_id``;
+    flush-not-commit, the caller owns the txn (and holds the batch FOR UPDATE).
+    """
+    await session.execute(
+        update(SendLog)
+        .where(SendLog.line_id == line_id)
+        .values(chat_id=None, message_id=None)
+    )
+    await session.flush()
+
+
 async def get_by_chat_and_message_id(
     session: AsyncSession, chat_id: int, message_id: int
 ) -> SendLog | None:

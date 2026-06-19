@@ -18,6 +18,7 @@ import { useLiveBatch } from "@/lib/ws";
 import { ClaimKey } from "@/components/keys/claim-key";
 import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
+import { CookiesExhaustedNotice } from "@/components/batch/cookies-exhausted-notice";
 import { FailedLines } from "@/components/batch/failed-lines";
 import { FloodNotice } from "@/components/batch/flood-notice";
 import { PendingLines } from "@/components/batch/pending-lines";
@@ -29,6 +30,7 @@ import {
   type RunSummary,
 } from "@/components/batch/progress-ring";
 import { SendForm, type GateOut } from "@/components/batch/send-form";
+import { VerdictTimeoutNotice } from "@/components/batch/verdict-timeout-notice";
 import { WaitingNotice } from "@/components/batch/waiting-notice";
 import { WatchdogNotice } from "@/components/batch/watchdog-notice";
 import { ActiveSessionCard } from "@/components/sessions/active-session-card";
@@ -169,6 +171,16 @@ export default function EnvioPage() {
         <PlanExpiryNotice />
         <BatchControls live={live} />
         <WatchdogNotice />
+        {/* Cookies-exhausted prompt (Phase 2): only when the live batch paused
+            for that reason — add cookies + Reanudar without leaving the cockpit. */}
+        {live.state === "paused" &&
+          live.pauseReason === "cookies_exhausted" && (
+            <CookiesExhaustedNotice />
+          )}
+        {/* Verdict-timeout prompt (Phase 2, patch #6): the gate went silent past
+            the retry-once budget — no CookieManager, just an explanation + Reanudar. */}
+        {live.state === "paused" &&
+          live.pauseReason === "verdict_timeout" && <VerdictTimeoutNotice />}
         <FloodNotice />
         <FailedLines live={live} />
         <PendingLines live={live} />

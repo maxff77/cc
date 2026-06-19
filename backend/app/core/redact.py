@@ -102,3 +102,101 @@ def strip_special_stats(text: str) -> str:
     stripped = _APPROVEDS.sub("", text)
     stripped = _DEADS.sub("", stripped)
     return _tidy_separators(stripped)
+
+
+# --- Amazon cookie-mode classification (Phase 2) ----------------------------
+#
+# Cookie-mode replies (the Amazon checker bot) are classified by the
+# ``⌿ Status: <token>`` verdict, NOT the legacy ✅/❌ glyph — an ``Approved``/
+# ``Declined`` reply carries no glyph and would mis-derive to the previous
+# state. These helpers are scoped to the cookie-mode capture branch and are
+# NEVER applied to special_mode/non-cookie-mode replies (which stay byte-for-
+# byte unchanged). ``strip_special_stats`` is likewise NOT applied here.
+
+# Verdict-kind constants (the worker reads the signal's kind).
+VERDICT_APPROVED = "approved"
+VERDICT_DECLINED = "declined"
+VERDICT_COOKIE_DEAD = "cookie_dead"
+VERDICT_FORMAT_ERROR = "format_error"
+VERDICT_CONFIRMATION = "confirmation"
+VERDICT_NONE = "none"
+
+# The ``⌿ Status: <token>`` verdict anchor — separator/whitespace-tolerant
+# (mirror of ``_APPROVEDS_COUNT``). The token is the first non-space run after
+# the colon: ``Approved ✅`` → ``Approved``, ``❌ Cookies Inválidas`` → ``❌``.
+_STATUS_TOKEN = re.compile(r"(?i)Status\s*:\s*(\S+)")
+# The bot's ``⌿ Format :`` help message — only consulted when NO Status line is
+# present (Status is checked FIRST).
+_FORMAT_LINE = re.compile(r"(?i)\bFormat\s*:")
+# The side-band ``.cookie`` confirmation marker (``…almacenó tu cookie
+# correctamente. ✅``). Accent-tolerant (``almaceno``/``almacenó``); the real
+# drop happens via the content-sniff at the top of ``process_incoming`` — this
+# is the parser's fallback classification only.
+_COOKIE_CONFIRMATION = re.compile(r"(?i)almacen[oó]\s+tu\s+cookie\s+correctamente")
+
+# The literal content-sniff marker (substring, accent-exact to the bot copy).
+COOKIE_CONFIRMATION_MARKER = "almacenó tu cookie correctamente"
+
+# Cookie-mode inline separators glued onto the ``CC:`` line in an Approved
+# reply: ``☇ CC: <card>⌿ Status: …`` keeps the card and the verdict on ONE
+# line. ``extract_cc`` splits at ``Status`` but leaves the ``⌿`` glued to the
+# card, so the bare ``⌿`` (U+233F) and a leading ``☇`` (U+2607) are rewritten
+# to newlines BEFORE ``extract_cc`` so the ``CC:`` line terminates before
+# ``Status:`` and yields the bare card with no trailing separator.
+_INLINE_SEP = "⌿"  # ⌿
+_LEADING_BOLT = "☇"  # ☇
+
+
+def parse_amazon_verdict(text: str) -> tuple[str, str | None]:
+    """Classify a cookie-mode bot reply by its ``⌿ Status:`` verdict token.
+
+    Runs on the REDACTED text (``redact_reply_text`` already scrubbed Checked
+    By / Credits). Returns ``(verdict_kind, status_token_or_none)`` where
+    ``verdict_kind`` is one of ``approved|declined|cookie_dead|format_error|
+    confirmation|none``:
+
+    - ``Status:`` present → the first ``\\S+`` token after the colon decides:
+      ``Approved`` (case-insensitive) ⇒ ``approved``; ``Declined`` ⇒
+      ``declined``; ANYTHING else ⇒ ``cookie_dead`` (the confirmed catch-all:
+      ``Error ⚠️``, ``❌ Cookies Inválidas`` → ``❌``, any unknown dead variant).
+    - No ``Status:`` but a ``Format :`` help line ⇒ ``format_error`` (Status is
+      checked BEFORE Format).
+    - The ``almacenó tu cookie correctamente`` confirmation ⇒ ``confirmation``
+      (normally already dropped by the content-sniff; this is the fallback).
+    - Otherwise ⇒ ``none`` (a pure ⏳/no-verdict edit — persists nothing).
+
+    Owner-locked (2026-06-19): the token catch-all and the Approved/Declined
+    exact-match are BINDING.
+    """
+    if not text:
+        return (VERDICT_NONE, None)
+    match = _STATUS_TOKEN.search(text)
+    if match is not None:
+        token = match.group(1)
+        lowered = token.lower()
+        if lowered == "approved":
+            return (VERDICT_APPROVED, token)
+        if lowered == "declined":
+            return (VERDICT_DECLINED, token)
+        return (VERDICT_COOKIE_DEAD, token)
+    if _FORMAT_LINE.search(text):
+        return (VERDICT_FORMAT_ERROR, None)
+    if _COOKIE_CONFIRMATION.search(text):
+        return (VERDICT_CONFIRMATION, None)
+    return (VERDICT_NONE, None)
+
+
+def normalize_cookie_cc(text: str) -> str:
+    """Rewrite the cookie-mode inline ``⌿``/leading ``☇`` separators to newlines
+    BEFORE ``extract_cc`` (cookie-mode scope ONLY — never touches special_mode
+    or non-cookie-mode replies).
+
+    An Approved reply glues ``☇ CC: <card>⌿ Status: …`` onto ONE line;
+    ``extract_cc`` truncates at ``Status`` but the bare ``⌿`` (U+233F) stays
+    welded to the card. Converting it to a newline terminates the ``CC:`` line
+    before ``Status:`` so ``extract_cc`` yields exactly the bare card
+    (``377481016137504|05|2033|3845``, no trailing ``⌿``). Idempotent.
+    """
+    if not text:
+        return text
+    return text.replace(_LEADING_BOLT, "\n").replace(_INLINE_SEP, "\n")

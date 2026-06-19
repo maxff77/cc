@@ -242,32 +242,34 @@ async def full_count(
     return count
 
 
-async def responded_message_count(
+async def responded_line_count(
     session: AsyncSession, capture_session_id: int
 ) -> int:
-    """Number of ANSWERED lines in this session — the denominator of the
+    """Number of ANSWERED LINES in this session — the denominator of the
     "esperando respuesta" counter.
 
-    ``(chat_id, Response.message_id)`` identifies the attributed reply (the
-    checker bot edits ONE reply per line, so every ✅/❌ revision of a line
-    shares the pair). ``COUNT(DISTINCT (chat_id, message_id))`` therefore
-    collapses all revisions of a line to one → the count of lines that received
-    at least one ✅/❌. The PAIR (not the bare id) is the key because message ids
-    are per-chat: two answered lines in two supergroups can share an id, and
-    counting the id alone would under-count answered lines (over-counting
-    awaiting). If a line ever drew two DISTINCT reply messages it would
-    over-count, but the caller's ``max(0, …)`` already pins that to 0. Runs over
-    ``ix_responses_chat_message``."""
-    distinct_msgs = (
-        select(Response.chat_id, Response.message_id)
-        .where(
-            Response.capture_session_id == capture_session_id,
-            Response.kind == KIND_FULL,
-        )
-        .distinct()
-        .subquery()
+    Counts ``COUNT(DISTINCT line_id)`` among 'full' rows: every ✅/❌ revision of
+    a line carries the same ``line_id``, so this collapses all revisions — AND
+    all per-attempt rows of a rotated cookie-mode line — to ONE answered line.
+
+    Why ``line_id`` and not ``(chat_id, message_id)`` (Phase 2 PATCH 7): an
+    Amazon cookie-mode line that rotated yields TWO answered ``(chat_id,
+    message_id)`` full rows (the dead attempt's terminal revision + the resend's
+    verdict), each with a DISTINCT ``.amz`` ``message_id`` but the SAME
+    ``line_id``. Counting distinct message pairs would count that one line
+    TWICE, over-counting answered and under-counting "esperando respuesta". The
+    minuend (``send_log.sent_count_for_session``) counts each line ONCE (send_log
+    reuses one row per line), so the denominator must too. ``line_id`` is the
+    line-identity the minuend keys on, so the two agree.
+
+    Rows with ``line_id = NULL`` (a SET-NULL'd batch / an unattributed full row)
+    are EXCLUDED by ``COUNT(DISTINCT line_id)`` (NULLs don't count) — matching
+    the minuend, which only counts send_log rows bound to a real line. Runs over
+    ``responses.line_id``."""
+    stmt = select(func.count(func.distinct(Response.line_id))).where(
+        Response.capture_session_id == capture_session_id,
+        Response.kind == KIND_FULL,
     )
-    stmt = select(func.count()).select_from(distinct_msgs)
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 

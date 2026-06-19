@@ -382,6 +382,9 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "session_id": session_id,
             # Story 4.2: admission position — None outside 'waiting'.
             "queue_position": None,
+            # Phase 2: cookie-mode pause discriminator — None outside a
+            # cookie-mode pause (rides every batch.state).
+            "pause_reason": None,
         }
     ]
 
@@ -395,6 +398,8 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "gate_display_value": gate["display_value"],
             "session_id": session_id,
             "queue_position": None,
+            # A plain client pause carries no reason (Phase 2 only sets it).
+            "pause_reason": None,
         }
     ]
 
@@ -409,6 +414,7 @@ async def test_batch_state_events_carry_batch_and_gate_context(
             "gate_display_value": gate["display_value"],
             "session_id": session_id,
             "queue_position": None,
+            "pause_reason": None,
         }
     ]
 
