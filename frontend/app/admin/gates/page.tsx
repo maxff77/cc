@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 
@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/field";
+import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
 import { Notice } from "@/components/ui/notice";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
@@ -146,8 +147,40 @@ function formatCreated(iso: string): string {
   });
 }
 
+// "State is the product": every mutation confirms. An ephemeral success line
+// that auto-clears after 2.5s — appearance only, no choreography (motion-safe
+// by construction). Timer is cleared on unmount so a quick close never leaks.
+function useFlash(): [string | null, (msg: string) => void] {
+  const [msg, setMsg] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  function flash(next: string) {
+    setMsg(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setMsg(null), 2500);
+  }
+
+  return [msg, flash];
+}
+
+// The two highest-stakes fields on the page share these hints. The real/visible
+// split is load-bearing: a wrong "comando real" mis-attributes replies across
+// tenants, so both inputs carry a one-line explainer wherever they appear.
+const HINT_REAL = "El comando que se envía de verdad al bot.";
+const HINT_VISIBLE = "Lo que ven los clientes; nunca el comando real.";
+
 export default function AdminGatesPage() {
   const queryClient = useQueryClient();
+  // Catalog-column affirmation: the per-row edit/delete actions live deep in
+  // the list, so they bubble their success up here where it's visible.
+  const [catalogMsg, flashCatalog] = useFlash();
 
   const gates = useQuery({
     queryKey: GATES_KEY,
@@ -193,8 +226,10 @@ export default function AdminGatesPage() {
     // Only the owner reaches this page (backend guard) → Gates nav visible.
     <AdminShell gatesVisible title="Gates">
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-        {/* Left zone: categories + create form (sticky on desktop). */}
-        <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
+        {/* Left zone: categories + create form (sticky on desktop). On mobile
+            it drops below the catalog (order-2) — the owner came to see the
+            catalog, not to scroll past every management control first. */}
+        <div className="order-2 flex flex-col gap-5 lg:order-1 lg:sticky lg:top-6 lg:self-start">
           <CategoriesBlock
             categories={categoryItems}
             isError={categories.isError}
@@ -205,8 +240,10 @@ export default function AdminGatesPage() {
           <CreateGateForm categories={categoryItems} onCreated={invalidate} />
         </div>
 
-        {/* Right zone: the catalog, grouped by category. */}
-        <div className="flex flex-col gap-6">
+        {/* Right zone: the catalog, grouped by category (first on mobile). */}
+        <div className="order-1 flex flex-col gap-6 lg:order-2">
+          {catalogMsg && <Notice status="success">{catalogMsg}</Notice>}
+
           {gates.isLoading && (
             <SectionCard legend="CATÁLOGO" padding="none">
               <PanelSkeleton rows={5} />
@@ -221,7 +258,23 @@ export default function AdminGatesPage() {
 
           {gates.data && grouped.length === 0 && (
             <SectionCard legend="CATÁLOGO" padding="none">
-              <EmptyState message="El catálogo está vacío." />
+              <EmptyState
+                action={
+                  <Btn
+                    size="sm"
+                    variant="primary"
+                    onClick={() => {
+                      const el = document.getElementById("create-gate-form");
+
+                      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      el?.querySelector<HTMLInputElement>("input")?.focus();
+                    }}
+                  >
+                    Crea tu primer gate
+                  </Btn>
+                }
+                message="El catálogo está vacío."
+              />
             </SectionCard>
           )}
 
@@ -240,13 +293,16 @@ export default function AdminGatesPage() {
                       <li
                         key={g.id}
                         className={clsx(
-                          "flex items-center gap-3 px-3.5 py-3",
+                          // flex-wrap: the name keeps line 1 while meta+actions
+                          // drop to line 2 on narrow widths (full-width single
+                          // column on mobile) — no horizontal overflow at 320px.
+                          "flex flex-wrap items-center gap-3 px-3.5 py-3",
                           // Top border separates rows (none on the first),
                           // per the Ranger-X GatesScreen li styling.
                           i && "border-t border-separator",
                         )}
                       >
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="flex min-w-0 flex-[1_1_11rem] flex-col gap-0.5">
                           <span className="truncate text-sm font-semibold">
                             {g.name}
                           </span>
@@ -256,22 +312,34 @@ export default function AdminGatesPage() {
                               ` · ${g.credit_cost} créd./✅`}
                           </span>
                         </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1 text-[10px] uppercase tracking-wide text-muted">
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          {/* LabelCaps for the One-Tracking-Rule (0.1em); the
+                              chips carry text-foreground so the command data
+                              isn't dimmer than the created-at date above. */}
                           <span className="flex items-center gap-1.5">
-                            Visible
-                            <MonoChip>{g.display_value}</MonoChip>
+                            <LabelCaps>Visible</LabelCaps>
+                            <MonoChip className="text-foreground">
+                              {g.display_value}
+                            </MonoChip>
                           </span>
                           <span className="flex items-center gap-1.5">
-                            Real
-                            <MonoChip>{g.value}</MonoChip>
+                            <LabelCaps>Real</LabelCaps>
+                            <MonoChip className="text-foreground">
+                              {g.value}
+                            </MonoChip>
                           </span>
                         </div>
                         <EditGateAction
                           categories={categoryItems}
                           gate={g}
+                          notify={flashCatalog}
                           onChanged={invalidate}
                         />
-                        <DeleteGateAction gate={g} onDeleted={invalidate} />
+                        <DeleteGateAction
+                          gate={g}
+                          notify={flashCatalog}
+                          onDeleted={invalidate}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -338,6 +406,7 @@ function CategoriesBlock({
   const [special, setSpecial] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [okMsg, flashOk] = useFlash();
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -348,6 +417,7 @@ function CategoriesBlock({
     onSuccess: () => {
       setName("");
       setSpecial(false);
+      flashOk("Categoría creada");
       onChanged();
     },
     onError: (err) => {
@@ -380,6 +450,7 @@ function CategoriesBlock({
     <SectionCard legend="CATEGORÍAS" legendAs="h2">
       <div className="flex flex-col gap-3">
         {banner && <Notice status="danger">{banner}</Notice>}
+        {okMsg && <Notice status="success">{okMsg}</Notice>}
 
         <form className="flex flex-col gap-3" onSubmit={onSubmit}>
           <Field
@@ -421,7 +492,12 @@ function CategoriesBlock({
           )}
           <ul className="flex flex-col divide-y divide-separator">
             {categories.map((c) => (
-              <CategoryRow key={c.id} category={c} onChanged={onChanged} />
+              <CategoryRow
+                key={c.id}
+                category={c}
+                notify={flashOk}
+                onChanged={onChanged}
+              />
             ))}
           </ul>
         </div>
@@ -432,9 +508,11 @@ function CategoriesBlock({
 
 function CategoryRow({
   category,
+  notify,
   onChanged,
 }: {
   category: CategoryOut;
+  notify: (msg: string) => void;
   onChanged: () => void;
 }) {
   // Max ONE layer open at a time (UX-DR21): the inline rename stays (a single
@@ -444,6 +522,11 @@ function CategoryRow({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Optimistic special-mode: reflect the click immediately, then let the
+  // refetch (source of truth) reconcile on settle. Null = no override.
+  const [optimisticSpecial, setOptimisticSpecial] = useState<boolean | null>(
+    null,
+  );
 
   const rename = useMutation({
     mutationFn: () =>
@@ -453,6 +536,7 @@ function CategoryRow({
     onSuccess: () => {
       setMode("view");
       setRenameError(null);
+      notify("Categoría renombrada");
       onChanged();
     },
     onError: (err) => {
@@ -478,7 +562,13 @@ function CategoryRow({
         name: category.name,
         special_mode: next,
       }),
-    onSettled: () => onChanged(),
+    onMutate: (next) => setOptimisticSpecial(next),
+    // Clear the override on settle either way — the refetched list is truth, so
+    // a failed/raced toggle self-corrects back to the server value.
+    onSettled: () => {
+      setOptimisticSpecial(null);
+      onChanged();
+    },
   });
 
   const remove = useMutation({
@@ -487,6 +577,7 @@ function CategoryRow({
     onSuccess: () => {
       setConfirmOpen(false);
       setDeleteError(null);
+      notify("Categoría eliminada");
       onChanged();
     },
     onError: (err) => {
@@ -590,8 +681,11 @@ function CategoryRow({
 
       {mode === "view" && (
         <Checkbox
-          checked={category.special_mode}
-          className="text-[13px]"
+          checked={optimisticSpecial ?? category.special_mode}
+          className={clsx(
+            "text-[13px]",
+            toggleSpecial.isPending && "opacity-60",
+          )}
           onChange={(next) => {
             if (!toggleSpecial.isPending) toggleSpecial.mutate(next);
           }}
@@ -638,6 +732,7 @@ function CreateGateForm({
   const [creditError, setCreditError] = useState<string | null>(null);
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [okMsg, flashOk] = useFlash();
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -653,6 +748,7 @@ function CreateGateForm({
       setValue("");
       setDisplayValue("");
       setCreditCost("0");
+      flashOk("Gate creado");
       onCreated();
     },
     onError: (err) => {
@@ -704,18 +800,243 @@ function CreateGateForm({
   }
 
   return (
-    // legendAs="h2": replaces the old "Crear gate" h2 heading.
-    <SectionCard legend="CREAR GATE" legendAs="h2">
-      <div className="flex flex-col gap-3">
-        {banner && <Notice status="danger">{banner}</Notice>}
+    // id is the scroll target for the empty-catalog "Crea tu primer gate" CTA.
+    <div id="create-gate-form">
+      {/* legendAs="h2": replaces the old "Crear gate" h2 heading. */}
+      <SectionCard legend="CREAR GATE" legendAs="h2">
+        <div className="flex flex-col gap-3">
+          {banner && <Notice status="danger">{banner}</Notice>}
+          {okMsg && <Notice status="success">{okMsg}</Notice>}
 
-        <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+          <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+            <Field
+              required
+              error={nameError}
+              label="Nombre"
+              name="name"
+              placeholder="Visa Oro"
+              value={name}
+              onChange={(v) => {
+                setName(v);
+                if (nameError) setNameError(null);
+              }}
+            />
+
+            <Field
+              mono
+              required
+              error={fieldError}
+              label="Gate (comando real)"
+              name="value"
+              placeholder=".ej"
+              value={value}
+              onChange={(v) => {
+                setValue(v);
+                if (fieldError) setFieldError(null);
+              }}
+            />
+            <p className="-mt-1 px-0.5 text-[11px] text-muted">{HINT_REAL}</p>
+
+            <Field
+              mono
+              required
+              error={displayError}
+              label="Comando visible"
+              name="display_value"
+              placeholder="Lo que ve el cliente"
+              value={displayValue}
+              onChange={(v) => {
+                setDisplayValue(v);
+                if (displayError) setDisplayError(null);
+              }}
+            />
+            <p className="-mt-1 px-0.5 text-[11px] text-muted">{HINT_VISIBLE}</p>
+
+            <Field
+              required
+              error={creditError}
+              inputMode="numeric"
+              label="Costo en créditos (0 = gratis)"
+              name="credit_cost"
+              placeholder="0"
+              type="number"
+              value={creditCost}
+              onChange={(v) => {
+                setCreditCost(v);
+                if (creditError) setCreditError(null);
+              }}
+            />
+
+            <CategorySelect
+              categories={categories}
+              errorMessage={categoryError}
+              value={categoryId}
+              onChange={(id) => {
+                setCategoryId(id);
+                if (categoryError) setCategoryError(null);
+              }}
+            />
+
+            <Btn
+              full
+              disabled={mutation.isPending}
+              type="submit"
+              variant="primary"
+            >
+              {mutation.isPending ? "Creando…" : "Crear gate"}
+            </Btn>
+          </form>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+// --- Edit (per-row dialog) ---------------------------------------------------
+
+function EditGateAction({
+  gate,
+  categories,
+  notify,
+  onChanged,
+}: {
+  gate: GateOut;
+  categories: CategoryOut[];
+  notify: (msg: string) => void;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(gate.name);
+  const [value, setValue] = useState(gate.value);
+  const [displayValue, setDisplayValue] = useState(gate.display_value);
+  const [creditCost, setCreditCost] = useState(String(gate.credit_cost));
+  const [categoryId, setCategoryId] = useState<number | null>(gate.category_id);
+  // Per-field errors mirror CreateGateForm: every invalid field lights at once
+  // and anchors to its own input, instead of a single one-at-a-time Notice.
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [valueError, setValueError] = useState<string | null>(null);
+  const [displayError, setDisplayError] = useState<string | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  function clearErrors() {
+    setNameError(null);
+    setValueError(null);
+    setDisplayError(null);
+    setCreditError(null);
+    setCategoryError(null);
+    setBanner(null);
+  }
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.patch<GateOut>(`/api/admin/gates/${gate.id}`, {
+        value,
+        name,
+        display_value: displayValue,
+        credit_cost: Number(creditCost),
+        category_id: categoryId,
+      }),
+    onSuccess: () => {
+      setOpen(false);
+      clearErrors();
+      notify("Gate actualizado");
+      onChanged();
+    },
+    onError: (err) => {
+      // Retired/deleted in another tab: the row no longer exists server-side —
+      // refresh the list so the ghost row (and this editor) goes away.
+      if (err instanceof ApiError && err.code === "gate_not_found") {
+        setOpen(false);
+        onChanged();
+
+        return;
+      }
+      // Same code→field routing as create: known codes anchor to their field,
+      // everything else falls to the banner.
+      if (err instanceof ApiError) {
+        if (err.code === "gate_exists") setValueError(err.message);
+        else if (err.code === "invalid_gate") setCreditError(err.message);
+        else if (err.code === "category_not_found")
+          setCategoryError(err.message);
+        else setBanner(err.message);
+      } else {
+        setBanner("No pudimos conectar. Intenta de nuevo.");
+      }
+    },
+  });
+
+  function save() {
+    if (mutation.isPending) return;
+    clearErrors();
+    const invalidName = validateGateName(name);
+    const invalidValue = validateGateValue(value);
+    const invalidDisplay = validateDisplayValue(displayValue);
+    const invalidCredit = validateCreditCost(creditCost);
+    const invalidCategory = categoryId === null ? "Elegí una categoría." : null;
+
+    if (invalidName) setNameError(invalidName);
+    if (invalidValue) setValueError(invalidValue);
+    if (invalidDisplay) setDisplayError(invalidDisplay);
+    if (invalidCredit) setCreditError(invalidCredit);
+    if (invalidCategory) setCategoryError(invalidCategory);
+    if (
+      invalidName ||
+      invalidValue ||
+      invalidDisplay ||
+      invalidCredit ||
+      invalidCategory
+    )
+      return;
+    mutation.mutate();
+  }
+
+  return (
+    <>
+      <Btn
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          setName(gate.name);
+          setValue(gate.value);
+          setDisplayValue(gate.display_value);
+          setCreditCost(String(gate.credit_cost));
+          setCategoryId(gate.category_id);
+          clearErrors();
+          setOpen(true);
+        }}
+      >
+        Editar
+      </Btn>
+
+      {/* role="dialog": this is a multi-field FORM, not a confirmation — the
+          default alertdialog role would mis-announce it to screen readers. */}
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
+        confirmVariant="primary"
+        heading="Editar gate"
+        open={open}
+        pending={mutation.isPending}
+        role="dialog"
+        onConfirm={save}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) clearErrors();
+        }}
+      >
+        <div className="flex flex-col gap-3">
+          {banner && <Notice status="danger">{banner}</Notice>}
+          {/* Editing the real command re-attributes inbound replies — the one
+              expensive mistake on this page gets an explicit caution. */}
+          <Notice status="warning">
+            Cambiar el comando real re-atribuye las respuestas que lleguen.
+          </Notice>
+
           <Field
-            required
             error={nameError}
             label="Nombre"
             name="name"
-            placeholder="Visa Oro"
             value={name}
             onChange={(v) => {
               setName(v);
@@ -725,38 +1046,36 @@ function CreateGateForm({
 
           <Field
             mono
-            required
-            error={fieldError}
+            error={valueError}
             label="Gate (comando real)"
             name="value"
-            placeholder=".ej"
             value={value}
             onChange={(v) => {
               setValue(v);
-              if (fieldError) setFieldError(null);
+              if (valueError) setValueError(null);
             }}
           />
+          <p className="-mt-1 px-0.5 text-[11px] text-muted">{HINT_REAL}</p>
 
           <Field
             mono
-            required
             error={displayError}
             label="Comando visible"
             name="display_value"
-            placeholder="Lo que ve el cliente"
             value={displayValue}
             onChange={(v) => {
               setDisplayValue(v);
               if (displayError) setDisplayError(null);
             }}
           />
+          <p className="-mt-1 px-0.5 text-[11px] text-muted">{HINT_VISIBLE}</p>
 
           <Field
-            required
             error={creditError}
+            inputMode="numeric"
             label="Costo en créditos (0 = gratis)"
             name="credit_cost"
-            placeholder="0"
+            type="number"
             value={creditCost}
             onChange={(v) => {
               setCreditCost(v);
@@ -773,172 +1092,6 @@ function CreateGateForm({
               if (categoryError) setCategoryError(null);
             }}
           />
-
-          <Btn
-            full
-            disabled={mutation.isPending}
-            type="submit"
-            variant="primary"
-          >
-            {mutation.isPending ? "Creando…" : "Crear gate"}
-          </Btn>
-        </form>
-      </div>
-    </SectionCard>
-  );
-}
-
-// --- Edit (per-row dialog) ---------------------------------------------------
-
-function EditGateAction({
-  gate,
-  categories,
-  onChanged,
-}: {
-  gate: GateOut;
-  categories: CategoryOut[];
-  onChanged: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState(gate.name);
-  const [value, setValue] = useState(gate.value);
-  const [displayValue, setDisplayValue] = useState(gate.display_value);
-  const [creditCost, setCreditCost] = useState(String(gate.credit_cost));
-  const [categoryId, setCategoryId] = useState<number | null>(gate.category_id);
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      api.patch<GateOut>(`/api/admin/gates/${gate.id}`, {
-        value,
-        name,
-        display_value: displayValue,
-        credit_cost: Number(creditCost),
-        category_id: categoryId,
-      }),
-    onSuccess: () => {
-      setOpen(false);
-      setError(null);
-      onChanged();
-    },
-    onError: (err) => {
-      // Retired/deleted in another tab: the row no longer exists server-side —
-      // refresh the list so the ghost row (and this editor) goes away.
-      if (err instanceof ApiError && err.code === "gate_not_found") {
-        setOpen(false);
-        onChanged();
-
-        return;
-      }
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "No pudimos conectar. Intenta de nuevo.",
-      );
-    },
-  });
-
-  function save() {
-    if (mutation.isPending) return;
-    const invalid =
-      validateGateName(name) ??
-      validateGateValue(value) ??
-      validateDisplayValue(displayValue) ??
-      validateCreditCost(creditCost) ??
-      (categoryId === null ? "Elegí una categoría." : null);
-
-    if (invalid) {
-      setError(invalid);
-
-      return;
-    }
-    setError(null);
-    mutation.mutate();
-  }
-
-  return (
-    <>
-      <Btn
-        size="sm"
-        variant="secondary"
-        onClick={() => {
-          setName(gate.name);
-          setValue(gate.value);
-          setDisplayValue(gate.display_value);
-          setCreditCost(String(gate.credit_cost));
-          setCategoryId(gate.category_id);
-          setError(null);
-          setOpen(true);
-        }}
-      >
-        Renombrar
-      </Btn>
-
-      <ConfirmDialog
-        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
-        confirmVariant="primary"
-        heading="Editar gate"
-        open={open}
-        pending={mutation.isPending}
-        onConfirm={save}
-        onOpenChange={(o) => {
-          setOpen(o);
-          if (!o) setError(null);
-        }}
-      >
-        <div className="flex flex-col gap-3">
-          <Field
-            label="Nombre"
-            name="name"
-            value={name}
-            onChange={(v) => {
-              setName(v);
-              if (error) setError(null);
-            }}
-          />
-
-          <Field
-            mono
-            label="Gate (comando real)"
-            name="value"
-            value={value}
-            onChange={(v) => {
-              setValue(v);
-              if (error) setError(null);
-            }}
-          />
-
-          <Field
-            mono
-            label="Comando visible"
-            name="display_value"
-            value={displayValue}
-            onChange={(v) => {
-              setDisplayValue(v);
-              if (error) setError(null);
-            }}
-          />
-
-          <Field
-            label="Costo en créditos (0 = gratis)"
-            name="credit_cost"
-            value={creditCost}
-            onChange={(v) => {
-              setCreditCost(v);
-              if (error) setError(null);
-            }}
-          />
-
-          <CategorySelect
-            categories={categories}
-            value={categoryId}
-            onChange={(id) => {
-              setCategoryId(id);
-              if (error) setError(null);
-            }}
-          />
-
-          {error && <Notice status="danger">{error}</Notice>}
         </div>
       </ConfirmDialog>
     </>
@@ -949,9 +1102,11 @@ function EditGateAction({
 
 function DeleteGateAction({
   gate,
+  notify,
   onDeleted,
 }: {
   gate: GateOut;
+  notify: (msg: string) => void;
   onDeleted: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -962,6 +1117,7 @@ function DeleteGateAction({
     onSuccess: () => {
       setOpen(false);
       setError(null);
+      notify("Gate eliminado");
       onDeleted();
     },
     onError: (err) => {

@@ -7,7 +7,7 @@
 // required) pass through for native form submits.
 import type { HTMLInputTypeAttribute } from "react";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import clsx from "clsx";
 
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -20,6 +20,8 @@ export interface FieldProps {
   value: string;
   onChange?: (value: string) => void;
   placeholder?: string;
+  // Numeric-keyboard passthrough (e.g. inputMode="numeric" + type="number").
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   rightSlot?: React.ReactNode;
   mono?: boolean;
   error?: string | null;
@@ -45,11 +47,14 @@ export function Field({
   autoComplete,
   required,
   disabled,
+  inputMode,
   className,
   inputClassName,
 }: FieldProps) {
   const [focus, setFocus] = useState(false);
   const invalid = error != null && error !== "";
+  // Stable id so the error <p> can be wired to the input via aria-describedby.
+  const errorId = `${useId()}-err`;
 
   return (
     <label className={clsx("block", className)}>
@@ -76,6 +81,8 @@ export function Field({
           />
         )}
         <input
+          aria-describedby={invalid ? errorId : undefined}
+          aria-invalid={invalid}
           autoComplete={autoComplete}
           className={clsx(
             // text-base on phones (<640) keeps inputs ≥16px so iOS Safari does
@@ -85,6 +92,7 @@ export function Field({
             inputClassName,
           )}
           disabled={disabled}
+          inputMode={inputMode}
           name={name}
           placeholder={placeholder}
           required={required}
@@ -97,7 +105,13 @@ export function Field({
         {rightSlot}
       </div>
       {invalid && (
-        <p className="mt-1.5 px-0.5 text-[12px] text-danger">{error}</p>
+        <p
+          className="mt-1.5 px-0.5 text-[12px] text-danger"
+          id={errorId}
+          role="alert"
+        >
+          {error}
+        </p>
       )}
     </label>
   );
