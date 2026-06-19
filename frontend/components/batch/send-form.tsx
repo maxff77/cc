@@ -149,8 +149,19 @@ export function SendForm({
     return gatesInCategory.find((g) => String(g.id) === gateKey) ?? null;
   }, [isLive, gates, live.gateDisplayValue, gatesInCategory, gateKey]);
   const gateCost = effectiveGate?.credit_cost ?? 0;
-  // A costed gate with no balance blocks the send (backend authoritative).
-  const blockedByCredits = gateCost > 0 && live.creditBalance <= 0;
+  // Only non-staff tenants are metered — mirrors the backend's priority>0
+  // exemption (_PRIORITY_BY_ROLE in batches.py: owner/admin are exempt, every
+  // other role meters). Exempt by an explicit staff list (not `=== "client"`)
+  // so a future/unknown role stays metered in lockstep with the backend. While
+  // /me is still loading (or errored), DON'T meter: never flash a credit block
+  // or a misleading "Créditos: 0" at staff — the backend stays authoritative
+  // and a client briefly un-gated is harmless (the create/append guard 403s).
+  const isMetered = me.data
+    ? !["owner", "admin"].includes(me.data.role)
+    : false;
+  // A costed gate with no balance blocks the send for clients only (backend
+  // authoritative).
+  const blockedByCredits = isMetered && gateCost > 0 && live.creditBalance <= 0;
 
   const mutation = useMutation({
     mutationFn: (payload: { text: string; gate_id: number }) =>
@@ -321,19 +332,24 @@ export function SendForm({
         )}
         {/* Credits strip (credits feature): the tenant's live balance + the
             selected gate's per-✅ cost. Turns into a warning when a costed gate
-            has no balance (the send is blocked). */}
-        <div className="flex items-center justify-between text-[11px]">
-          <span
-            className={live.creditBalance <= 0 ? "text-danger" : "text-muted"}
-          >
-            Créditos: <span className="tabular-nums">{live.creditBalance}</span>
-          </span>
-          {gateCost > 0 && (
-            <span className={blockedByCredits ? "text-danger" : "text-muted"}>
-              {gateCost} créd./✅
+            has no balance (the send is blocked). Clients only — owner/admin are
+            exempt from credits, so the strip would only show a misleading
+            "Créditos: 0". */}
+        {isMetered && (
+          <div className="flex items-center justify-between text-[11px]">
+            <span
+              className={live.creditBalance <= 0 ? "text-danger" : "text-muted"}
+            >
+              Créditos:{" "}
+              <span className="tabular-nums">{live.creditBalance}</span>
             </span>
-          )}
-        </div>
+            {gateCost > 0 && (
+              <span className={blockedByCredits ? "text-danger" : "text-muted"}>
+                {gateCost} créd./✅
+              </span>
+            )}
+          </div>
+        )}
         <Area
           error={textError}
           label="Líneas"

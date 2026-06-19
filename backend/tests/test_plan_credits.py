@@ -314,6 +314,35 @@ async def test_staff_bypass_costed_gate_at_zero_balance(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_owner_batch_never_charged_on_ok(
+    ctx: dict[str, object],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """Owner/admin "house" tenants are fully exempt from credits: a captured ✅
+    on their own costed batch (priority > 0) never debits the balance nor emits
+    credits.updated — only client batches (priority == 0) are metered."""
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+    owner: User = ctx["owner"]  # type: ignore[assignment]
+    await _set_gate_cost(gate["id"], 10)
+    await _set_balance(owner.tenant_id, 50)
+
+    await _post_batch(owner_client, "uno", gate["id"])  # priority 2, cost 10
+    await _drain()  # send_log.message_id == 1
+
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=7901, reply_to_msg_id=1, text="✅ CC: 4111 Status a",
+            edited=False,
+        )
+    )
+
+    assert await _balance(owner.tenant_id) == 50  # untouched — fully exempt
+    assert _credits_updates(events) == []
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_append_blocked_when_balance_drained(
     client_user: tuple[AsyncClient, User],
     gate: dict,

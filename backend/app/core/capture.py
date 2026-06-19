@@ -372,10 +372,18 @@ async def process_incoming(reply: IncomingReply) -> None:
         # after cleanup) or the gate is free. MUST run BEFORE add_full so the
         # first-✅ existence check doesn't see the row we're about to insert —
         # same transaction, so the debit commits atomically with the revision.
+        # ONLY client batches are metered (``priority == 0``): owner/admin
+        # "house" tenants are fully exempt from credits — never charged, never
+        # blocked — same ``Batch.priority`` snapshot the create/append guard
+        # uses (1=admin, 2=owner). No debit ⇒ no ``credits.updated`` emit below.
         charged_balance: int | None = None
         if status == responses_repo.STATUS_OK and attributed.batch_id is not None:
             batch_row = await session.get(Batch, attributed.batch_id)
-            if batch_row is not None and batch_row.gate_credit_cost > 0:
+            if (
+                batch_row is not None
+                and batch_row.gate_credit_cost > 0
+                and batch_row.priority == 0
+            ):
                 charged_balance = await responses_repo.charge_if_first_ok(
                     session,
                     tenant_id=attributed.tenant_id,
