@@ -166,7 +166,7 @@ function ClearButton({
   return (
     <button
       aria-label="Limpiar la vista Completa"
-      className="rx-focus inline-flex items-center font-mono text-[11.5px] text-muted transition-colors hover:text-foreground disabled:opacity-40 disabled:hover:text-muted"
+      className="rx-focus inline-flex items-center rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--surface-secondary)] px-3 py-[5px] font-mono text-[11.5px] leading-none text-foreground transition-colors hover:border-[var(--muted)] hover:bg-[var(--surface-tertiary)] disabled:opacity-40 disabled:hover:border-[var(--border-strong)] disabled:hover:bg-[var(--surface-secondary)]"
       disabled={disabled}
       type="button"
       onClick={onClick}
