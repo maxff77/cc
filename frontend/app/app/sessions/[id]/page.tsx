@@ -280,7 +280,7 @@ export default function SessionDetailPage() {
         />
       </div>
 
-      {/* Mobile: the same segmented Completa | Con respuesta | Datos CC. */}
+      {/* Mobile: the same segmented Completa | Aprobadas | Datos CC. */}
       <ResponseTabs
         cc={cc}
         ccTotal={data.cc_total}

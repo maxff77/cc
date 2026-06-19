@@ -4,8 +4,10 @@
 // full-round shape of the system, now native (no HeroUI Chip). One meaning per
 // tone: accent = live send, cyan = admin role, warning = paused/waiting,
 // danger = stopping/destructive/expired, success = active/approved, muted =
-// closed/inactive. Alpha tints over semantic tokens + a soft neon glow that
-// scales with --glow (muted stays flat). The optional dot pulses for live state.
+// closed/inactive. Alpha tints over semantic tokens; a soft neon glow is
+// reserved for the LIVE state (accent + pulse) ONLY — every static pill is flat
+// (control-room calm: energy in moments, not on every chip). The dot pulses for
+// live state.
 import clsx from "clsx";
 
 export type PillTone =
@@ -41,6 +43,10 @@ export function StatePill({
   children: React.ReactNode;
   className?: string;
 }) {
+  // Glow is a live-moment signal, not decoration: only the sending/live pill
+  // (accent tone + pulsing dot) carries it; every static pill stays flat.
+  const isLive = tone === "accent" && dot === "pulse";
+
   return (
     <span
       className={clsx(
@@ -50,9 +56,9 @@ export function StatePill({
         className,
       )}
       style={
-        tone === "muted"
-          ? undefined
-          : { boxShadow: "0 0 calc(12px * var(--glow)) currentColor" }
+        isLive
+          ? { boxShadow: "0 0 calc(8px * var(--glow)) currentColor" }
+          : undefined
       }
     >
       {dot && (

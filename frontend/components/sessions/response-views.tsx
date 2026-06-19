@@ -156,7 +156,7 @@ function ExportLink({ path }: { path: string }) {
 export function ResponseViewsLegend({ className }: { className?: string }) {
   return (
     <p className={clsx("text-xs text-muted", className)}>
-      <span className="text-foreground">Todas las respuestas</span> incluye ✅ y
+      <span className="text-foreground">Completa</span> incluye ✅ y
       ❌; <span className="text-foreground">Aprobadas</span> son solo las ✅; y{" "}
       <span className="text-foreground">Datos CC</span> son los datos extraídos
       de esas respuestas.
@@ -237,7 +237,7 @@ export function CompletaPanel({
   );
 }
 
-// "Filtrada con respuesta" (full text of only the ✅ revisions). SAME row shape
+// "Aprobadas" (full text of only the ✅ revisions). SAME row shape
 // as Completa — full text + the ✅ glyph — just the status-filtered subset.
 export function FiltradaConResponsePanel({
   responses,
@@ -261,7 +261,7 @@ export function FiltradaConResponsePanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA_CON}
       exportPath={exportPath}
-      header={header ? "Filtrada con respuesta" : undefined}
+      header={header ? "Aprobadas" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses.filter((row) => row.status === "ok"))}
     />
@@ -290,7 +290,7 @@ export function FiltradaPanel({
       countTone="success"
       emptyText={EMPTY_FILTRADA}
       exportPath={exportPath}
-      header={header ? "Filtrada sin respuesta" : undefined}
+      header={header ? "Datos CC" : undefined}
       listClassName={listClassName}
       rows={filtradaRows(cc, total)}
     />
@@ -389,13 +389,13 @@ export function ResponseTabs({
       { id: "completa", label: "Completa", count: responsesTotal },
       {
         id: "con-response",
-        label: "Con respuesta",
+        label: "Aprobadas",
         count: responsesOkTotal,
         tone: "success",
       },
       {
         id: "sin-response",
-        label: "Sin respuesta",
+        label: "Datos CC",
         count: ccTotal,
         tone: "success",
       },

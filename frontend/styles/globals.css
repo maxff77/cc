@@ -236,6 +236,17 @@ body {
   opacity: .5;
 }
 
+/* Calm cockpit scope (Ranger-X critique 2026-06: "energy in moments, not pages").
+   The authenticated tool surface (/app) settles: --glow drops to a fraction so
+   the live ring, the sending pill and the Enviar button stay the ONLY energetic
+   moments. --glow cascades to every descendant glow (StatePill live-pulse, ring
+   drop-shadow, button bloom) AND to the child rx-backdrop blooms. Landing, login
+   and register keep the louder :root --glow:1 — they sell, the cockpit works. */
+.rx-calm { --glow: 0.5; }
+/* The circuit grid alpha is fixed (not glow-scaled), so the calm cockpit
+   backdrop dials it down explicitly — from a visible mesh to a faint hint. */
+.rx-backdrop--calm::before { opacity: .14; }
+
 /* client content shell: fluid responsive container — clamp gutters scale
    320px → 4K with no breakpoint jump; bottom clears the mobile bottom nav +
    home-indicator safe area; capped reading width. */

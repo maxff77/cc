@@ -1,8 +1,9 @@
 "use client";
 
 // Progress ring + flank metrics (UX-DR3 / Ranger-X handoff `ProgressRing`):
-// a native SVG ring with a cyan→accent→magenta gradient stroke + neon glow
-// (the glow scales with --glow), accent while sending / solid warning while
+// a native SVG ring with a cyan→accent→magenta gradient stroke + a neon glow
+// reserved for the SENDING arc (scales with --glow; paused/stopping is calm),
+// accent while sending / solid warning while
 // paused or stopping (AC 2 — "vivo pero no enviando" wears warning; 'stopping'
 // has no DESIGN token, recorded decision). Center % + fraction; flank shows
 // EXACTLY three metrics — enviadas · en cola / ETA / CC nuevas (UX-DR21).
@@ -73,7 +74,12 @@ function Ring({
             strokeWidth="9"
             style={{
               transition: "stroke-dashoffset .6s cubic-bezier(.2,.7,.2,1)",
-              filter: "drop-shadow(0 0 calc(7px * var(--glow)) var(--accent))",
+              // Glow is the live-send signal: only the accent (sending) arc
+              // carries it. Paused/stopping (warning) reads calm — no neon.
+              filter:
+                tone === "warning"
+                  ? "none"
+                  : "drop-shadow(0 0 calc(7px * var(--glow)) var(--accent))",
             }}
           />
         )}
