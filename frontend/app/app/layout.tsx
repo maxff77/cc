@@ -15,11 +15,18 @@ export default function ClientLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // On lg the shell is pinned to the viewport (h-[100dvh] + overflow-hidden) so
+  // the PAGE never scrolls — `main` is the one internal scroll container. Pages
+  // that flow (Historial list) scroll inside `main`; pages that fill it (cockpit,
+  // session detail) cap to `main` and scroll inside their own panes. Below lg the
+  // shell keeps min-h-screen and the page scrolls normally (mobile bottom nav).
   return (
-    <div className="rx-calm relative flex min-h-screen flex-col">
+    <div className="rx-calm relative flex min-h-screen flex-col lg:h-[100dvh] lg:min-h-0 lg:overflow-hidden">
       <RxBackdrop className="rx-backdrop--calm" />
       <ClientNav />
-      <main className="relative z-[1] flex-1 client-shell">{children}</main>
+      <main className="relative z-[1] flex-1 client-shell lg:min-h-0 lg:overflow-y-auto">
+        {children}
+      </main>
     </div>
   );
 }

@@ -231,7 +231,7 @@ export default function SessionDetailPage() {
   }));
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 lg:h-full lg:min-h-0">
       {/* Gate · value · creation date ride the header's mono sub-line; the
           internal id is debug data and no longer shown (ui-polish-spec §3.8). */}
       <PageHeader
@@ -265,15 +265,18 @@ export default function SessionDetailPage() {
 
       {continueError && <Notice status="danger">{continueError}</Notice>}
 
-      {/* Desktop: the same three side-by-side panels as Envío; internal
-          scroll — the detail competes with no cockpit. */}
-      <div className="hidden lg:block">
+      {/* Desktop: the same three side-by-side panels as Envío. The wrapper
+          flexes to fill the viewport-capped root (lg:flex-1 + min-h-0) and
+          `fill` stretches the panels to it — each list scrolls INSIDE its
+          panel, the page never grows past the viewport. */}
+      <div className="hidden lg:block lg:min-h-0 lg:flex-1 lg:overflow-hidden">
         <ResponseColumns
           cc={cc}
           ccTotal={data.cc_total}
           exportPathCompleta={exportCompleta}
           exportPathFiltrada={exportFiltrada}
           exportPathFiltradaCompleta={exportFiltradaCompleta}
+          fill
           responses={responses}
           responsesOkTotal={data.responses_ok_total}
           responsesTotal={data.responses_total}
