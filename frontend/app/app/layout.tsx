@@ -24,7 +24,7 @@ export default function ClientLayout({
     <div className="rx-calm relative flex min-h-screen flex-col lg:h-[100dvh] lg:min-h-0 lg:overflow-hidden">
       <RxBackdrop className="rx-backdrop--calm" />
       <ClientNav />
-      <main className="relative z-[1] flex-1 client-shell lg:min-h-0 lg:overflow-y-auto">
+      <main className="relative z-[1] flex-1 client-shell lg:min-h-0 overflow-y-hidden">
         {children}
       </main>
     </div>
