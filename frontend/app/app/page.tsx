@@ -10,7 +10,7 @@
 // scrolls on its own. BOTH columns inherit the cap (lg:h-full lg:min-h-0) and
 // the right column passes `fill` so its panels stretch to the cap — lists scroll
 // inside each panel and no dead space opens below short results.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
@@ -103,6 +103,38 @@ export default function EnvioPage() {
     return () => window.clearTimeout(id);
   }, [completed]);
 
+  // "Limpiar" la vista Completa (clear-completa-view): a VIEW-only declutter,
+  // local to this tab — it hides the rows currently shown in Completa WITHOUT
+  // deleting anything (data stays in Postgres) and WITHOUT touching Aprobadas
+  // (which filters the same `live.responses`). We snapshot the visible row keys
+  // into `clearedKeys`; Completa renders only rows whose key isn't hidden, so
+  // replies captured AFTER the clear (fresh keys) keep appearing. The keys are
+  // monotonic and get reassigned on reconnect/session change, so the set
+  // self-invalidates on the next snapshot (rows reappear) and stays bounded.
+  const [clearedKeys, setClearedKeys] = useState<Set<string>>(() => new Set());
+
+  // A clear is scoped to the session the operator was watching: drop it when
+  // the active session changes (gate swap / Continuar) so the stale key set
+  // never lingers across sessions.
+  useEffect(() => {
+    setClearedKeys(new Set());
+  }, [live.sessionId]);
+  const completaResponses = useMemo(
+    () => live.responses.filter((row) => !clearedKeys.has(row.key)),
+    [live.responses, clearedKeys],
+  );
+  // Rows of the (500-capped) live list currently hidden by the clear. When >0
+  // the badge mirrors the VISIBLE count so it can never read a phantom number
+  // over an empty list (a clear with a server-capped total used to leave the
+  // badge at `total − 500`). When 0 — nothing cleared, or the cleared rows aged
+  // out of the cap / a reconnect re-keyed them — it falls back to the
+  // authoritative server total, preserving the capped "real total" badge.
+  const hiddenCount = live.responses.length - completaResponses.length;
+  const completaTotal =
+    hiddenCount > 0 ? completaResponses.length : live.responsesTotal;
+  const handleClearCompleta = () =>
+    setClearedKeys(new Set(live.responses.map((row) => row.key)));
+
   // Export `↓ .txt` (Story 3.5): paths exist only once a session does. NOT gated
   // on isLive: export works DURING the lote (AC 2) and after.
   const exportBase =
@@ -177,6 +209,8 @@ export default function EnvioPage() {
           <ResponseColumns
             cc={live.cc}
             ccTotal={live.ccNew}
+            completaResponses={completaResponses}
+            completaTotal={completaTotal}
             exportPathCompleta={exportCompleta}
             exportPathFiltrada={exportFiltrada}
             exportPathFiltradaCompleta={exportFiltradaCompleta}
@@ -184,18 +218,22 @@ export default function EnvioPage() {
             responses={live.responses}
             responsesOkTotal={live.responsesOkTotal}
             responsesTotal={live.responsesTotal}
+            onClearCompleta={handleClearCompleta}
           />
         </div>
         <ResponseTabs
           cc={live.cc}
           ccTotal={live.ccNew}
           className="lg:hidden"
+          completaResponses={completaResponses}
+          completaTotal={completaTotal}
           exportPathCompleta={exportCompleta}
           exportPathFiltrada={exportFiltrada}
           exportPathFiltradaCompleta={exportFiltradaCompleta}
           responses={live.responses}
           responsesOkTotal={live.responsesOkTotal}
           responsesTotal={live.responsesTotal}
+          onClearCompleta={handleClearCompleta}
         />
       </div>
     </div>

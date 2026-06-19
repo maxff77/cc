@@ -152,6 +152,30 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
+// Footer "Limpiar" (clear-completa-view) — cockpit-only, VIEW-only: it asks the
+// caller to hide the currently-shown Completa rows (the cockpit owns the
+// hidden-keys state). Deliberately NO `trash` icon — it deletes nothing; data
+// stays in Postgres and returns on reload. Disabled when the list is empty.
+function ClearButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label="Limpiar la vista Completa"
+      className="rx-focus inline-flex items-center font-mono text-[11.5px] text-muted transition-colors hover:text-foreground disabled:opacity-40 disabled:hover:text-muted"
+      disabled={disabled}
+      type="button"
+      onClick={onClick}
+    >
+      Limpiar
+    </button>
+  );
+}
+
 // One-line set-relationship legend (kept for Historial detail callers).
 export function ResponseViewsLegend({ className }: { className?: string }) {
   return (
@@ -174,6 +198,7 @@ function ResponsePanel({
   emptyText,
   rows,
   exportPath,
+  onClear,
   listClassName,
   className,
 }: {
@@ -183,6 +208,8 @@ function ResponsePanel({
   emptyText: string;
   rows: RowData[];
   exportPath?: string;
+  // Present ⇒ render a "Limpiar" button in the footer (Completa, cockpit only).
+  onClear?: () => void;
   listClassName?: string;
   className?: string;
 }) {
@@ -200,9 +227,19 @@ function ResponsePanel({
         </div>
       )}
       <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
-      {exportPath && (
-        <div className="border-t border-border px-3 py-2">
-          <ExportLink path={exportPath} />
+      {(exportPath || onClear) && (
+        // `onClear` (Completa) splits the row: Limpiar left, ↓ .txt right. The
+        // other panels keep the export left-aligned exactly as before.
+        <div
+          className={clsx(
+            "flex items-center gap-2 border-t border-border px-3 py-2",
+            onClear && "justify-between",
+          )}
+        >
+          {onClear && (
+            <ClearButton disabled={rows.length === 0} onClick={onClear} />
+          )}
+          {exportPath && <ExportLink path={exportPath} />}
         </div>
       )}
     </div>
@@ -214,6 +251,7 @@ export function CompletaPanel({
   total,
   header = true,
   exportPath,
+  onClear,
   listClassName,
   className,
 }: {
@@ -221,6 +259,7 @@ export function CompletaPanel({
   total: number;
   header?: boolean;
   exportPath?: string;
+  onClear?: () => void;
   listClassName?: string;
   className?: string;
 }) {
@@ -233,6 +272,7 @@ export function CompletaPanel({
       header={header ? "Completa" : undefined}
       listClassName={listClassName}
       rows={completaRows(responses)}
+      onClear={onClear}
     />
   );
 }
@@ -306,6 +346,14 @@ interface ResponseViewsProps {
   exportPathCompleta?: string;
   exportPathFiltradaCompleta?: string;
   exportPathFiltrada?: string;
+  // Cockpit-only (clear-completa-view): an alternate row list + total feeding
+  // ONLY the Completa panel, so "Limpiar" hides rows from Completa without
+  // touching Aprobadas (which filters the same full `responses`). Absent in
+  // Historial/admin ⇒ Completa falls back to `responses`/`responsesTotal` and
+  // shows no clear button.
+  completaResponses?: ResponseRow[];
+  completaTotal?: number;
+  onClearCompleta?: () => void;
   className?: string;
   // `fill` (cockpit): the parent is height-capped to the viewport, so stretch
   // the panels to fill it (1fr rows) and let each list flex-scroll inside its
@@ -326,6 +374,9 @@ export function ResponseColumns({
   exportPathCompleta,
   exportPathFiltradaCompleta,
   exportPathFiltrada,
+  completaResponses,
+  completaTotal,
+  onClearCompleta,
   className,
   fill,
 }: ResponseViewsProps) {
@@ -345,8 +396,9 @@ export function ResponseColumns({
         className={panelClassName}
         exportPath={exportPathCompleta}
         listClassName={listClassName}
-        responses={responses}
-        total={responsesTotal}
+        responses={completaResponses ?? responses}
+        total={completaTotal ?? responsesTotal}
+        onClear={onClearCompleta}
       />
       <FiltradaConResponsePanel
         className={panelClassName}
@@ -380,13 +432,21 @@ export function ResponseTabs({
   exportPathCompleta,
   exportPathFiltradaCompleta,
   exportPathFiltrada,
+  completaResponses,
+  completaTotal,
+  onClearCompleta,
   className,
 }: ResponseViewsProps) {
   const [tab, setTab] = useState<TabId>("completa");
 
   const TABS: { id: TabId; label: string; count: number; tone?: "success" }[] =
     [
-      { id: "completa", label: "Completa", count: responsesTotal },
+      // The Completa tab badge mirrors the panel total so it drops on Limpiar.
+      {
+        id: "completa",
+        label: "Completa",
+        count: completaTotal ?? responsesTotal,
+      },
       {
         id: "con-response",
         label: "Aprobadas",
@@ -428,8 +488,9 @@ export function ResponseTabs({
             exportPath={exportPathCompleta}
             header={false}
             listClassName={TAB_LIST}
-            responses={responses}
-            total={responsesTotal}
+            responses={completaResponses ?? responses}
+            total={completaTotal ?? responsesTotal}
+            onClear={onClearCompleta}
           />
         )}
         {tab === "con-response" && (
