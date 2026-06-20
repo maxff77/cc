@@ -1,0 +1,50 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2026-06-20T00:00:00Z",
+    "last_updated": "2026-06-20T00:00:00Z",
+    "completed": "2026-06-20T00:00:00Z"
+  },
+  "mode": "initial_scan",
+  "scan_level": "deep",
+  "project_root": "/Users/pedro/Documents/git/Prueba/cc",
+  "project_knowledge": "/Users/pedro/Documents/git/Prueba/cc/docs",
+  "repository_type": "multi-part",
+  "project_parts": [
+    {
+      "part_id": "backend",
+      "project_type_id": "backend",
+      "display_name": "FastAPI backend + send/capture engine",
+      "root_path": "backend/",
+      "primary_tech": "Python 3.12 / FastAPI / async SQLAlchemy / PostgreSQL / Telethon"
+    },
+    {
+      "part_id": "frontend",
+      "project_type_id": "web",
+      "display_name": "Next.js cockpit + admin SPA",
+      "root_path": "frontend/",
+      "primary_tech": "Next.js 16 / React 19 / HeroUI 3 / TanStack Query"
+    }
+  ],
+  "completed_steps": [
+    {"step": "step_1", "status": "completed", "summary": "Classified as multi-part with 2 parts (backend + frontend)"},
+    {"step": "step_3", "status": "completed", "summary": "Tech stack: FastAPI/PostgreSQL backend, Next.js frontend"},
+    {"step": "step_8", "status": "completed", "summary": "architecture.md written (both parts + integration + deploy)"},
+    {"step": "step_9", "status": "completed", "summary": "data-models.md (17 tables) + api-contracts.md written"},
+    {"step": "step_10", "status": "completed", "summary": "index.md master index generated"},
+    {"step": "step_12", "status": "completed", "summary": "Lean doc suite complete; README + project-context.md + CLAUDE.md refreshed"}
+  ],
+  "current_step": "completed",
+  "outputs_generated": [
+    "docs/index.md",
+    "docs/architecture.md",
+    "docs/data-models.md",
+    "docs/api-contracts.md",
+    "docs/project-scan-report.json",
+    "README.md",
+    "_bmad-output/project-context.md",
+    "CLAUDE.md"
+  ],
+  "notes": "Lean scope chosen by user. Alembic head f6a2d9c4e1b7. Legacy root app (app.py/core.py/auto_sender.py/static/respuestas/) is dead code, excluded from production docs.",
+  "resume_instructions": "Workflow complete. Re-run /bmad-document-project and choose Re-scan to refresh."
+}
