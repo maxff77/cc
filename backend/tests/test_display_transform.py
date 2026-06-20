@@ -6,47 +6,48 @@ from app.core.display_transform import display_transform
 @pytest.mark.parametrize(
     "text,cookie_mode,expected",
     [
-        # Approved (full reply) → canonical bare status line
+        # Approved — exact production shape: keep CC, drop Response/Removed
+        (
+            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada correctamente. | Removed: ✅ Removido",
+            True,
+            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅",
+        ),
+        # Approved + Time — Time is dropped too (only CC + Status kept)
         (
             "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada. | Removed: ✅\n⌿ Time: 32.95s",
             True,
-            "⌿ Status: Approved ✅",
+            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅",
         ),
-        # Declined (full reply) → canonical bare status line
+        # Declined WITH a CC line → keep CC + status
         (
             "☇ CC: 377481016138023|05|2033|7050\n⌿ Status: Declined ❌\n⌿ Response: Tarjeta inexistente.\n⌿ Time: 28.14s",
             True,
+            "☇ CC: 377481016138023|05|2033|7050\n⌿ Status: Declined ❌",
+        ),
+        # Declined with NO CC line → just the status line
+        (
+            "⌿ Status: Declined ❌\n⌿ Response: Tarjeta inexistente / datos inválidos. | Removed: ✅ Removido",
+            True,
             "⌿ Status: Declined ❌",
         ),
-        # Approved, no time
-        (
-            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada. | Removed: ✅",
-            True,
-            "⌿ Status: Approved ✅",
-        ),
-        # Inline ☇/⌿ separators (single line) still classify correctly
+        # Inline ☇/⌿ separators (single line) → CC terminates before Status
         (
             "☇ CC: 123|01|2030|456 ⌿ Status: Approved ✅ ⌿ Response: ok",
             True,
-            "⌿ Status: Approved ✅",
+            "☇ CC: 123|01|2030|456\n⌿ Status: Approved ✅",
         ),
-        # Trailing content after the glyph is dropped — output stays bare
+        # Approved with no CC line at all → just the status line
         (
             "⌿ Status: Approved ✅ trailing junk here",
             True,
             "⌿ Status: Approved ✅",
         ),
         # Near-miss token (NOT exact "approved") → engine treats as dead cookie,
-        # so display must NOT collapse it to Approved; pass through raw.
+        # so display must NOT collapse it; pass through raw.
         (
-            "⌿ Status: Approvedance ✅\n⌿ Time: 1s",
+            "☇ CC: 1|01|2030|2\n⌿ Status: Approvedance ✅\n⌿ Time: 1s",
             True,
-            "⌿ Status: Approvedance ✅\n⌿ Time: 1s",
-        ),
-        (
-            "⌿ Status: Declinedxyz ❌",
-            True,
-            "⌿ Status: Declinedxyz ❌",
+            "☇ CC: 1|01|2030|2\n⌿ Status: Approvedance ✅\n⌿ Time: 1s",
         ),
         # cookie error / anything else → pass through raw
         (
@@ -54,8 +55,7 @@ from app.core.display_transform import display_transform
             True,
             "⌿ Status: ❌ Cookies Inválidas",
         ),
-        # Non-cookie-mode session → raw (this is what made the old gate-name
-        # guard a no-op: the transform now keys off cookie_mode, not the name).
+        # Non-cookie-mode session → raw (keys off cookie_mode, not gate name)
         (
             "☇ CC: 123|01|2030|456\n⌿ Status: Approved ✅",
             False,
