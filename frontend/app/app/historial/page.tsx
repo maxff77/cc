@@ -226,11 +226,19 @@ export default function HistorialPage() {
       {gates.map((gate) => (
         <SectionCard
           key={gate.name ?? "__null__"}
-          legend={gate.display_value}
+          legend={gate.name ?? gate.display_value}
           legendAs="h2"
           legendRight={<CountBadge tone="success" value={gate.count} />}
           padding="none"
         >
+          {/* Gate NAME is the engraved legend; the "Comando visible"
+              (display_value) rides below as a muted subtitle. "Sin gate"
+              (name null) is self-describing, so it carries no subtitle. */}
+          {gate.name !== null && (
+            <div className="border-b border-separator px-3 py-1.5 font-mono text-[11px] text-muted">
+              {gate.display_value}
+            </div>
+          )}
           <div className="rx-scroll max-h-[60vh] overflow-y-auto">
             {gate.items.map((item) => (
               <HistoryRow
@@ -253,7 +261,7 @@ export default function HistorialPage() {
                   setConfirm({
                     kind: "gate",
                     name: gate.name as string,
-                    label: gate.display_value,
+                    label: gate.name ?? gate.display_value,
                   });
                 }}
               >
