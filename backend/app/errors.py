@@ -522,6 +522,19 @@ def key_revoked() -> AppError:
     )
 
 
+# --- Codes the client history feature defines (PR-2) ---------------------
+
+
+def history_response_not_found() -> AppError:
+    # Unknown id, another tenant's id, id > int4 — existence is never leaked
+    # (idiom session_not_found); the id is never logged.
+    return AppError(
+        status_code=404,
+        code="history_response_not_found",
+        message="Esa respuesta no existe.",
+    )
+
+
 # --- Codes the cookie-vault feature defines (Phase 1) --------------------
 
 

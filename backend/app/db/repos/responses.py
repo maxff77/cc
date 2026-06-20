@@ -10,10 +10,13 @@ a capture-session id the caller already resolved tenant-scoped.
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import func, select, update
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Response
+from app.db.models import Batch, Response
 from app.db.repos import tenants as tenants_repo
 
 # Row discriminator — plain strings, no DB enum (2.2 decision).
@@ -442,3 +445,192 @@ async def list_cc(
         limit,
         cleared_response_id=cleared_response_id,
     )
+
+
+# --- PR-2: approved-✅ history grouped by gate -------------------------------
+#
+# A read + three destructive deletes over the tenant's PERSISTED ``responses``
+# rows directly — fully independent of the cockpit "Limpiar" cutoff (these NEVER
+# touch ``cleared_response_id``). A message is "approved" iff its LATEST
+# ``kind='full'`` revision is ``STATUS_OK`` (a ✅→❌→✅ message stays in; a
+# ✅→❌ message drops out; a ⏳-only message never wrote a 'full' row at all).
+# Grouped + keyed on the batch's ``gate_name`` / ``gate_display_value`` snapshot
+# ONLY — ``gate_value`` is owner-only and is NEVER selected here.
+
+
+@dataclass
+class HistoryMessage:
+    """One approved-✅ message in the tenant's history.
+
+    ``id`` is the latest ✅ revision's ``responses.id`` — the delete handle the
+    router returns and ``delete_message_group`` resolves. ``gate_name`` is
+    ``None`` for a message whose batch was SET-NULL'd / never had a gate (the
+    trailing "Sin gate" group). ``gate_value`` is deliberately absent (owner-only)."""
+
+    id: int
+    text: str
+    created_at: datetime
+    gate_name: str | None
+    gate_display_value: str | None
+    cc: list[str] = field(default_factory=list)
+
+
+async def history_grouped(
+    session: AsyncSession, tenant_id: int
+) -> list[HistoryMessage]:
+    """Every approved-✅ message of ``tenant_id``, newest-first, with its cc.
+
+    The LATEST ``kind='full'`` revision per ``(chat_id, message_id)`` is picked
+    with ``DISTINCT ON ((chat_id, message_id)) ORDER BY chat_id, message_id,
+    id DESC``; only those whose ``status == STATUS_OK`` are kept (so a message
+    whose terminal revision is ❌ is excluded). ``Batch`` is LEFT JOIN'd
+    (``responses.batch_id`` is SET-NULL on batch cleanup) for the client-visible
+    ``gate_name`` / ``gate_display_value`` snapshot. Each message's cc values
+    (its ``kind='cc'`` rows sharing the same ``(chat_id, message_id)``) are
+    attached. NO ``cleared_response_id`` filter — Limpiar never affects history.
+
+    Returns the messages newest-first (by the ✅ revision's ``id``). The router
+    shapes them into the gate groups + contract; this stays a flat, ordered list
+    so the grouping/ordering policy lives in ONE place (the router)."""
+    # DISTINCT ON the per-chat message identity, newest 'full' revision first.
+    latest = (
+        select(
+            Response.id,
+            Response.chat_id,
+            Response.message_id,
+            Response.status,
+            Response.text,
+            Response.created_at,
+            Response.batch_id,
+        )
+        .where(
+            Response.tenant_id == tenant_id,
+            Response.kind == KIND_FULL,
+        )
+        .distinct(Response.chat_id, Response.message_id)
+        .order_by(
+            Response.chat_id,
+            Response.message_id,
+            Response.id.desc(),
+        )
+        .subquery()
+    )
+    # Keep only messages whose LATEST full revision is ✅, attach the gate snapshot.
+    stmt = (
+        select(
+            latest.c.id,
+            latest.c.chat_id,
+            latest.c.message_id,
+            latest.c.text,
+            latest.c.created_at,
+            Batch.gate_name,
+            Batch.gate_display_value,
+        )
+        .select_from(latest)
+        .outerjoin(Batch, Batch.id == latest.c.batch_id)
+        .where(latest.c.status == STATUS_OK)
+        .order_by(latest.c.id.desc())  # newest approved message first
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return []
+
+    # Attach cc per message: every 'cc' row of this tenant keyed by its
+    # (chat_id, message_id). One query, grouped in memory by the message key.
+    keys = {(row.chat_id, row.message_id) for row in rows}
+    cc_stmt = (
+        select(Response.chat_id, Response.message_id, Response.text, Response.id)
+        .where(
+            Response.tenant_id == tenant_id,
+            Response.kind == KIND_CC,
+        )
+        .order_by(Response.id)
+    )
+    cc_by_message: dict[tuple[int | None, int], list[str]] = {}
+    for cc_row in (await session.execute(cc_stmt)).all():
+        key = (cc_row.chat_id, cc_row.message_id)
+        if key in keys:
+            cc_by_message.setdefault(key, []).append(cc_row.text)
+
+    return [
+        HistoryMessage(
+            id=row.id,
+            text=row.text,
+            created_at=row.created_at,
+            gate_name=row.gate_name,
+            gate_display_value=row.gate_display_value,
+            cc=cc_by_message.get((row.chat_id, row.message_id), []),
+        )
+        for row in rows
+    ]
+
+
+async def delete_message_group(
+    session: AsyncSession, tenant_id: int, response_id: int
+) -> int:
+    """Delete EVERY ``responses`` row of one message (full revisions + cc).
+
+    Resolves ``(tenant_id, chat_id, message_id)`` from ``response_id`` first; if
+    the row is missing OR belongs to another tenant, returns ``-1`` (the router
+    maps that to the SAME 404 as any not-found — no existence leak). Otherwise
+    DELETEs every row sharing that ``(tenant_id, chat_id, message_id)`` and
+    returns the rowcount. Only ``responses`` rows are touched — never
+    ``batches`` / ``send_log`` / ``batch_lines``. Flush-not-commit."""
+    owner = (
+        await session.execute(
+            select(Response.tenant_id, Response.chat_id, Response.message_id).where(
+                Response.id == response_id
+            )
+        )
+    ).first()
+    if owner is None or owner.tenant_id != tenant_id:
+        return -1
+    result = await session.execute(
+        delete(Response).where(
+            Response.tenant_id == tenant_id,
+            Response.chat_id.is_(owner.chat_id)
+            if owner.chat_id is None
+            else Response.chat_id == owner.chat_id,
+            Response.message_id == owner.message_id,
+        )
+    )
+    await session.flush()
+    return result.rowcount
+
+
+async def delete_by_gate(
+    session: AsyncSession, tenant_id: int, gate_name: str
+) -> int:
+    """Delete every ``responses`` row of ``tenant_id`` whose batch's
+    ``gate_name`` matches (the per-gate "borrar historial").
+
+    Scoped via ``batch_id IN (SELECT batches.id WHERE tenant_id AND gate_name)``
+    — a tenant-scoped subquery so a foreign batch can never be reached. Rows with
+    ``batch_id IS NULL`` (the "Sin gate" group) match no named gate and survive.
+    An unknown name deletes 0. Only ``responses`` rows are touched.
+    Flush-not-commit."""
+    batch_ids = (
+        select(Batch.id)
+        .where(Batch.tenant_id == tenant_id, Batch.gate_name == gate_name)
+        .scalar_subquery()
+    )
+    result = await session.execute(
+        delete(Response).where(
+            Response.tenant_id == tenant_id,
+            Response.batch_id.in_(batch_ids),
+        )
+    )
+    await session.flush()
+    return result.rowcount
+
+
+async def delete_all_for_tenant(session: AsyncSession, tenant_id: int) -> int:
+    """Delete EVERY ``responses`` row of ``tenant_id`` (the "borrar todo").
+
+    Tenant-scoped — another tenant's rows are untouched. Only ``responses`` rows
+    are touched; the batches/lines/send_log stay. Flush-not-commit."""
+    result = await session.execute(
+        delete(Response).where(Response.tenant_id == tenant_id)
+    )
+    await session.flush()
+    return result.rowcount
