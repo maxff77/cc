@@ -19,6 +19,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Select } from "@/components/ui/select";
 import { Area } from "@/components/ui/area";
 import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
 import { Notice } from "@/components/ui/notice";
 
 // Mirrors backend PublicGateOut (snake_case end-to-end). The real command
@@ -283,6 +284,22 @@ export function SendForm({
     mutation.mutate({ text, gate_id: gateId });
   }
 
+  // "Pegar" shortcut (Cliente Redesign): append the clipboard onto the paste box.
+  // ponytail: best-effort — on an insecure context or denied permission the
+  // Clipboard API is absent/throws, and the native textarea paste still works.
+  async function pasteFromClipboard() {
+    try {
+      const clip = await navigator.clipboard?.readText();
+
+      if (clip) {
+        setText(text ? `${text}\n${clip}` : clip);
+        if (textError) setTextError(null);
+      }
+    } catch {
+      /* clipboard unavailable / denied — manual paste still works */
+    }
+  }
+
   const categoryOptions = useMemo(
     () => categories.map((name) => ({ id: name, label: name })),
     [categories],
@@ -384,17 +401,29 @@ export function SendForm({
               )}
             </div>
           )}
-          <Area
-            error={textError}
-            label="Líneas"
-            placeholder="Pega tus líneas"
-            rows={5}
-            value={text}
-            onChange={(v) => {
-              setText(v);
-              if (textError) setTextError(null);
-            }}
-          />
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <LabelCaps>Líneas</LabelCaps>
+              <button
+                className="rx-focus inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-accent transition-colors hover:text-foreground"
+                type="button"
+                onClick={pasteFromClipboard}
+              >
+                <Icon name="copy" size={13} />
+                Pegar
+              </button>
+            </div>
+            <Area
+              error={textError}
+              placeholder="Pega tus líneas"
+              rows={5}
+              value={text}
+              onChange={(v) => {
+                setText(v);
+                if (textError) setTextError(null);
+              }}
+            />
+          </div>
           {/* The commit action wears the brand gradient (a text-free-ish commit
             moment); appending while 'stopping' is rejected server-side. */}
           <Btn
@@ -408,7 +437,11 @@ export function SendForm({
             type="submit"
             variant="primary"
           >
-            {mutation.isPending ? "Enviando…" : "Enviar"}
+            {mutation.isPending
+              ? "Enviando…"
+              : isLive
+                ? "Anexar a la cola"
+                : "Enviar lote"}
           </Btn>
         </form>
       </SectionCard>

@@ -10,6 +10,7 @@
 // paused/stopping). The header StatePill mirrors `batch.state`, hidden at idle.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
 
@@ -22,6 +23,7 @@ import { Icon } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
 import { PlanBadge } from "@/components/ui/plan-badge";
+import { KeyModal } from "@/components/keys/key-modal";
 
 interface Me {
   role: string;
@@ -115,6 +117,23 @@ export function ClientNav() {
     queryKey: ["me"],
     queryFn: () => api.get<Me>("/api/auth/me"),
   });
+  // Cliente Redesign: "Canjear key" lives in a modal opened from the nav, and
+  // Soporte + Cerrar sesión collapse into the ⋯ overflow menu.
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Escape closes the overflow menu (click-outside is the backdrop button).
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   const role = me.data?.role;
   const navItems: readonly NavLink[] =
     role === "owner"
@@ -199,57 +218,94 @@ export function ClientNav() {
           {!isStaff && (
             <PlanBadge expiresAt={me.data?.expires_at ?? null} />
           )}
-          {/* Permanent seller/support contact (clients only) — reachable any
-              time. Desktop only here; mobile gets it in the bottom nav below. */}
-          {!isStaff &&
-            siteConfig.contacts.map((c) => (
-              <Btn
-                key={c.handle}
-                className="hidden lg:inline-flex"
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  window.open(
-                    telegramHref(c.handle),
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-              >
-                @{c.handle}
-              </Btn>
-            ))}
-          <ThemeToggle />
-          {/* Icon-only on phones (text returns at sm+) so the header clears the
-              plan badge + theme toggle without overflow on a ~360px screen. */}
-          <Btn
-            aria-label="Cerrar sesión"
-            size="sm"
-            variant="secondary"
-            onClick={logout}
+          {/* Canjear key → modal (Cliente Redesign). Icon-only on phones (the
+              label returns at sm+) so the header clears the plan badge + theme
+              toggle + ⋯ without overflow on a ~360px screen. */}
+          <button
+            className="tap-44 rx-focus inline-flex h-[34px] items-center gap-2 rounded-[var(--radius-field)] border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[var(--accent-soft)] px-3 font-display text-[13px] font-semibold text-foreground transition-[transform] duration-150 hover:-translate-y-px"
+            type="button"
+            onClick={() => setKeyOpen(true)}
           >
-            <Icon name="logout" size={16} />
-            <span className="hidden sm:inline">Cerrar sesión</span>
-          </Btn>
+            <Icon className="text-accent" name="key" size={15} />
+            <span className="hidden sm:inline">Canjear key</span>
+          </button>
+          <ThemeToggle />
+          {/* Overflow ⋯ — Soporte (clients only) + Cerrar sesión. Consolidates
+              what used to be two standalone header buttons. */}
+          <div className="relative">
+            <Btn
+              aria-label="Más"
+              size="sm"
+              variant="secondary"
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <Icon name="dots" size={18} />
+            </Btn>
+            {menuOpen && (
+              <>
+                <button
+                  aria-label="Cerrar menú"
+                  className="fixed inset-0 z-40 cursor-default"
+                  tabIndex={-1}
+                  type="button"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div className="rx-enter glow-soft absolute right-0 top-[calc(100%+8px)] z-50 w-56 rounded-[var(--radius)] border border-[var(--border-strong)] bg-surface-secondary p-1.5">
+                  {!isStaff && siteConfig.contacts[0] && (
+                    <button
+                      className="tap-44 rx-focus flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2.5 text-left text-[13.5px] text-foreground transition-colors hover:bg-surface-tertiary"
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        window.open(
+                          telegramHref(siteConfig.contacts[0].handle),
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
+                    >
+                      <Icon className="text-accent" name="phone" size={17} />
+                      Soporte · @{siteConfig.contacts[0].handle}
+                    </button>
+                  )}
+                  {!isStaff && (
+                    <div className="mx-2 my-1 h-px bg-[var(--separator)]" />
+                  )}
+                  <button
+                    className="tap-44 rx-focus flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2.5 text-left text-[13.5px] text-danger transition-colors hover:bg-surface-tertiary"
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      logout();
+                    }}
+                  >
+                    <Icon name="logout" size={17} />
+                    Cerrar sesión
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Mobile: fixed bottom nav (the cockpit never scrolls away). */}
+      {/* Mobile: fixed bottom nav (the cockpit never scrolls away). Clients get a
+          Key entry that opens the claim modal (Soporte now lives in the header ⋯
+          menu); staff keep their cross-links and no Key. */}
       <nav className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-around border-t border-border bg-background pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden">
         {items("flex-1 text-center")}
-        {/* Always-on support contact on mobile, clients only (header link is
-            desktop-only). Hidden for staff so their nav doesn't overflow. */}
-        {!isStaff && siteConfig.contacts[0] && (
-          <a
+        {!isStaff && (
+          <button
             className="tap-44 rx-focus relative flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
-            href={telegramHref(siteConfig.contacts[0].handle)}
-            rel="noopener noreferrer"
-            target="_blank"
+            type="button"
+            onClick={() => setKeyOpen(true)}
           >
-            Soporte
-          </a>
+            Key
+          </button>
         )}
       </nav>
+
+      <KeyModal open={keyOpen} onClose={() => setKeyOpen(false)} />
     </>
   );
 }

@@ -3,7 +3,7 @@
 // Envío surface (Story 2.2; controls + FloodWait notice since 2.3; live response
 // views since 3.2). Live state is driven ONLY by the WS store (UX-DR12 — no
 // optimistic state beyond the server-confirmed POST seed). Layout (Ranger-X
-// handoff): a 320px cockpit column (ring → session → controls → form) that
+// handoff): a 360px cockpit column (ring → session → controls → form) that
 // scrolls within a viewport-height grid, beside the three result panels —
 // side-by-side on desktop, segmented tabs on phone/tablet. The grid is capped to
 // the viewport on lg so the page never grows into a runaway scroll; each pane
@@ -11,11 +11,10 @@
 // the right column passes `fill` so its panels stretch to the cap — lists scroll
 // inside each panel and no dead space opens below short results.
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { clearCockpit, useLiveBatch } from "@/lib/ws";
-import { ClaimKey } from "@/components/keys/claim-key";
 import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { CookiesExhaustedNotice } from "@/components/batch/cookies-exhausted-notice";
@@ -49,7 +48,6 @@ interface GateListResponse {
 
 export default function EnvioPage() {
   const live = useLiveBatch();
-  const queryClient = useQueryClient();
   const gates = useQuery({
     queryKey: ["gates"],
     queryFn: () => api.get<GateListResponse>("/api/gates"),
@@ -150,7 +148,7 @@ export default function EnvioPage() {
   const exportFiltrada = canExport ? `${exportBase}?view=filtrada` : undefined;
 
   return (
-    <div className="grid gap-5 overflow-hidden lg:h-full lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
+    <div className="grid gap-5 overflow-hidden lg:h-full lg:min-h-0 lg:grid-cols-[360px_minmax(0,1fr)]">
       {/* Master — ring, session, controls, form. On wide screens the grid is
           capped to the viewport (≈ chrome offset) and each column scrolls on its
           own, so the page itself never grows into a runaway scroll. Below lg the
@@ -198,16 +196,6 @@ export default function EnvioPage() {
           </Notice>
         )}
         {gates.data && <SendForm gates={gates.data.items} live={live} />}
-
-        {/* Redeem a gift key from the cockpit (active client): +days on the
-            current plan. On success refresh /me so the plan badge updates. */}
-        <SectionCard legend="Canjear key" legendAs="h2">
-          <ClaimKey
-            onClaimed={() =>
-              queryClient.invalidateQueries({ queryKey: ["me"] })
-            }
-          />
-        </SectionCard>
       </div>
 
       {/* Detail — the Completa/Filtrada views the operator watches. Three

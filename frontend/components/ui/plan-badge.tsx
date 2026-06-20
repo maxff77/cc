@@ -33,7 +33,9 @@ export function PlanBadge({ expiresAt }: { expiresAt: string | null }) {
   // phrase instead of the bare "12 días"; StatePill stays reused as-is.
   return (
     <span aria-label={aria} className="inline-flex" role="img">
-      <StatePill tone={tone}>{label}</StatePill>
+      <StatePill dot="static" tone={tone}>
+        {label}
+      </StatePill>
     </span>
   );
 }
