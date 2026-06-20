@@ -50,6 +50,7 @@ from app.db.repos import gate_cookies as gate_cookies_repo
 from app.db.repos import gates as gates_repo
 from app.errors import (
     cookie_conflict_retry,
+    cookie_delete_failed,
     cookie_limit_reached,
     cookie_not_found,
     gate_not_cookie_mode,
@@ -281,7 +282,21 @@ async def delete_cookie(
     """
     if not 0 < cookie_id <= _PG_INT_MAX:
         raise cookie_not_found()
-    deleted = await gate_cookies_repo.delete_by_id(session, user.tenant_id, cookie_id)
-    if not deleted:
-        raise cookie_not_found()
-    await session.commit()
+    try:
+        deleted = await gate_cookies_repo.delete_by_id(
+            session, user.tenant_id, cookie_id
+        )
+        if not deleted:
+            raise cookie_not_found()
+        await session.commit()
+    except IntegrityError:
+        # Defense-in-depth: ``batch_lines.failed_cookie_id`` is ON DELETE SET
+        # NULL, so a referenced cookie deletes cleanly — but never let a bare
+        # IntegrityError surface as an unmapped 500 (the original "error
+        # inesperado"). Roll back the aborted txn and map it. The id is never
+        # logged.
+        await session.rollback()
+        # ``from None`` — translate the DB error into the domain error without
+        # chaining the raw IntegrityError (value-free; nothing from the cookie
+        # leaks into a traceback).
+        raise cookie_delete_failed() from None

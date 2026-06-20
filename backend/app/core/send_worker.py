@@ -904,8 +904,8 @@ async def _apply_verdict(verdict: CookieVerdict) -> None:
       next line (capture saved Filtrada+ok / the rejected full row).
     - ``format_error`` ⇒ the line is already ``failed`` by capture; clear the
       await; next line (cookie NOT rotated).
-    - ``cookie_dead`` ⇒ ``mark_dead`` the current cookie + reset intent +
-      re-queue the SAME line at its position; the next ``step()`` resends with
+    - ``cookie_dead`` ⇒ HARD-DELETE the sent cookie from the vault + reset intent
+      + re-queue the SAME line at its position; the next ``step()`` resends with
       the next-oldest active cookie. If none remain ⇒ pause ``cookies_exhausted``.
     """
     line_id = verdict.line_id
@@ -997,17 +997,21 @@ async def _apply_verdict(verdict: CookieVerdict) -> None:
             return
 
         # 🔒 cookie_dead — rotate ATOMICALLY in THIS one txn (still holding the
-        # batch FOR UPDATE from the attempt-fence above). Mark the cookie that
-        # was ACTUALLY sent for this attempt (``BatchLine.failed_cookie_id``,
+        # batch FOR UPDATE from the attempt-fence above). HARD-DELETE the cookie
+        # that was ACTUALLY sent for this attempt (``BatchLine.failed_cookie_id``,
         # stamped by ``_arm_await``) — NOT a re-derived "oldest active" across
         # unlocked sessions, which could burn a healthy cookie if the vault
-        # changed during the 90s await. ``count_active_for`` in the SAME session
-        # excludes the just-dead row (the ``status`` filter sees the flushed
-        # ``mark_dead``), so the exhaustion decision is consistent.
+        # changed during the 90s await. The owner chose to PURGE a dead cookie
+        # from the vault (not soft-flag it); the ``ON DELETE SET NULL`` FK nulls
+        # the reference on this (and any) line. ``count_active_for`` in the SAME
+        # session sees the row gone, so the exhaustion decision is consistent.
         gate_id = batch.gate_id
         dead_cookie_id = line.failed_cookie_id
         if dead_cookie_id is not None:
-            await gate_cookies_repo.mark_dead(session, dead_cookie_id, tenant_id)
+            await gate_cookies_repo.delete_by_id(session, tenant_id, dead_cookie_id)
+            # Mirror the DB SET NULL in the ORM so re-queueing the line below
+            # cannot emit a stale-id UPDATE; the next ``_arm_await`` re-stamps it.
+            line.failed_cookie_id = None
         remaining = (
             await gate_cookies_repo.count_active_for(session, tenant_id, gate_id)
             if gate_id is not None
@@ -1016,8 +1020,7 @@ async def _apply_verdict(verdict: CookieVerdict) -> None:
         # Re-queue the SAME line at its position with its write-ahead intent
         # reset (capture already persisted the dead attempt's terminal full row,
         # so its later edits resolve via the OLD pair). The dead cookie is
-        # already flushed dead in this txn, so the next ``step()`` cannot
-        # re-pick it.
+        # already deleted in this txn, so the next ``step()`` cannot re-pick it.
         await batches_repo.requeue_line_with_intent_reset(session, line)
         if remaining == 0:
             # No active cookie left ⇒ pause ``cookies_exhausted`` (the re-queued

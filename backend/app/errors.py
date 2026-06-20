@@ -581,6 +581,19 @@ def cookie_conflict_retry() -> AppError:
     )
 
 
+def cookie_delete_failed() -> AppError:
+    # Defense-in-depth for DELETE: the FK ``failed_cookie_id`` is
+    # ``ON DELETE SET NULL``, so a referenced cookie deletes cleanly — but should
+    # any future/edge IntegrityError fire, map it to a retryable conflict instead
+    # of letting the bare exception become an unmapped 500 (the "error inesperado"
+    # this feature exists to kill). Value-free.
+    return AppError(
+        status_code=409,
+        code="cookie_delete_failed",
+        message="No pudimos eliminar la cookie por una operación simultánea. Vuelve a intentar.",
+    )
+
+
 # --- Cookie-mode pause reasons (cookie rotation feature, Phase 2) ---------
 #
 # NOT ``AppError`` factories: a ``cookies_exhausted`` / ``verdict_timeout``

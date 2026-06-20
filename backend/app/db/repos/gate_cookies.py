@@ -16,7 +16,7 @@ unique violation RAISE to the caller, which rolls back and re-fetches via
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import GateCookie
@@ -137,10 +137,12 @@ async def delete_by_id(
 # Used by the send worker's cookie-mode branch, never by request handlers. The
 # active cookie for a cookie-mode send is the OLDEST ``status='active'`` row by
 # ``id ASC`` for ``(tenant_id, gate_id)`` (FIFO). On a cookie-dead verdict the
-# worker ``mark_dead``s the current cookie (committed BEFORE the next pick, or
-# in one txn that marks dead THEN selects the next excluding the just-marked id)
-# so a just-dead cookie can never be re-picked. The composite index
-# ``ix_gate_cookies_tenant_gate_status_id`` keeps this off a full scan.
+# worker HARD-DELETES the current cookie (``delete_by_id``) in the same txn
+# BEFORE counting/re-picking, so a just-purged cookie can never be re-picked —
+# its row is gone (the owner chose to PURGE dead cookies, not soft-flag them).
+# The composite index ``ix_gate_cookies_tenant_gate_status_id`` keeps this off a
+# full scan; the ``status='active'`` filter stays as defensive belt-and-braces
+# (all surviving rows are active).
 
 
 async def get_active_for_rotation(
@@ -157,10 +159,10 @@ async def get_active_for_rotation(
     loser skips to the next active cookie instead of blocking. ``None`` ⇒ no
     active cookie remains (exhaustion).
 
-    ``exclude_id`` lets the rotation resend run ``mark_dead`` + this pick in ONE
-    transaction: pass the just-marked cookie's id so the next-oldest active row
-    is chosen even before the ``status='dead'`` write is visible to a fresh
-    snapshot (the just-dead cookie can never be re-picked).
+    ``exclude_id`` optionally excludes one cookie id from the pick — reserved for
+    a same-txn rotation that wants to skip a just-handled cookie before its write
+    is visible to a fresh snapshot. The current hard-delete rotation does not need
+    it (the purged row is simply gone), but it is kept for that pattern.
     """
     stmt = (
         select(GateCookie)
@@ -196,29 +198,3 @@ async def count_active_for(
         )
     )
     return (await session.execute(stmt)).scalar_one()
-
-
-async def mark_dead(
-    session: AsyncSession, cookie_id: int, tenant_id: int
-) -> bool:
-    """Tenant-scoped, idempotent ``status='dead'`` set; ``True`` iff a row matched.
-
-    Tenant-scoped (the ``tenant_id`` predicate makes a foreign id a clean
-    no-op) and idempotent — re-running on an already-dead cookie still matches
-    the row (rowcount 1) but changes nothing, so a replayed cookie-dead verdict
-    never errors. Flush, not commit: the caller (the rotation resend) owns the
-    transaction and decides whether ``mark_dead`` commits before the next pick
-    or rides one txn with ``get_active_for_rotation(exclude_id=cookie_id)``.
-    """
-    stmt = (
-        update(GateCookie)
-        .where(
-            GateCookie.id == cookie_id,
-            GateCookie.tenant_id == tenant_id,
-        )
-        .values(status=COOKIE_DEAD)
-    )
-    result = await session.execute(stmt)
-    await session.flush()
-    rowcount: int = getattr(result, "rowcount", 0) or 0
-    return rowcount > 0

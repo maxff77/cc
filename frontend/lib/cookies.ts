@@ -20,6 +20,12 @@ export const cookiesKey = (gateId: number) => ["cookies", gateId] as const;
 // List a gate's cookies (newest first, masked). The query is enabled only for a
 // real gate id — `enabled: gateId > 0` keeps the hook safe to call before a
 // gate is picked.
+//
+// `refetchOnMount: "always"` overrides the global 30s staleTime: the engine
+// HARD-DELETES cookies during a send (dead-verdict rotation purge), and the
+// CookieManager only mounts while idle or inside the cookies-exhausted notice —
+// so each time it (re)appears the vault must refetch to drop already-purged
+// cookies, not serve a stale cached list.
 export function useListCookies(gateId: number | null) {
   return useQuery({
     queryKey: cookiesKey(gateId ?? 0),
@@ -28,6 +34,7 @@ export function useListCookies(gateId: number | null) {
         `/api/cookies?gate_id=${encodeURIComponent(String(gateId))}`,
       ),
     enabled: gateId != null && gateId > 0,
+    refetchOnMount: "always",
   });
 }
 

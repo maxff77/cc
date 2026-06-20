@@ -138,27 +138,10 @@ async def _drop_gate(category_id: int) -> None:
             .all()
         )
         if gate_ids:
-            # ``BatchLine.failed_cookie_id`` (Phase 2) FKs ``gate_cookies.id`` with
-            # no ON DELETE, so the surviving batch_lines of the still-live
-            # ``client_user`` tenant pin the cookies — NULL the back-references
-            # before deleting the cookies, else the cookie DELETE 23503-violates.
-            cookie_ids = list(
-                (
-                    await session.execute(
-                        select(GateCookie.id).where(
-                            GateCookie.gate_id.in_(gate_ids)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if cookie_ids:
-                await session.execute(
-                    update(BatchLine)
-                    .where(BatchLine.failed_cookie_id.in_(cookie_ids))
-                    .values(failed_cookie_id=None)
-                )
+            # ``BatchLine.failed_cookie_id`` FKs ``gate_cookies.id`` with
+            # ``ON DELETE SET NULL``, so deleting the cookies auto-nulls the
+            # back-references on the surviving ``client_user`` batch_lines — no
+            # manual pre-NULL needed (matches ``test_cookies._drop_gate``).
             await session.execute(
                 delete(GateCookie).where(GateCookie.gate_id.in_(gate_ids))
             )
@@ -544,9 +527,9 @@ async def test_cookie_dead_rotates_to_second_cookie_resend_new_message_id(
     await capture.process_incoming(_verdict_reply(9201, amz_id_1, _COOKIE_DEAD))
     await send_worker._drain_verdicts()
 
-    # The first cookie is now dead; the line is re-queued (same position).
+    # The first cookie is PURGED from the vault; the line is re-queued (same pos).
     cookies = {c.id: c.status for c in await _cookies(cookie_gate["id"])}
-    assert cookies[first] == "dead"
+    assert first not in cookies  # hard-deleted on the dead verdict — gone
     assert cookies[second] == "active"
     lines = await _lines_of(batch_id)
     assert lines[0].state == "queued"  # SAME line re-queued
@@ -583,6 +566,39 @@ async def test_cookie_dead_rotates_to_second_cookie_resend_new_message_id(
 
 
 # =========================================================================
+# (d2) Manual delete of a cookie that a sent line references via
+#      ``failed_cookie_id`` succeeds (204) — the FK is ON DELETE SET NULL, NOT
+#      the old RESTRICT that raised the 500 behind "Ocurrió un error inesperado."
+# =========================================================================
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_delete_cookie_referenced_by_sent_line_returns_204(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """Bug-#1 regression: every cookie-mode send stamps
+    ``BatchLine.failed_cookie_id = <sent cookie>``, so a still-saved cookie is
+    referenced. Deleting it must NOT raise ForeignKeyViolation → unmapped 500;
+    the FK ``ON DELETE SET NULL`` nulls the reference and the delete returns 204."""
+    http, _ = client_user
+    cid = await _add_cookie(http, cookie_gate["id"], f"ck-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+
+    # One send stamps the line's failed_cookie_id with the cookie just sent.
+    assert await send_worker.step() is True
+    lines = await _lines_of(batch_id)
+    assert lines[0].failed_cookie_id == cid  # the line now references the cookie
+
+    # The manual delete must succeed (no 500) — the FK SET NULL releases the ref.
+    res = await http.delete(f"/api/cookies/{cid}")
+    assert res.status_code == 204, res.text
+    assert await _line_failed_cookie_id(lines[0].id) is None  # reference nulled
+    assert await _cookies(cookie_gate["id"]) == []  # gone from the vault
+
+
+# =========================================================================
 # (e) Exhaustion: all-dead → pause cookies_exhausted → add cookie → resume →
 #     the failed line is the very next send (stale future awaiting doesn't skip)
 # =========================================================================
@@ -616,7 +632,7 @@ async def test_all_cookies_dead_pauses_exhausted_then_resume_sends_failed_line(
     ]
     assert paused, "no cookies_exhausted batch.state frame emitted"
     cookies = await _cookies(cookie_gate["id"])
-    assert all(c.status == "dead" for c in cookies)
+    assert cookies == []  # the only cookie was purged → the vault is empty
 
     # The client adds a cookie and resumes — resume must clear the (stale,
     # possibly future) await fields AND re-queue the failed line in ONE txn.
@@ -748,11 +764,11 @@ async def test_replayed_cookie_dead_reply_rotates_once_no_spurious_exhaustion(
     assert await send_worker.step() is True
     amz_id = await _amz_message_id(batch_id)
 
-    # First delivery of the dead reply → rotates (first cookie dead, line queued).
+    # First delivery of the dead reply → rotates (first cookie purged, line queued).
     await capture.process_incoming(_verdict_reply(9601, amz_id, _COOKIE_DEAD))
     await send_worker._drain_verdicts()
     cookies = {c.id: c.status for c in await _cookies(cookie_gate["id"])}
-    assert cookies[first] == "dead" and cookies[second] == "active"
+    assert first not in cookies and cookies[second] == "active"
     lines = await _lines_of(batch_id)
     assert lines[0].state == "queued"
 
@@ -765,7 +781,7 @@ async def test_replayed_cookie_dead_reply_rotates_once_no_spurious_exhaustion(
 
     # The second cookie is STILL active — no spurious second rotation/exhaustion.
     cookies = {c.id: c.status for c in await _cookies(cookie_gate["id"])}
-    assert cookies[first] == "dead" and cookies[second] == "active"
+    assert first not in cookies and cookies[second] == "active"
     batch = await _batch_row(batch_id)
     assert batch.state == "sending"  # not paused cookies_exhausted
     assert batch.pause_reason is None
@@ -1204,9 +1220,9 @@ async def test_cookie_dead_marks_the_sent_cookie_not_oldest_active(
     await send_worker._drain_verdicts()
 
     cookies = {c.id: c.status for c in await _cookies(cookie_gate["id"])}
-    # 🔒 The STAMPED cookie (``first``) is dead — not ``third`` (the post-delete
-    # oldest active), not ``second`` (already gone).
-    assert cookies[first] == "dead"
+    # 🔒 The STAMPED cookie (``first``) is PURGED from the vault — not ``third``
+    # (the post-delete oldest active), not ``second`` (already gone).
+    assert first not in cookies  # the stamped cookie was hard-deleted
     assert cookies.get(third) == "active"
     assert second not in cookies  # deleted mid-await
 

@@ -505,11 +505,14 @@ class BatchLine(Base):
     fail_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # The cookie that produced this line's last dead verdict (Phase 2 cookie
     # rotation) — diagnostic/audit only, FK to ``gate_cookies`` with NO
-    # relationship and no ``ondelete`` (the vault outlives a retired cookie the
-    # same way it outlives a retired gate). NULL until a cookie-dead verdict
-    # rotates the line.
+    # relationship. ``ondelete='SET NULL'`` is LOAD-BEARING: a cookie is HARD-
+    # DELETED both on manual delete (the client removes it) and on a dead verdict
+    # (the rotation purges it from the vault); without SET NULL the Postgres
+    # default RESTRICT would raise ForeignKeyViolation on every such delete (the
+    # 500 behind the "error inesperado"). NULL until a cookie-dead verdict stamps
+    # the sent cookie; re-nulled when that cookie is deleted.
     failed_cookie_id: Mapped[int | None] = mapped_column(
-        ForeignKey("gate_cookies.id"), nullable=True
+        ForeignKey("gate_cookies.id", ondelete="SET NULL"), nullable=True
     )
     # Durable Phase-2 verdict-timeout retry budget. The cookie-mode timeout sweep
     # retries a silent ``.amz`` line ONCE, then pauses ``verdict_timeout``. This
