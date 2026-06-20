@@ -716,6 +716,17 @@ class Response(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Soft-hide marker (clear-declined). When set, this 'full' row is dropped
+    # from the Completa display/export reads (``list_full``/``full_count`` with
+    # the default ``include_hidden=False``) but STILL seen by every integrity
+    # query — ``responded_line_count``, the reconciler's ``_answered_full_exists``
+    # (``send_log``), ``last_full_revision`` and ``has_ok_revision`` never filter
+    # ``hidden_at``. The row is retained so a hidden ❌ can't be resurrected by the
+    # reply reconciler (45s/72h) nor spike the "esperando respuesta" counter.
+    # NULL ⇒ visible (every pre-existing row and every 'cc' row).
+    hidden_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AuditLog(Base):

@@ -381,6 +381,37 @@ async def new_session(
     return session_to_out(fresh)
 
 
+@router.post("/{session_id}/clear-declined")
+async def clear_declined(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, int]:
+    """Soft-hide the declined (❌) revisions of a capture session — the cockpit
+    "Limpiar" action.
+
+    The client wipes the rejected noise from the Completa view PERMANENTLY (it
+    survives reload) while Aprobadas (✅) and Datos CC stay intact. Tenant-scoped
+    via ``_require_session`` — an unknown/foreign/out-of-int4 id 404s identically
+    (no existence leak), ``tenant_id`` only from the session.
+
+    Soft-hide, NOT delete: a physically removed ❌ would look unanswered to the
+    reply reconciler (45s / 72h window), which would re-fetch it from Telegram
+    and re-insert it, and would shrink ``responded_line_count`` (spiking
+    "esperando respuesta"). ``hidden_at`` is read ONLY by the Completa
+    display/export queries; every integrity query still counts the row.
+
+    Post-commit re-emit of ``session.active`` (verbatim ``active_session_data``)
+    rebinds every open tab to the trimmed Completa — a tab that misses it
+    reconciles with its next snapshot. Returns ``{"hidden": n}``."""
+    target = await _require_session(session, user.tenant_id, session_id)
+    hidden = await responses_repo.hide_rejected(session, target.id)
+    await session.commit()
+    payload = await batches_service.active_session_data(session, user.tenant_id)
+    await broadcaster.emit(user.tenant_id, "session.active", payload)
+    return {"hidden": hidden}
+
+
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: int,

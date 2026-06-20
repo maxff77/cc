@@ -10,7 +10,7 @@ a capture-session id the caller already resolved tenant-scoped.
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Response
@@ -221,13 +221,22 @@ async def cc_count(session: AsyncSession, capture_session_id: int) -> int:
 
 
 async def full_count(
-    session: AsyncSession, capture_session_id: int, status: str | None = None
+    session: AsyncSession,
+    capture_session_id: int,
+    status: str | None = None,
+    *,
+    include_hidden: bool = False,
 ) -> int:
     """Total 'full' revisions of one capture session (Story 3.2: the Completa
     badge — the REAL total, honest even when the snapshot list is capped).
 
     ``status`` (e.g. ``STATUS_OK``) restricts the count to that status — the
-    "Filtrada con response" badge: only the ✅ revisions."""
+    "Filtrada con response" badge: only the ✅ revisions.
+
+    ``include_hidden=False`` (default) EXCLUDES soft-hidden rows
+    (clear-declined): this is a DISPLAY count (the Completa badge), so it must
+    match ``list_full``. Integrity counters (e.g. ``responded_line_count``) do
+    NOT go through here and keep counting hidden rows."""
     stmt = (
         select(func.count())
         .select_from(Response)
@@ -238,8 +247,37 @@ async def full_count(
     )
     if status is not None:
         stmt = stmt.where(Response.status == status)
+    if not include_hidden:
+        stmt = stmt.where(Response.hidden_at.is_(None))
     count: int = (await session.execute(stmt)).scalar_one()
     return count
+
+
+async def hide_rejected(session: AsyncSession, capture_session_id: int) -> int:
+    """Soft-hide every still-visible REJECTED (❌) 'full' revision of a capture
+    session (clear-declined) — the cockpit "Limpiar" action.
+
+    Stamps ``hidden_at`` so ``list_full``/``full_count`` drop these rows from
+    Completa and the ``.txt`` export, while EVERY integrity query keeps seeing
+    them (none filter ``hidden_at``): ``responded_line_count`` still counts the
+    line — so "esperando respuesta" does NOT spike — and the reply reconciler's
+    ``_answered_full_exists`` still finds a 'full' row, so a hidden ❌ is never
+    re-fetched from Telegram and re-inserted. ✅ ('ok') and 'cc' rows are never
+    touched. Idempotent: a second call hides 0 (the ``hidden_at IS NULL`` guard).
+    Returns the number of rows hidden. Flush-not-commit — the caller owns the
+    transaction."""
+    result = await session.execute(
+        update(Response)
+        .where(
+            Response.capture_session_id == capture_session_id,
+            Response.kind == KIND_FULL,
+            Response.status == STATUS_REJECTED,
+            Response.hidden_at.is_(None),
+        )
+        .values(hidden_at=func.now())
+    )
+    await session.flush()
+    return result.rowcount
 
 
 async def responded_line_count(
@@ -280,6 +318,7 @@ async def _list_last(
     kind: str,
     limit: int | None,
     status: str | None = None,
+    include_hidden: bool = False,
 ) -> list[Response]:
     """The LAST ``limit`` rows of ``kind``, returned ASCENDING by ``id``.
 
@@ -298,6 +337,10 @@ async def _list_last(
     )
     if status is not None:
         stmt = stmt.where(Response.status == status)
+    if not include_hidden:
+        # DISPLAY/export read: drop soft-hidden rows (clear-declined). 'cc' rows
+        # are never hidden, so this is a no-op for the Filtrada list.
+        stmt = stmt.where(Response.hidden_at.is_(None))
     if limit is None:
         stmt = stmt.order_by(Response.id.asc())
         return list((await session.execute(stmt)).scalars().all())
@@ -312,12 +355,20 @@ async def list_full(
     capture_session_id: int,
     limit: int | None,
     status: str | None = None,
+    *,
+    include_hidden: bool = False,
 ) -> list[Response]:
     """The session's last ``limit`` 'full' revisions (``None`` = all),
     oldest→newest — the rows that rebuild the Completa view. ``status`` (e.g.
     ``STATUS_OK``) yields only that status — the "Filtrada con response"
-    view's full ✅ texts."""
-    return await _list_last(session, capture_session_id, KIND_FULL, limit, status)
+    view's full ✅ texts.
+
+    ``include_hidden=False`` (default) drops soft-hidden rows (clear-declined):
+    this feeds the Completa display and the ``.txt`` export, both of which must
+    hide the cleared declined revisions."""
+    return await _list_last(
+        session, capture_session_id, KIND_FULL, limit, status, include_hidden
+    )
 
 
 async def list_cc(

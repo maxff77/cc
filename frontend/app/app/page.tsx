@@ -10,10 +10,10 @@
 // scrolls on its own. BOTH columns inherit the cap (lg:h-full lg:min-h-0) and
 // the right column passes `fill` so its panels stretch to the cap — lists scroll
 // inside each panel and no dead space opens below short results.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useLiveBatch } from "@/lib/ws";
 import { ClaimKey } from "@/components/keys/claim-key";
 import { AwaitingReply } from "@/components/batch/awaiting-reply";
@@ -37,6 +37,7 @@ import { ActiveSessionCard } from "@/components/sessions/active-session-card";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import { Notice } from "@/components/ui/notice";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   ResponseColumns,
   ResponseTabs,
@@ -105,37 +106,40 @@ export default function EnvioPage() {
     return () => window.clearTimeout(id);
   }, [completed]);
 
-  // "Limpiar" la vista Completa (clear-completa-view): a VIEW-only declutter,
-  // local to this tab — it hides the rows currently shown in Completa WITHOUT
-  // deleting anything (data stays in Postgres) and WITHOUT touching Aprobadas
-  // (which filters the same `live.responses`). We snapshot the visible row keys
-  // into `clearedKeys`; Completa renders only rows whose key isn't hidden, so
-  // replies captured AFTER the clear (fresh keys) keep appearing. The keys are
-  // monotonic and get reassigned on reconnect/session change, so the set
-  // self-invalidates on the next snapshot (rows reappear) and stays bounded.
-  const [clearedKeys, setClearedKeys] = useState<Set<string>>(() => new Set());
+  // "Limpiar" la vista Completa (clear-declined): borra de forma PERSISTENTE
+  // (soft-hide en el backend) las revisiones declinadas (❌) de la sesión activa.
+  // Aprobadas (✅) y Datos CC quedan intactas; al confirmar, el backend re-emite
+  // `session.active` y el store recompone Completa en todas las pestañas (sin
+  // mutación local). Sólo hay declinadas que ocultar si el total de Completa
+  // supera al de Aprobadas — eso habilita el botón.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const declinedCount = live.responsesTotal - live.responsesOkTotal;
+  const clearDeclined = useMutation({
+    mutationFn: () =>
+      api.post<{ hidden: number }>(
+        `/api/sessions/${live.sessionId}/clear-declined`,
+      ),
+    onSuccess: () => {
+      setConfirmOpen(false);
+      setClearError(null);
+    },
+    onError: (err) =>
+      setClearError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      ),
+  });
 
-  // A clear is scoped to the session the operator was watching: drop it when
-  // the active session changes (gate swap / Continuar) so the stale key set
-  // never lingers across sessions.
+  // Si la sesión activa cambia con el diálogo abierto (cambio de gate /
+  // Continuar / otra pestaña), cancelar la confirmación: nunca limpiar las
+  // declinadas de una sesión distinta a la que el operador estaba viendo al
+  // abrir el diálogo (el `mutationFn` lee `live.sessionId` en el submit).
   useEffect(() => {
-    setClearedKeys(new Set());
+    setConfirmOpen(false);
+    setClearError(null);
   }, [live.sessionId]);
-  const completaResponses = useMemo(
-    () => live.responses.filter((row) => !clearedKeys.has(row.key)),
-    [live.responses, clearedKeys],
-  );
-  // Rows of the (500-capped) live list currently hidden by the clear. When >0
-  // the badge mirrors the VISIBLE count so it can never read a phantom number
-  // over an empty list (a clear with a server-capped total used to leave the
-  // badge at `total − 500`). When 0 — nothing cleared, or the cleared rows aged
-  // out of the cap / a reconnect re-keyed them — it falls back to the
-  // authoritative server total, preserving the capped "real total" badge.
-  const hiddenCount = live.responses.length - completaResponses.length;
-  const completaTotal =
-    hiddenCount > 0 ? completaResponses.length : live.responsesTotal;
-  const handleClearCompleta = () =>
-    setClearedKeys(new Set(live.responses.map((row) => row.key)));
 
   // Export `↓ .txt` (Story 3.5): paths exist only once a session does. NOT gated
   // on isLive: export works DURING the lote (AC 2) and after.
@@ -221,8 +225,7 @@ export default function EnvioPage() {
           <ResponseColumns
             cc={live.cc}
             ccTotal={live.ccNew}
-            completaResponses={completaResponses}
-            completaTotal={completaTotal}
+            clearDisabled={declinedCount <= 0}
             exportPathCompleta={exportCompleta}
             exportPathFiltrada={exportFiltrada}
             exportPathFiltradaCompleta={exportFiltradaCompleta}
@@ -230,24 +233,40 @@ export default function EnvioPage() {
             responses={live.responses}
             responsesOkTotal={live.responsesOkTotal}
             responsesTotal={live.responsesTotal}
-            onClearCompleta={handleClearCompleta}
+            onClearCompleta={() => setConfirmOpen(true)}
           />
         </div>
         <ResponseTabs
           cc={live.cc}
           ccTotal={live.ccNew}
           className="lg:hidden"
-          completaResponses={completaResponses}
-          completaTotal={completaTotal}
+          clearDisabled={declinedCount <= 0}
           exportPathCompleta={exportCompleta}
           exportPathFiltrada={exportFiltrada}
           exportPathFiltradaCompleta={exportFiltradaCompleta}
           responses={live.responses}
           responsesOkTotal={live.responsesOkTotal}
           responsesTotal={live.responsesTotal}
-          onClearCompleta={handleClearCompleta}
+          onClearCompleta={() => setConfirmOpen(true)}
         />
       </div>
+
+      {/* Confirmación de "Limpiar" (clear-declined) — borrado irreversible de
+          las declinadas; Aprobadas y Datos CC se conservan. */}
+      <ConfirmDialog
+        confirmLabel={clearDeclined.isPending ? "Limpiando…" : "Limpiar"}
+        confirmVariant="danger"
+        heading="¿Borrar las respuestas declinadas (❌) de Completa? Se conservan las aprobadas (✅) y los Datos CC. No se puede deshacer."
+        open={confirmOpen}
+        pending={clearDeclined.isPending}
+        onConfirm={() => clearDeclined.mutate()}
+        onOpenChange={(open) => {
+          setConfirmOpen(open);
+          if (!open) setClearError(null);
+        }}
+      >
+        {clearError && <Notice status="danger">{clearError}</Notice>}
+      </ConfirmDialog>
     </div>
   );
 }
