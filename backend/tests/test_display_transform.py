@@ -6,37 +6,61 @@ from app.core.display_transform import display_transform
 @pytest.mark.parametrize(
     "text,gate_name,expected",
     [
-        # Approved + time
+        # Approved (full reply) → canonical bare status line
         (
             "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada. | Removed: ✅\n⌿ Time: 32.95s",
             "amz",
-            "◈ Aprobada ✅ — 377481016137504|05|2033|3845 · 32.95s\n▸ TARJETA VINCULADA LIVE 🌟",
+            "⌿ Status: Approved ✅",
         ),
-        # Declined + time
+        # Declined (full reply) → canonical bare status line
         (
             "☇ CC: 377481016138023|05|2033|7050\n⌿ Status: Declined ❌\n⌿ Response: Tarjeta inexistente.\n⌿ Time: 28.14s",
             "amz",
-            "◈ Rechazada ❌ — 377481016138023|05|2033|7050 · 28.14s\n▸ TARJETA INVALIDA DEAD ➕",
+            "⌿ Status: Declined ❌",
         ),
-        # Approved no time
+        # Approved, no time
         (
             "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada. | Removed: ✅",
             "amz",
-            "◈ Aprobada ✅ — 377481016137504|05|2033|3845\n▸ TARJETA VINCULADA LIVE 🌟",
+            "⌿ Status: Approved ✅",
         ),
-        # cookie_dead
+        # Inline ☇/⌿ separators (single line) still classify correctly
+        (
+            "☇ CC: 123|01|2030|456 ⌿ Status: Approved ✅ ⌿ Response: ok",
+            "amz",
+            "⌿ Status: Approved ✅",
+        ),
+        # Trailing content after the glyph is dropped — output stays bare
+        (
+            "⌿ Status: Approved ✅ trailing junk here",
+            "amz",
+            "⌿ Status: Approved ✅",
+        ),
+        # Near-miss token (NOT exact "approved") → engine treats as dead cookie,
+        # so display must NOT collapse it to Approved; pass through raw.
+        (
+            "⌿ Status: Approvedance ✅\n⌿ Time: 1s",
+            "amz",
+            "⌿ Status: Approvedance ✅\n⌿ Time: 1s",
+        ),
+        (
+            "⌿ Status: Declinedxyz ❌",
+            "amz",
+            "⌿ Status: Declinedxyz ❌",
+        ),
+        # cookie error / anything else → pass through raw
         (
             "⌿ Status: ❌ Cookies Inválidas",
             "amz",
-            "◈ No procesada ❌\n▸ COOKIE MUERTA ❌",
+            "⌿ Status: ❌ Cookies Inválidas",
         ),
-        # Non-AMZ gate
+        # Non-AMZ gate → raw
         (
             "☇ CC: 123|01|2030|456\n⌿ Status: Approved ✅",
             "zephyr",
             "☇ CC: 123|01|2030|456\n⌿ Status: Approved ✅",
         ),
-        # gate_name None
+        # gate_name None → raw
         (
             "☇ CC: 123|01|2030|456\n⌿ Status: Approved ✅",
             None,
@@ -48,11 +72,11 @@ from app.core.display_transform import display_transform
             "amz",
             "",
         ),
-        # No parseable structure
+        # No status field → pass through raw (untouched)
         (
             "☇ some random text without structure",
             "amz",
-            "some random text without structure",
+            "☇ some random text without structure",
         ),
     ],
 )
