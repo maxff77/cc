@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
+import { usePersisted } from "@/lib/use-persisted";
 import { CookieManager } from "@/components/batch/cookie-manager";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
@@ -106,9 +107,18 @@ export function SendForm({
     queryFn: () => api.get<Me>("/api/auth/me"),
   });
   const lineCap = me.data?.plan?.max_lines_per_batch ?? null;
-  const [text, setText] = useState("");
-  const [categoryKey, setCategoryKey] = useState<string | null>(null);
-  const [gateKey, setGateKey] = useState<string | null>(null);
+  // Persisted across refresh/new tabs (localStorage) so a reload doesn't wipe
+  // the operator's category/gate pick or a half-pasted batch. Cleared like
+  // before — on a successful create the setText("") write empties the store.
+  const [text, setText] = usePersisted<string>("rx.send.text", "");
+  const [categoryKey, setCategoryKey] = usePersisted<string | null>(
+    "rx.send.category",
+    null,
+  );
+  const [gateKey, setGateKey] = usePersisted<string | null>(
+    "rx.send.gate",
+    null,
+  );
   const [textError, setTextError] = useState<string | null>(null);
   const [selectError, setSelectError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
