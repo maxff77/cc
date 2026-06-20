@@ -558,7 +558,6 @@ async def process_incoming(reply: IncomingReply) -> None:
         capture_session_id = attributed.capture_session_id
         batch_id = attributed.batch_id
         line_id = attributed.line_id
-        gate_name = capture_session.gate_name if capture_session is not None else None
         await session.commit()
 
     # 🔒 Capture→worker verdict signal (Amazon cookie-mode, Phase 2). Emit AFTER
@@ -627,7 +626,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             "status": status,
             "previous_status": previous_status,
             "edited": reply.edited,
-            "text": display_transform(clean_text, gate_name),
+            "text": display_transform(clean_text, cookie_mode),
             "new_cc": new_cc,
             "cc_total": cc_total,
             "awaiting_reply": awaiting_reply,

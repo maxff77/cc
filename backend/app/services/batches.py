@@ -240,7 +240,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
                 "id": row.id,
                 "message_id": row.message_id,
                 "status": row.status,
-                "text": display_transform(redact_reply_text(row.text), active.gate_name),
+                "text": display_transform(redact_reply_text(row.text), active.cookie_mode),
                 "created_at": row.created_at.isoformat(),
             }
             for row in await responses_repo.list_full(

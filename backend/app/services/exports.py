@@ -34,7 +34,7 @@ from app.db.models import CaptureSession, Response
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
-def completa_txt(rows: list[Response], gate_name: str | None = None) -> str:
+def completa_txt(rows: list[Response], cookie_mode: bool = False) -> str:
     """The Completa view as legacy ``completa.txt``: one timestamped block per
     'full' revision, in the ascending ``id`` order the rows arrive in.
 
@@ -48,7 +48,7 @@ def completa_txt(rows: list[Response], gate_name: str | None = None) -> str:
     """
     return "".join(
         f"[{row.created_at.strftime('%Y-%m-%d %H:%M:%S')}] "
-        f"{display_transform(redact_reply_text(row.text), gate_name)}\n\n"
+        f"{display_transform(redact_reply_text(row.text), cookie_mode)}\n\n"
         for row in rows
     )
 

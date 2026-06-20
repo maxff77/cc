@@ -193,7 +193,7 @@ async def get_session_detail(
                 id=row.id,
                 message_id=row.message_id,
                 status=row.status,
-                text=display_transform(redact_reply_text(row.text), target.gate_name),
+                text=display_transform(redact_reply_text(row.text), target.cookie_mode),
                 created_at=row.created_at,
             )
             for row in responses
@@ -232,14 +232,14 @@ async def export_session(
     target = await _require_session(session, user.tenant_id, session_id)
     if view == "completa":
         rows = await responses_repo.list_full(session, target.id, None)
-        content = exports.completa_txt(rows, target.gate_name)
+        content = exports.completa_txt(rows, target.cookie_mode)
     elif view == "filtrada_completa":
         # "Filtrada con response": the full text of only the ✅ revisions —
         # same builder as Completa, fed the status-filtered rows.
         rows = await responses_repo.list_full(
             session, target.id, None, status=responses_repo.STATUS_OK
         )
-        content = exports.completa_txt(rows, target.gate_name)
+        content = exports.completa_txt(rows, target.cookie_mode)
     else:
         rows = await responses_repo.list_cc(session, target.id, None)
         content = exports.filtrada_txt(rows)
