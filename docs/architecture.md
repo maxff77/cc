@@ -35,7 +35,7 @@ backend/app/
 ├── api/               # routers (REST) + WebSocket + request identity
 │   ├── deps.py        # get_current_user (session cookie → identity), require_role
 │   ├── auth.py batches.py sessions.py gates.py public.py cookies.py
-│   ├── admin.py targets.py keys.py watchdog.py observability.py
+│   ├── admin.py targets.py keys.py watchdog.py observability.py history.py
 │   ├── ws.py          # the WebSocket (server→client only)
 │   └── health.py
 ├── core/              # the engine
@@ -55,7 +55,7 @@ backend/app/
 │   └── repos/         # flush-not-commit repos; FOR UPDATE on read-modify-write
 ├── services/          # orchestration (auth, batches, admission, plans, users,
 │                      #   exports, targets, gift_keys, pacing)
-├── migrations/        # Alembic (head: f6a2d9c4e1b7)
+├── migrations/        # Alembic (head: 9b1e4c7a2f08)
 ├── scripts/           # bootstrap_owner, seed_user, telegram_auth, load tests
 └── tests/             # pytest (40+ test modules)
 ```
@@ -73,7 +73,8 @@ backend/app/
 
 One `responses` table, discriminated by `kind` — see [data-models.md](./data-models.md#responses).
 - `kind='full'` → **Completa**: one row per captured message revision; `status` (`ok`/`rejected`) from the ✅/❌ glyph. Latest revision per `(chat_id, message_id)` is the durable per-message state.
-- `kind='cc'` → **Filtrada**: extracted `CC:` data, deduplicated per capture-session by the partial unique index `uq_responses_session_cc`.
+- `kind='cc'` → **Filtrada**: extracted `CC:` data, deduplicated **tenant-lifetime** by the partial unique index `uq_responses_session_cc` (one perpetual capture-session per tenant, so the per-session dedup spans the tenant's whole history).
+- **Limpiar** is a non-destructive view-cutoff: an id high-water-mark stored in `capture_sessions.cleared_response_id`, applied only to the cockpit display reads and cockpit export (`Response.id > cutoff`). It deletes nothing — integrity, attribution, reconciliation, dedup, credits, and awaiting-reply all ignore it. The separate **Historial** (PR-2) is the one DESTRUCTIVE path: it deletes `responses` rows (only `responses` — never `batches`/`send_log`/`batch_lines`).
 
 ### Roles & admission
 
@@ -94,7 +95,7 @@ frontend/
 │   ├── login register expired change-password   # public auth pages
 │   ├── app/                    # the cockpit ("Envío") — client surface
 │   │   ├── page.tsx            #   send form + progress + live response panels
-│   │   └── sessions/           #   history (list grouped by gate, detail)
+│   │   └── historial/          #   history (approved-✅ grouped by gate + destructive deletes)
 │   └── admin/                  # users, gates, plans, keys, destinos, tenants/[id]
 ├── components/
 │   ├── batch/                  # send-form, progress-ring, notices, cookie-manager
@@ -108,16 +109,16 @@ frontend/
 └── config/ styles/ public/
 ```
 
-- **Cockpit** (`app/app/page.tsx`) — send form (paste + category→gate selectors), progress ring, failed/pending lines, flood/watchdog/plan notices, the cookie manager (Amazon cookie-mode gates), and the dual **Completa/Filtrada** panels. Live state comes from the WebSocket store (`lib/ws.ts`, a reducer over `snapshot`/`batch.*`/`response.captured`/`session.active`/`flood`/`watchdog`/`credits.updated`); the gate catalog comes from a REST query.
-- **History** (`app/app/sessions/`) — list grouped by gate + detail; detail reuses the Completa/Filtrada panels fed by `GET /api/sessions/{id}` and live-follows the active session. Each panel has a `↓ .txt` export footer.
+- **Cockpit** (`app/app/page.tsx`) — **sessionless**: send form (paste + category→gate selectors), progress ring, failed/pending lines, flood/watchdog/plan notices, the cookie manager (Amazon cookie-mode gates), and the three live panels — **Completa** (✅+❌ revisions), **Aprobadas** (only ✅ revisions, full text), and **Datos CC** (extracted CC). A single non-destructive **Limpiar** button clears all three panels via the view-cutoff (it never deletes). Live state comes from the WebSocket store (`lib/ws.ts`, a reducer over `snapshot`/`batch.*`/`response.captured`/`session.active`/`flood`/`watchdog`/`credits.updated`); the gate catalog comes from a REST query.
+- **History** (`app/app/historial/`) — read-only list of approved-✅ responses (latest `kind='full'` revision is `status='ok'`) grouped by the batch's client-visible gate, fed by `GET /api/history` **independently of the Limpiar cutoff** (it reads `responses` directly). Adds three DESTRUCTIVE deletes — one message (`DELETE /api/history/response/{id}`), one gate (`DELETE /api/history/gate?name=`), or all (`DELETE /api/history`) — which remove only `responses` rows.
 - **Admin** (`app/admin/`) — `users` (CRUD, plan renew/block, password reset, credits, admission cap, interval), `gates` (catalog + categories), `plans`, `keys` (gift keys), `destinos` (send targets), `tenants/[id]` (audited read-only cross-tenant browser).
 
 ---
 
 ## Integration
 
-- **REST (`/api/*`)** carries every command (create/append/pause/resume/stop a batch, session CRUD, admin actions, auth). See [api-contracts.md](./api-contracts.md).
-- **WebSocket (`/ws`) is server→client ONLY** — clients send only keep-alives; all commands go through REST. Envelope: `{event, data}`. Events: `snapshot` (full state, first frame), `batch.state`, `batch.progress`, `response.captured`, `session.active`, `flood.wait`, `watchdog.paused|resumed`, `guardrail.alert`, `credits.updated`. Fan-out is tenant-scoped (`broadcaster.emit` per-tenant; `emit_global` for system events). State lives in the backend/DB, not the socket — it survives reconnects.
+- **REST (`/api/*`)** carries every command (create/append/pause/resume/stop a batch, the Limpiar view-cutoff (`POST /api/sessions/clear`), the Historial reads/deletes (`/api/history`), admin actions, auth). See [api-contracts.md](./api-contracts.md).
+- **WebSocket (`/ws`) is server→client ONLY** — clients send only keep-alives; all commands go through REST. Envelope: `{event, data}`. Events: `snapshot` (full state, first frame), `batch.state`, `batch.progress`, `response.captured`, `session.active` (perpetual session refreshed — gate snapshot / Limpiar cutoff), `flood.wait`, `watchdog.paused|resumed`, `guardrail.alert`, `credits.updated`. Fan-out is tenant-scoped (`broadcaster.emit` per-tenant; `emit_global` for system events). State lives in the backend/DB, not the socket — it survives reconnects.
 - In dev, `next.config.mjs` proxies `/api` + `/ws` → `127.0.0.1:8000`; in prod, Caddy does the same.
 
 ---

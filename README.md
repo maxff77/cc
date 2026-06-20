@@ -26,7 +26,7 @@ Frontend ┘        scheduler (round-robin + paceo)                    │ ✅/�
 ```
 
 - **`backend/`** — FastAPI async único. Lifespan: conecta el gateway de Telegram (no-fatal — bootea aunque no esté autorizado; enviar da 503), arranca el send worker, corre boot recovery, libera el capture consumer. El send worker registra la intención en `send_log` **antes** de enviar (write-ahead) y el `message_id` **después** (retry-forever / fail-stop). Telethon vive solo en `core/telegram.py` con `parse_mode=None`.
-- **`frontend/`** — Next.js (App Router) + HeroUI, tema claro/oscuro, copy en español. Cockpit (envío + paneles Completa/Filtrada en vivo), historial, panel admin. El estado en vivo llega por WebSocket (`lib/ws.ts`); los comandos van por REST.
+- **`frontend/`** — Next.js (App Router) + HeroUI, tema claro/oscuro, copy en español. Cockpit sin sesiones (envío + tres paneles en vivo: Completa, Aprobadas ✅, Datos CC; un botón "Limpiar" no-destructivo que corta la vista), historial por gate, panel admin. El estado en vivo llega por WebSocket (`lib/ws.ts`); los comandos van por REST.
 
 Detalle: [docs/architecture.md](./docs/architecture.md).
 

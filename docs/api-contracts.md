@@ -53,18 +53,30 @@
 | GET | `/api/cookies` | List the tenant's cookies (masked values). |
 | DELETE | `/api/cookies/{id}` | Delete one cookie (204). |
 
-## Sessions (Completa / Filtrada) — `/api/sessions`
+## Sessions (cockpit Completa / Aprobadas / Datos-CC) — `/api/sessions`
+
+The cockpit now runs on ONE perpetual capture session per tenant (never rotated/renamed/continued/closed). Only three routes remain:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/sessions` | List capture sessions (grouped by gate). |
-| GET | `/api/sessions/{id}` | Detail — Completa + Filtrada rows. Live-followed by the cockpit. |
-| GET | `/api/sessions/{id}/export` | `.txt` export (Completa or Filtrada; `Cache-Control: no-store`). |
-| POST | `/api/sessions/new` | Create/activate a new capture session. |
-| PATCH | `/api/sessions/{id}` | Rename. |
-| POST | `/api/sessions/{id}/continue` | Reactivate an old session (CC dedup preserved by existing rows). |
-| POST | `/api/sessions/{id}/clear-declined` | Soft-hide ❌ revisions from Completa (integrity queries still see them). |
-| DELETE | `/api/sessions/{id}` | Delete a session (204). |
+| POST | `/api/sessions/clear` | **Limpiar** — non-destructive view-cutoff that clears all 3 cockpit panels at once. Resolves the perpetual session `FOR UPDATE`, stamps `cleared_response_id = MAX(responses.id)`, commits, re-emits `session.active`. Returns `{"cleared_response_id": <int\|null>}`. **Deletes 0 rows** (display-only filter). 404 identically if the tenant has no session. |
+| GET | `/api/sessions/export?view=completa\|filtrada\|filtrada_completa` | Cockpit `.txt` export over the perpetual session, **cutoff-respecting** (only the live post-Limpiar view). `filtrada_completa` = "Aprobadas" (full text of only the ✅ revisions). `Cache-Control: no-store`; empty ⇒ 200 empty body; 404 if no session. |
+| GET | `/api/sessions/{id}/export?view=completa\|filtrada\|filtrada_completa` | Admin/PR-2 per-session export, **cutoff-agnostic** (full history). Unknown/foreign/oversized id 404s identically. |
+
+> The old client list/detail/new/rename/continue/clear-declined/delete endpoints (`GET /api/sessions`, `GET /api/sessions/{id}`, `POST /api/sessions/new`, `PATCH /api/sessions/{id}`, `POST /api/sessions/{id}/continue`, `POST /api/sessions/{id}/clear-declined`, `DELETE /api/sessions/{id}`) were **removed** in the sessionless redesign.
+
+## History (Historial) — `/api/history`
+
+Client-owned history of approved (✅) captures, grouped by gate. **Cutoff-agnostic** (reads `responses` directly, ignores the Limpiar cutoff). `gate_value` is NEVER serialized — only the client-visible `gate_name`/`gate_display_value` snapshot.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/history` | Approved-✅ messages (latest `kind='full'` revision `status='ok'`) grouped by gate → `{gates: [{name, display_value, count, items: [{id, text, captured_at, cc: []}]}]}`. Gates ordered by most-recent activity; items newest-first; null-gate → trailing `{name:null, display_value:"Sin gate"}` group. Empty ⇒ `{gates: []}`. |
+| DELETE | `/api/history/response/{id}` | **DESTRUCTIVE** — delete one message's full revisions + cc rows → `{deleted:<int>}`. 404 identical for foreign/unknown/out-of-int4 id. |
+| DELETE | `/api/history/gate?name=<gate_name>` | **DESTRUCTIVE** — delete one gate's history → `{deleted:<int>}`. Unknown name ⇒ `{deleted:0}`. |
+| DELETE | `/api/history` | **DESTRUCTIVE** — delete the tenant's entire history → `{deleted:<int>}`. |
+
+> These are the ONLY client path that hard-deletes captured data. They remove ONLY `responses` rows (children) — never `batches`/`send_log`/`batch_lines`, so attribution/integrity history stays intact. `tenant_id` only from the session; the endpoint owns the transaction.
 
 ## Gift keys (client) — `/api/keys`
 
@@ -119,7 +131,7 @@
 | `batch.state` | Batch state transition (incl. `pause_reason` for cookie-mode pauses). |
 | `batch.progress` | Per-line progress / counters. |
 | `response.captured` | A ✅/❌ reply (or new CC datum) was attributed and stored. |
-| `session.active` | Active capture session changed (new/continue/rename). |
+| `session.active` | Perpetual session refreshed (gate snapshot, or a Limpiar view-cutoff). |
 | `flood.wait` | A Telegram FloodWait is in effect. |
 | `watchdog.paused` / `watchdog.resumed` | Global watchdog latch toggled. |
 | `guardrail.alert` | Observe-only ban-guardrail alert (FloodWaits, unmatched replies). |

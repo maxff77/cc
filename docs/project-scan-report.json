@@ -30,7 +30,7 @@
     {"step": "step_1", "status": "completed", "summary": "Classified as multi-part with 2 parts (backend + frontend)"},
     {"step": "step_3", "status": "completed", "summary": "Tech stack: FastAPI/PostgreSQL backend, Next.js frontend"},
     {"step": "step_8", "status": "completed", "summary": "architecture.md written (both parts + integration + deploy)"},
-    {"step": "step_9", "status": "completed", "summary": "data-models.md (17 tables) + api-contracts.md written"},
+    {"step": "step_9", "status": "completed", "summary": "data-models.md (17 tables) + api-contracts.md written; refreshed 2026-06-20 for PR-1 (sessionless cockpit, cleared_response_id cutoff) + PR-2 (/api/history Historial)"},
     {"step": "step_10", "status": "completed", "summary": "index.md master index generated"},
     {"step": "step_12", "status": "completed", "summary": "Lean doc suite complete; README + project-context.md + CLAUDE.md refreshed"}
   ],
@@ -45,6 +45,6 @@
     "_bmad-output/project-context.md",
     "CLAUDE.md"
   ],
-  "notes": "Lean scope chosen by user. Alembic head f6a2d9c4e1b7. Legacy root app (app.py/core.py/auto_sender.py/static/respuestas/) is dead code, excluded from production docs.",
+  "notes": "Lean scope chosen by user. Docs refreshed 2026-06-20 for PR-1 (sessionless cockpit: ONE perpetual capture_session, new cleared_response_id Limpiar view-cutoff) and PR-2 (new /api/history Historial router). Alembic head now 9b1e4c7a2f08. Legacy root app (app.py/core.py/auto_sender.py/static/respuestas/) is dead code, excluded from production docs.",
   "resume_instructions": "Workflow complete. Re-run /bmad-document-project and choose Re-scan to refresh."
 }

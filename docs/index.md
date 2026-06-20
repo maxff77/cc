@@ -11,7 +11,9 @@
 
 ### Two derived views of captured replies
 - **Completa** — every captured reply revision (✅ and ❌), latest revision per message = durable state.
-- **Filtrada** — deduplicated `CC:` data extracted from replies (per-session dedup, DB-enforced).
+- **Filtrada** — deduplicated `CC:` data extracted from replies (tenant-lifetime dedup over the one perpetual capture session, DB-enforced).
+
+The cockpit is sessionless — three live panels (Completa, Aprobadas ✅, Datos CC) with one non-destructive **Limpiar** view-cutoff — while a separate read-only **Historial** lists approved-✅ responses grouped by gate.
 
 ## Parts
 

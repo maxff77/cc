@@ -1,12 +1,12 @@
 # Data Models — Ranger-X Check
 
-> Generated: 2026-06-20. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `f6a2d9c4e1b7`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 17 tables.
+> Generated: 2026-06-20. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `9b1e4c7a2f08`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 17 tables.
 
 ## Conventions (read first)
 
 - **`tenant_id` always comes from the session**, never from request body/path. Tenant-scoped tables CASCADE on tenant delete.
 - **GLOBAL tables** (no `tenant_id` — a deliberate, documented exception): `gates`, `gate_categories`, `send_targets`, `plans`, `gift_keys`, `watchdog_state`, `system_settings`.
-- **Snapshot / denormalize on purpose:** `batches` and `capture_sessions` copy the gate string/name/`display_value`/`credit_cost`/mode flags verbatim at creation. No FK to `gates` from those — retiring or renaming a gate must never rewrite history.
+- **Snapshot / denormalize on purpose:** `batches` copy the gate string/name/`display_value`/`credit_cost`/mode flags verbatim at creation. `capture_sessions` now holds ONE perpetual row per tenant whose gate snapshot is **refreshed in place per batch** (not per-creation), so history that must survive a gate change is keyed off `batches`/`responses.batch_id`, NOT the session snapshot. No FK to `gates` from either — retiring or renaming a gate must never rewrite history.
 - **Enums are plain `String`, not DB enums** (a deliberate decision) — `state`, `kind`, `status`, `reason` etc. widen without `ALTER TYPE`.
 - **Repos use flush-not-commit** (the request owns the transaction) and `SELECT … FOR UPDATE` on read-modify-write paths.
 - **Partial unique indexes do real work** — several invariants are DB-enforced, not just code-enforced (see the callouts below).
@@ -67,15 +67,17 @@ One row per line (`uq_send_log_line_id` — retries reuse the row). Written by t
 ## Capture (Completa / Filtrada)
 
 ### `capture_sessions`
-One save session per tenant+gate (legacy active `Sesion`, generalized). `tenant_id` (CASCADE). **Snapshots:** `gate_value`, `gate_name`, `gate_display_value`, `special_mode`, `cookie_mode` (mode flags refreshed when a NEW batch reuses the active session; closed/historical sessions never rewritten). `name` (friendly label, NULL → UI falls back to a `created_at` format). `is_active`.
-- **Partial unique:** `uq_capture_sessions_one_active_per_tenant(tenant_id) WHERE is_active` — one active capture session per tenant. Activation flips `is_active` carefully to dodge the partial index.
+ONE perpetual capture session per tenant (get-or-create via `ensure_perpetual`; never rotated/renamed/continued/closed). `tenant_id` (CASCADE). **Snapshots:** `gate_value`, `gate_name`, `gate_display_value`, `special_mode`, `cookie_mode` — refreshed IN PLACE per batch; `is_active` stays true and the id never churns. `name` (friendly label, NULL → UI falls back to a `created_at` format).
+- `cleared_response_id` (BigInteger, nullable; NULL = nothing cleared) — the **Limpiar** view-cutoff, an id high-water-mark (`MAX(responses.id)` at clear time). Applied ONLY to the cockpit display reads + cockpit export (`Response.id > cleared_response_id`); NEVER to any integrity/dedup/attribution/reconciler/credit/awaiting_reply query. An id cutoff, not a timestamp (`Response.id` is monotonic, tie-immune).
+- **Partial unique:** `uq_capture_sessions_one_active_per_tenant(tenant_id) WHERE is_active` — still present, now guarding the single first-ever-creation race for the perpetual row.
 
 ### `responses`
 One table, both row types, discriminated by `kind`:
 - `kind='full'` (**Completa**) — `text` = whole reply, `status` = `ok` (✅) / `rejected` (❌). Latest `full` row per `(chat_id, message_id)` IS the durable per-message state (replaces the legacy in-memory dict; survives restarts and `catch_up`).
 - `kind='cc'` (**Filtrada**) — `text` = the extracted CC VALUE, `status` NULL.
-- Columns: `tenant_id` (CASCADE), `capture_session_id` (CASCADE), `batch_id`/`line_id` (SET NULL — capture outlives batch cleanup), `chat_id` (BigInteger, namespaces `message_id`), `message_id` (BigInteger), `hidden_at` (soft-hide for clear-declined — dropped from Completa display/export but STILL seen by every integrity query so a hidden ❌ can't be resurrected nor spike the "esperando respuesta" counter).
-- **Partial unique:** `uq_responses_session_cc(capture_session_id, text) WHERE kind='cc'` — session-scoped CC dedup, DB-enforced (this IS the "dedup set" — `continuar` reactivates the session and the existing rows are the set, no preloading code). **Indexes:** `ix_responses_message_id`, `ix_responses_chat_message(chat_id, message_id)`.
+- Columns: `tenant_id` (CASCADE), `capture_session_id` (CASCADE), `batch_id`/`line_id` (SET NULL — capture outlives batch cleanup), `chat_id` (BigInteger, namespaces `message_id`), `message_id` (BigInteger), `hidden_at` (RETAINED but now an INERT no-op — the old clear-declined soft-hide is superseded by the `capture_sessions.cleared_response_id` view-cutoff in PR-1; kept for forward-compat).
+- **Partial unique:** `uq_responses_session_cc(capture_session_id, text) WHERE kind='cc'` — DB-enforced CC dedup. With ONE perpetual session per tenant, this now dedups CC values **tenant-lifetime**; the Limpiar cutoff does NOT touch the dedup SELECT. **Indexes:** `ix_responses_message_id`, `ix_responses_chat_message(chat_id, message_id)`.
+- **PR-2 Historial DESTRUCTIVELY deletes `responses` rows** (one message / one gate / all, via `/api/history`) — removing ONLY `responses` (children), never `batches`/`send_log`/`batch_lines`. Group-by-gate keys on `responses.batch_id → batches.gate_*`, so keep `batch_id`/`line_id` populated and the join alive.
 
 ---
 
