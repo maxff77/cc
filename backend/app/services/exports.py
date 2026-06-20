@@ -25,6 +25,7 @@ the legacy. Three recorded decisions live here:
 
 import re
 
+from app.core.display_transform import display_transform
 from app.core.redact import redact_reply_text
 from app.db.models import CaptureSession, Response
 
@@ -33,7 +34,7 @@ from app.db.models import CaptureSession, Response
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
-def completa_txt(rows: list[Response]) -> str:
+def completa_txt(rows: list[Response], gate_name: str | None = None) -> str:
     """The Completa view as legacy ``completa.txt``: one timestamped block per
     'full' revision, in the ascending ``id`` order the rows arrive in.
 
@@ -47,7 +48,7 @@ def completa_txt(rows: list[Response]) -> str:
     """
     return "".join(
         f"[{row.created_at.strftime('%Y-%m-%d %H:%M:%S')}] "
-        f"{redact_reply_text(row.text)}\n\n"
+        f"{display_transform(redact_reply_text(row.text), gate_name)}\n\n"
         for row in rows
     )
 

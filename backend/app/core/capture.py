@@ -45,6 +45,7 @@ from app.core.broadcaster import broadcaster
 from app.core.cc_extract import extract_cc
 from app.core.cookie_verdict import CookieVerdict
 from app.core.cookie_verdict import signal as cookie_verdict_signal
+from app.core.display_transform import display_transform
 from app.core.redact import (
     COOKIE_CONFIRMATION_MARKER,
     VERDICT_APPROVED,
@@ -557,6 +558,7 @@ async def process_incoming(reply: IncomingReply) -> None:
         capture_session_id = attributed.capture_session_id
         batch_id = attributed.batch_id
         line_id = attributed.line_id
+        gate_name = capture_session.gate_name if capture_session is not None else None
         await session.commit()
 
     # 🔒 Capture→worker verdict signal (Amazon cookie-mode, Phase 2). Emit AFTER
@@ -625,7 +627,7 @@ async def process_incoming(reply: IncomingReply) -> None:
             "status": status,
             "previous_status": previous_status,
             "edited": reply.edited,
-            "text": clean_text,
+            "text": display_transform(clean_text, gate_name),
             "new_cc": new_cc,
             "cc_total": cc_total,
             "awaiting_reply": awaiting_reply,

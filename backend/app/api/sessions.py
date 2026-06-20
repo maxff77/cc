@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.broadcaster import broadcaster
+from app.core.display_transform import display_transform
 from app.core.redact import redact_reply_text
 from app.db.base import get_session
 from app.db.models import CaptureSession, User
@@ -192,7 +193,7 @@ async def get_session_detail(
                 id=row.id,
                 message_id=row.message_id,
                 status=row.status,
-                text=redact_reply_text(row.text),
+                text=display_transform(redact_reply_text(row.text), target.gate_name),
                 created_at=row.created_at,
             )
             for row in responses
@@ -231,14 +232,14 @@ async def export_session(
     target = await _require_session(session, user.tenant_id, session_id)
     if view == "completa":
         rows = await responses_repo.list_full(session, target.id, None)
-        content = exports.completa_txt(rows)
+        content = exports.completa_txt(rows, target.gate_name)
     elif view == "filtrada_completa":
         # "Filtrada con response": the full text of only the ✅ revisions —
         # same builder as Completa, fed the status-filtered rows.
         rows = await responses_repo.list_full(
             session, target.id, None, status=responses_repo.STATUS_OK
         )
-        content = exports.completa_txt(rows)
+        content = exports.completa_txt(rows, target.gate_name)
     else:
         rows = await responses_repo.list_cc(session, target.id, None)
         content = exports.filtrada_txt(rows)
