@@ -195,6 +195,31 @@ async def test_long_value_roundtrips_without_500(
     assert big not in res.text
 
 
+@pytest.mark.asyncio(loop_scope="session")
+async def test_realistic_amazon_cookie_length_is_accepted(
+    client_a: AsyncClient, cookie_gate: dict
+) -> None:
+    """Regression: a real logged-in Amazon cookie (single-line, all printable,
+    ~3000 chars) must STORE. The prior ``_VALUE_MAX = 2600`` wrongly rejected it
+    as ``invalid_cookie`` even though it is a valid credential, well under the
+    Telegram single-message limit the cap now tracks."""
+    # The shape the client pastes: semicolon-joined name=value pairs, all
+    # printable, sized BETWEEN the old (2600) and new (4000) caps. Salt one
+    # segment with a uuid (file convention) so a constant value can't dedup to
+    # 200 on a re-run against the persistent dev DB after a skipped teardown.
+    cookie = (
+        "; ".join(f"tok-{i}=Atza|" + ("aZ09+/_-" * 8) for i in range(40))
+        + f"; salt={uuid.uuid4().hex}"
+    )
+    assert 2600 < len(cookie) < 4000
+    assert cookie.isascii() and cookie.isprintable()
+    res = await client_a.post(
+        "/api/cookies", json={"gate_id": cookie_gate["id"], "value": cookie}
+    )
+    assert res.status_code == 201, res.text
+    assert "value" not in res.json()
+
+
 # --- Canonicalization dedup: "abc" and "abc\n" → SAME id (200) ---------------
 
 
@@ -258,7 +283,7 @@ async def test_too_long_value_is_400_and_body_excludes_value(
 ) -> None:
     """Oversized → 400 ``invalid_cookie`` raised IN-HANDLER (not a pydantic
     validator), so the rejected value can't surface in the 400/422 body."""
-    huge = "x" * 5000  # > _VALUE_MAX (2600 canonical chars)
+    huge = "x" * 5000  # > _VALUE_MAX (4000 canonical chars)
     res = await client_a.post(
         "/api/cookies", json={"gate_id": cookie_gate["id"], "value": huge}
     )
@@ -272,8 +297,16 @@ async def test_too_long_value_is_400_and_body_excludes_value(
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize(
     "bad_value",
-    ["", "   ", "\n\t  ", "tok\x00en", "line\x07bell"],
-    ids=["empty", "whitespace", "all-whitespace", "nul-byte", "control-char"],
+    ["", "   ", "\n\t  ", "tok\x00en", "line\x07bell", "tokén", "emoji\U0001f600"],
+    ids=[
+        "empty",
+        "whitespace",
+        "all-whitespace",
+        "nul-byte",
+        "control-char",
+        "non-ascii",
+        "astral-emoji",
+    ],
 )
 async def test_empty_or_unprintable_value_is_400(
     client_a: AsyncClient, cookie_gate: dict, bad_value: str

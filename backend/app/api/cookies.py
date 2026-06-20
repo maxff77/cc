@@ -65,8 +65,13 @@ _PG_INT_MAX = 2**31 - 1  # ids are int4; larger binds overflow asyncpg
 # A canonical value over this many chars is rejected with 400 ``invalid_cookie``
 # (the app guard). The DB dedup key is the sha256 hash, NOT this length — a real
 # cookie can exceed the ~2704-byte btree row limit, so the hash is the source of
-# truth; this guard just keeps absurd payloads out.
-_VALUE_MAX = 2600
+# truth; this guard just keeps absurd payloads out. The ceiling tracks the
+# Telegram single-message limit (4096): Phase 2 sends the cookie as ONE
+# ``.cookie <value>`` message (8-char prefix), so a value that can't fit in one
+# message can't be sent — 4000 leaves margin. A real logged-in Amazon cookie
+# runs ~2600-3500 chars (``ak_bmsc``/``at-*``/``session-token`` alone are huge);
+# the prior 2600 wrongly rejected legitimate cookies as ``invalid_cookie``.
+_VALUE_MAX = 4000
 
 # Per-(tenant, gate) cookie cap (Ask-First fork in the spec, resolved to 50).
 _COOKIE_CAP = 50
@@ -186,7 +191,17 @@ async def store_cookie(
     canonical = body.value.strip()
     # In-handler validation (NOT a pydantic validator): the rejected value
     # never reaches a default 422 body or an access log.
-    if not canonical or len(canonical) > _VALUE_MAX:
+    #
+    # ``isascii()`` is what makes the ``_VALUE_MAX`` ceiling track the Telegram
+    # single-message limit EXACTLY: Telegram counts UTF-16 code units, ``len()``
+    # counts code points — an astral-plane char (emoji) is 1 code point but 2
+    # UTF-16 units, so a non-ASCII value could pass ``_VALUE_MAX`` yet overflow
+    # the 4096-unit ``.cookie <value>`` send and livelock the line (every resume
+    # re-picks the un-sendable cookie). Cookie-octets are ASCII by RFC 6265
+    # anyway; rejecting non-ASCII also catches paste corruption (smart quotes,
+    # NBSP) that would break the cookie at the gate. With ASCII enforced,
+    # ``len`` == UTF-16 units == bytes, so the length guard is exact.
+    if not canonical or len(canonical) > _VALUE_MAX or not canonical.isascii():
         raise invalid_cookie()
     if any(not ch.isprintable() for ch in canonical):
         raise invalid_cookie()
