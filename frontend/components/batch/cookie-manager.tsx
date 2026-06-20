@@ -37,6 +37,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
   const [label, setLabel] = useState("");
   const [valueError, setValueError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const cookies = list.data?.items ?? [];
   const count = list.data?.total ?? cookies.length;
@@ -48,6 +49,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
     if (add.isPending) return;
     setValueError(null);
     setBanner(null);
+    setOkMsg(null);
 
     // Local guard mirrors the backend `invalid_cookie` (empty/whitespace-only)
     // — the backend stays authoritative and re-validates the canonical value.
@@ -65,6 +67,9 @@ export function CookieManager({ gateId }: { gateId: number }) {
           // is the only thing that comes back.
           setValue("");
           setLabel("");
+          // Confirm the store (also covers the idempotent re-POST, which the
+          // backend dedups to the same row). Clears on the next submit.
+          setOkMsg("Cookie guardada correctamente.");
         },
         onError: (err) => {
           if (err instanceof ApiError) {
@@ -94,6 +99,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
       legend="Cookies del gate"
       legendAs="h2"
     >
+      {okMsg && <Notice status="success">{okMsg}</Notice>}
       {banner && <Notice status="danger">{banner}</Notice>}
 
       <form className="flex flex-col gap-3" onSubmit={onSubmit}>
@@ -160,7 +166,12 @@ export function CookieManager({ gateId }: { gateId: number }) {
         {cookies.length > 0 && (
           <ul className="m-0 flex list-none flex-col divide-y divide-separator p-0">
             {cookies.map((c) => (
-              <CookieRow key={c.id} cookie={c} gateId={gateId} />
+              <CookieRow
+                key={c.id}
+                cookie={c}
+                gateId={gateId}
+                onDeleting={() => setOkMsg(null)}
+              />
             ))}
           </ul>
         )}
@@ -169,12 +180,22 @@ export function CookieManager({ gateId }: { gateId: number }) {
   );
 }
 
-function CookieRow({ cookie, gateId }: { cookie: CookieOut; gateId: number }) {
+function CookieRow({
+  cookie,
+  gateId,
+  onDeleting,
+}: {
+  cookie: CookieOut;
+  gateId: number;
+  onDeleting?: () => void;
+}) {
   const remove = useDeleteCookie(gateId);
   const [error, setError] = useState<string | null>(null);
 
   function onDelete() {
     if (remove.isPending) return;
+    // Drop a stale "guardada correctamente" — deleting contradicts it.
+    onDeleting?.();
     setError(null);
     remove.mutate(cookie.id, {
       onError: (err) => {
