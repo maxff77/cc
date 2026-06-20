@@ -184,19 +184,21 @@ async def test_new_batch_binds_active_capture_session_with_snapshots(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_same_gate_reuses_session_different_gate_replaces(
+async def test_every_batch_reuses_the_one_perpetual_session(
     ctx: dict[str, object],
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
 ) -> None:
-    """Legacy /api/enviar semantics: matching gate → reuse the active session;
-    different gate → fresh active session, previous deactivated (and only one
-    active per tenant — the partial unique index)."""
+    """Sessionless cockpit (PR-1): a tenant has exactly ONE ever-living capture
+    session. Same gate OR a different gate both REUSE it — a different gate just
+    refreshes the gate snapshot in place (no second row, no is_active/id churn).
+    The ≤1-active partial unique index is preserved trivially."""
     http, user = client_user
 
     first_id = await _post_batch(http, "uno", gate["id"])
     session_id = (await _get_batch(first_id)).capture_session_id
+    assert session_id is not None
     await _drain()  # batch completes — the next POST starts a NEW batch
 
     second_id = await _post_batch(http, "dos", gate["id"])
@@ -206,13 +208,13 @@ async def test_same_gate_reuses_session_different_gate_replaces(
 
     other = await _create_other_gate(ctx, gate)
     third_id = await _post_batch(http, "tres", other["id"])
-    third_session_id = (await _get_batch(third_id)).capture_session_id
-    assert third_session_id is not None and third_session_id != session_id
+    # Different gate → the SAME session, snapshot refreshed in place.
+    assert (await _get_batch(third_id)).capture_session_id == session_id
 
     sessions = await _sessions_of(user.tenant_id)
-    assert [s.id for s in sessions] == [session_id, third_session_id]
-    assert [s.is_active for s in sessions] == [False, True]
-    assert sessions[1].gate_value == other["value"]
+    assert [s.id for s in sessions] == [session_id]  # still exactly one
+    assert sessions[0].is_active is True
+    assert sessions[0].gate_value == other["value"]  # snapshot refreshed
 
 
 # --- Reply mapping (AC 4 + 6 + 8) ---------------------------------------------
@@ -455,17 +457,20 @@ async def test_ok_edit_without_new_cc_persists_without_emitting(
     assert len(_captured(events)) == 1  # only the ok transition emitted
 
 
-# --- CC dedup is per session (AC 6) -------------------------------------------
+# --- CC dedup is tenant-lifetime over the one perpetual session (PR-1) --------
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_cc_dedup_within_session_but_not_across_sessions(
+async def test_cc_dedup_is_tenant_lifetime_across_gates(
     ctx: dict[str, object],
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
     events: list[tuple],
 ) -> None:
+    """PR-1 Decided invariant change: with ONE perpetual session,
+    uq_responses_session_cc dedups a CC value for the tenant's whole life — even
+    across gates (the old per-rotating-session reset is gone)."""
     http, _ = client_user
     batch_id = await _post_batch(http, "uno\ndos", gate["id"])
     await _drain()  # message ids 1 and 2
@@ -491,20 +496,21 @@ async def test_cc_dedup_within_session_but_not_across_sessions(
     assert captured[1][2]["new_cc"] == []  # … but brings nothing new
     assert captured[1][2]["cc_total"] == 1
 
-    # A NEW session (different gate) does NOT inherit the dedup set.
+    # A different gate REUSES the one session, so the dedup set carries over:
+    # the same CC value is NOT re-inserted (tenant-lifetime dedup).
     other = await _create_other_gate(ctx, gate)
     other_batch_id = await _post_batch(http, "tres", other["id"])
     await _drain()  # message id 3
-    other_session_id = (await _get_batch(other_batch_id)).capture_session_id
-    assert other_session_id is not None and other_session_id != session_id
+    assert (await _get_batch(other_batch_id)).capture_session_id == session_id
     await capture.process_incoming(
         IncomingReply(
             message_id=1008, reply_to_msg_id=3, text="✅ CC: 4111 Status c",
             edited=False,
         )
     )
-    assert [c.text for c in await _cc_rows(other_session_id)] == ["4111"]
-    assert _captured(events)[2][2]["new_cc"] == ["4111"]
+    assert [c.text for c in await _cc_rows(session_id)] == ["4111"]  # still ONE
+    assert _captured(events)[2][2]["new_cc"] == []  # deduped, nothing new
+    assert _captured(events)[2][2]["cc_total"] == 1
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -774,35 +780,42 @@ async def test_reply_saves_only_to_its_own_tenant(
         await cleanup_users({user_b.email})
 
 
-# --- Backfill never touches activation (review 3-1) -------------------------------
+# --- Backfill is read-only over the one perpetual session (PR-1) -----------------
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_backfill_never_deactivates_the_live_session(
+async def test_backfill_reuses_the_perpetual_session_read_only(
     ctx: dict[str, object],
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
     events: list[tuple],
 ) -> None:
-    """A late reply to an unbound batch (pre-3.1 / future SET-NULL) whose gate
-    differs from the active session's must NOT flip the tenant's live session:
-    the fallback is inserted INACTIVE — activation stays an API-only act."""
+    """A late reply to an unbound batch (capture_session_id SET-NULLed) resolves
+    via the READ-ONLY backfill: it returns the tenant's ONE perpetual active
+    session and rebinds the batch to it — never minting/activating a session
+    (that would risk the partial-index IntegrityError → capture poison-drop).
+    The live session is never deactivated; there is always exactly one."""
     http, user = client_user
-    batch_a = await _post_batch(http, "uno", gate["id"])  # S1 active (gate A)
+    batch_a = await _post_batch(http, "uno", gate["id"])  # binds the perpetual S
     await _drain()  # message_id 1
     other = await _create_other_gate(ctx, gate)
-    batch_b = await _post_batch(http, "dos", other["id"])  # S2 active (gate B)
+    batch_b = await _post_batch(http, "dos", other["id"])  # REUSES S (gate B snap)
     await _drain()  # message_id 2
 
-    # Simulate the unbound shape: sever batch A's session binding.
+    sessions = await _sessions_of(user.tenant_id)
+    assert len(sessions) == 1  # one perpetual session, regardless of gate
+    s = sessions[0]
+    assert s.is_active is True
+
+    # Sever batch A's binding (the pre-PR-1 / SET-NULL unbound shape).
     async with async_session_factory() as session:
         batch = await session.get(Batch, batch_a)
         assert batch is not None
         batch.capture_session_id = None
         await session.commit()
 
-    # Late reply to batch A (gate A ≠ the live S2's gate B).
+    # Late reply to batch A → read-only backfill returns the perpetual S.
     await capture.process_incoming(
         IncomingReply(
             message_id=8001, reply_to_msg_id=1, text="✅ CC: 8888 Status x",
@@ -811,17 +824,14 @@ async def test_backfill_never_deactivates_the_live_session(
     )
 
     sessions = await _sessions_of(user.tenant_id)
-    assert len(sessions) == 3
-    s1, s2, s3 = sessions
-    # S2 stays the ACTIVE session; the fallback S3 is born inactive.
-    assert [s.is_active for s in sessions] == [False, True, False]
-    assert s3.gate_value == gate["value"]
-    assert (await _get_batch(batch_a)).capture_session_id == s3.id  # backfilled
-    assert (await _get_batch(batch_b)).capture_session_id == s2.id  # untouched
+    assert len(sessions) == 1  # NO new session minted
+    assert sessions[0].id == s.id and sessions[0].is_active is True
+    assert (await _get_batch(batch_a)).capture_session_id == s.id  # rebacked
+    assert (await _get_batch(batch_b)).capture_session_id == s.id  # untouched
     fulls = await _full_rows(8001)
-    assert len(fulls) == 1 and fulls[0].capture_session_id == s3.id
+    assert len(fulls) == 1 and fulls[0].capture_session_id == s.id
 
-    # Exact gate match still reuses the ACTIVE session (no fourth session).
+    # Severing another batch and replaying still resolves to the SAME S.
     async with async_session_factory() as session:
         batch = await session.get(Batch, batch_b)
         assert batch is not None
@@ -833,8 +843,8 @@ async def test_backfill_never_deactivates_the_live_session(
             edited=False,
         )
     )
-    assert (await _get_batch(batch_b)).capture_session_id == s2.id
-    assert len(await _sessions_of(user.tenant_id)) == 3
+    assert (await _get_batch(batch_b)).capture_session_id == s.id
+    assert len(await _sessions_of(user.tenant_id)) == 1
 
 
 # --- DB-down buffer (deferred 2-5 :28, absorbed by design) -----------------------

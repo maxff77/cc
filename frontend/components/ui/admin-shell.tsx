@@ -17,11 +17,10 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
 
 // AdminShell only ever renders for admin/owner (middleware gates /admin/*),
-// so Envío + Historial are always shown — staff's path BACK to the sender
-// (owner/admins send too: 3-tier priority owner > admin > client).
+// so Envío is always shown — staff's path BACK to the sender (owner/admins
+// send too: 3-tier priority owner > admin > client).
 const ITEMS = [
   { href: "/app", label: "Envío", ownerOnly: false },
-  { href: "/app/sessions", label: "Historial", ownerOnly: false },
   { href: "/admin/users", label: "Usuarios", ownerOnly: false },
   // Gift keys: admins + owner mint here (the tier is owner-fixed in Planes).
   { href: "/admin/keys", label: "Keys", ownerOnly: false },
@@ -61,9 +60,9 @@ export function AdminShell({
     item: (typeof ITEMS)[number],
     { underline, className }: { underline: boolean; className?: string },
   ) => {
-    // The cockpit root (/app) matches exactly only — otherwise /app/sessions
-    // would light up Envío as well as Historial (the old "/" href had this
-    // property for free).
+    // The cockpit root (/app) matches exactly only — a prefix match would light
+    // up Envío for any nested /app/* route (the old "/" href had this property
+    // for free).
     const active =
       pathname === item.href ||
       (item.href !== "/app" && pathname.startsWith(item.href + "/"));

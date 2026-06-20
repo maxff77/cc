@@ -519,7 +519,7 @@ function reduce(event: string, data: unknown) {
         // A live batch bound to ANOTHER session ⇒ gate change replaced the
         // session — the panels belong to the old one: start clean (3.2).
         // `adopting` = this batch binds a session DIFFERENT from the store's
-        // (incl. the null→id case: fresh load or after clearSession). Its gate
+        // (incl. the null→id case: fresh load). Its gate
         // IS this batch's gate (the batch is bound to it); its name is unknown
         // here (batch.state carries no session_name) and a freshly-forked
         // session is unnamed anyway — null until the next snapshot/
@@ -831,44 +831,28 @@ export function useLiveBatch(): LiveBatchState {
   );
 }
 
-// Local clear confirmed by REST (Story 3.3): after DELETE /api/sessions/{id}
-// succeeds, the deleting tab resets ONLY the session fields — otherwise the
-// operator deletes the session in Historial, returns to Envío and the panels
-// keep showing rows that no longer exist server-side until the next
-// reconnection. Same pattern as `seedFromBatch` (REST-confirmed local seed;
-// the WS snapshot stays the source of truth afterwards). Recorded decision:
-// other open tabs reconcile on their next snapshot (stale visual accepted at
-// MVP scale). The delete stays a local seed, no WS event — `session.active`
-// (Story 3.4) is the CONTINUE event, not a delete signal.
-export function clearSession(sessionId: number) {
-  if (store.sessionId !== sessionId) return;
+// Local clear confirmed by REST (PR-1 "Limpiar literal"): after POST
+// /api/sessions/clear succeeds, the acting tab empties all three live panels
+// immediately — the server stamps a per-session `cleared_response_id` view
+// cutoff and re-emits `session.active` carrying the (now-empty) post-cutoff
+// slice, so other tabs reconcile on that event/their next snapshot. This local
+// reset is the same REST-confirmed seed pattern as `seedFromBatch`; the WS
+// snapshot stays the source of truth afterwards.
+//
+// KEEPS `sessionId` (the perpetual session persists — Limpiar never rotates it),
+// `awaitingReply` (server-side cutoff-agnostic: zeroing it here would flicker
+// the "esperando respuesta" badge 0→N on the next frame), and the batch/
+// watchdog/credits state untouched. Only the three panels and their totals
+// reset.
+export function clearCockpit() {
   setStore({
     ...store,
-    sessionId: null,
-    sessionName: null,
-    sessionGateName: null,
-    sessionDisplayValue: null,
     responses: [],
     cc: [],
     ccNew: 0,
     responsesTotal: 0,
     responsesOkTotal: 0,
-    awaitingReply: 0,
-    // Session change (Phase 2): a stale `cookies_exhausted` prompt must not
-    // outlive the session it belonged to.
-    pauseReason: null,
   });
-}
-
-// Local seed confirmed by REST after PATCH /api/sessions/{id} renames the
-// ACTIVE session from the cockpit. `rename_session` emits NO WS event (it
-// serves ANY session in Historial, not just the active one — a session.active
-// emit there would be wrong), so the renaming tab updates its own strip
-// immediately; other tabs reconcile on their next snapshot (same stale-visual
-// tradeoff as `clearSession`). No-op if the renamed session isn't the active.
-export function renameActiveSession(sessionId: number, name: string) {
-  if (store.sessionId !== sessionId) return;
-  setStore({ ...store, sessionName: name });
 }
 
 // Seed the store from a successful POST /api/batches response so the ring

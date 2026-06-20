@@ -217,6 +217,13 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
             "responses": [],
             "cc": [],
         }
+    # Cockpit "Limpiar" view-cutoff (sessionless cockpit, PR-1): an ``id``
+    # high-water-mark threaded into the 4 DISPLAY reads below so a Limpiar (and a
+    # later reconnect, since ``snapshot`` merges this same slice) hides every row
+    # captured at or before the clear. ``awaiting_reply`` stays cutoff-AGNOSTIC
+    # (``responded_line_count`` is an integrity query — Limpiar must not spike
+    # "esperando respuesta").
+    cutoff = active.cleared_response_id
     return {
         "session_id": active.id,
         # Identity shown by the cockpit strip (name falls back to created_at
@@ -224,16 +231,24 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         "session_name": active.name,
         "session_gate_name": active.gate_name,
         "session_gate_display_value": active.gate_display_value,
-        "cc_new": await responses_repo.cc_count(session, active.id),
-        "responses_total": await responses_repo.full_count(session, active.id),
+        "cc_new": await responses_repo.cc_count(
+            session, active.id, cleared_response_id=cutoff
+        ),
+        "responses_total": await responses_repo.full_count(
+            session, active.id, cleared_response_id=cutoff
+        ),
         # "Filtrada con response" badge: only the ✅ revisions (full text).
         "responses_ok_total": await responses_repo.full_count(
-            session, active.id, status=responses_repo.STATUS_OK
+            session, active.id, status=responses_repo.STATUS_OK,
+            cleared_response_id=cutoff,
         ),
         # "Esperando respuesta" — delivered lines without a ✅/❌ yet, session
         # scoped like the totals above (survives the idle reset, never resets
         # between batches). Carried in the snapshot AND session.active so a
         # reconnecting tab rebuilds the badge from the snapshot alone.
+        # CUTOFF-AGNOSTIC on purpose (the known accepted ``awaiting_reply``
+        # drift): the badge means "lines still waiting", which Limpiar does not
+        # answer.
         "awaiting_reply": await awaiting_reply_count(session, active.id),
         "responses": [
             {
@@ -244,7 +259,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
                 "created_at": row.created_at.isoformat(),
             }
             for row in await responses_repo.list_full(
-                session, active.id, _SNAPSHOT_ROWS
+                session, active.id, _SNAPSHOT_ROWS, cleared_response_id=cutoff
             )
         ],
         # Filtrada rows carry no timestamp — parity with filtrada.txt: one
@@ -252,7 +267,7 @@ async def active_session_data(session: AsyncSession, tenant_id: int) -> dict:
         "cc": [
             {"id": row.id, "text": row.text}
             for row in await responses_repo.list_cc(
-                session, active.id, _SNAPSHOT_ROWS
+                session, active.id, _SNAPSHOT_ROWS, cleared_response_id=cutoff
             )
         ],
     }

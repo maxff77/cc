@@ -542,8 +542,19 @@ async def process_incoming(reply: IncomingReply) -> None:
                 message_id=reply.message_id,
                 values=extract_cc(clean_text),
             )
+        # The live "Datos CC nuevas" badge is a DISPLAY count, so it MUST honor
+        # the cockpit Limpiar cutoff (PR-1) — otherwise the first reply after a
+        # Limpiar would snap the badge back to the full historical CC count
+        # while the snapshot/session.active path (which threads the cutoff)
+        # shows the post-clear slice. ws.ts assigns this verbatim (`ccNew`).
         cc_total = await responses_repo.cc_count(
-            session, attributed.capture_session_id
+            session,
+            attributed.capture_session_id,
+            cleared_response_id=(
+                capture_session.cleared_response_id
+                if capture_session is not None
+                else None
+            ),
         )
         # "Esperando respuesta" recomputed AFTER add_full's flush (so this
         # reply is already counted as answered): a message's FIRST ✅/❌ drops

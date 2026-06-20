@@ -14,7 +14,13 @@ the legacy. Three recorded decisions live here:
 2. **The rows ARE the view.** Callers pass ``list_full(limit=None)`` /
    ``list_cc(limit=None)`` ascending — the same complete data the Historial
    detail paints. Completa exports ALL revisions (❌ and re-captured edits
-   included) because that IS the Completa view of the new model.
+   included) because that IS the Completa view of the new model. The cockpit
+   export (sessionless cockpit, PR-1) is CUTOFF-RESPECTING: its router threads
+   the perpetual session's ``cleared_response_id`` into those same ``list_*``
+   reads, so these PURE builders receive the already-post-Limpiar rows and need
+   no cutoff parameter themselves (the admin ``GET /{id}/export`` passes no
+   cutoff ⇒ full history). The cutoff lives in the read path, exactly like the
+   on-screen panels — never in this string-building layer.
 3. **Filename is ASCII-safe and the backend is its single authority.**
    ``export_filename`` ports the legacy ``prefijo_slug`` (``lstrip(".")``,
    spaces→``_``) hardened to ASCII: the ``Content-Disposition`` header must be

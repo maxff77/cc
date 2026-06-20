@@ -642,6 +642,21 @@ class CaptureSession(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), nullable=False
     )
+    # Cockpit "Limpiar" view-cutoff (sessionless cockpit, PR-1). An ``id``
+    # HIGH-WATER-MARK, not a timestamp: when the client clears the live panels,
+    # this is stamped to ``MAX(responses.id)`` and the DISPLAY reads (and ONLY
+    # the display reads) AND ``Response.id > cleared_response_id`` so every row
+    # captured at or before the clear is hidden from the cockpit/snapshot/export.
+    # It follows the ``hidden_at`` discipline exactly — every integrity /
+    # attribution / reconciler / dedup (``add_new_cc``) / credit /
+    # ``awaiting_reply`` query IGNORES it, so Limpiar deletes ZERO rows and the
+    # approved-✅ history survives for the deferred PR-2. ``id`` (monotonic, the
+    # ``_list_last`` sort key) — NOT ``created_at`` (txn-start ``now()``, so
+    # rows of one capture transaction share a timestamp) — makes the cutoff
+    # tie-immune. NULL = nothing cleared (every pre-existing row).
+    cleared_response_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -228,13 +228,16 @@ async def create_or_append_batch(
             created_lines = await batches_repo.add_lines(
                 session, batch=batch, texts=lines, start_position=0
             )
-            # Capture-session binding (Story 3.1, AC 3) in the SAME
-            # transaction: reuse the tenant's active session when its gate
-            # matches, otherwise activate a fresh one — the batch commit IS
-            # the "bound automatically at batch start". A WAITING batch binds
-            # at creation too (recorded decision): the panels flip right
-            # away, and old replies attribute via send_log → line → batch,
-            # never via the active session.
+            # Capture-session binding (sessionless cockpit, PR-1) in the SAME
+            # transaction: ``resolve_for_batch`` get-or-creates the tenant's ONE
+            # perpetual session (``ensure_perpetual``) and refreshes the gate
+            # snapshots IN PLACE — a gate change reuses the SAME session, no
+            # second row, no ``is_active``/``id`` churn (no rotate-on-mismatch).
+            # The batch commit IS the "bound automatically at batch start". A
+            # WAITING batch binds at creation too (recorded decision): the panels
+            # flip right away, and old replies attribute via send_log → line →
+            # batch. The IntegrityError fallback below still covers the single
+            # first-ever-creation race (the same one ``ensure_perpetual`` catches).
             capture_session = await capture_sessions_repo.resolve_for_batch(
                 session, tenant_id, gate_value, gate_name, gate_display_value,
                 special_mode, cookie_mode,
@@ -252,11 +255,12 @@ async def create_or_append_batch(
             # Two tabs raced past the live check (TOCTOU): the partial unique
             # index uq_batches_one_live_per_tenant rejected the second batch.
             # Re-read and fall through to the append path — never a 500.
-            # (uq_capture_sessions_one_active_per_tenant can only collide in
-            # this SAME race: this handler is the ONLY place that creates
-            # ACTIVE sessions — the attribution backfill inserts INACTIVE
-            # fallbacks (review 3-1) — so this rollback covers batch AND
-            # session alike.)
+            # (This handler now covers ONLY the batch race: the perpetual
+            # capture session is a get-or-create singleton — ensure_perpetual
+            # swallows its OWN uq_capture_sessions_one_active_per_tenant
+            # IntegrityError internally and re-SELECTs (sessionless cockpit,
+            # PR-1), and the attribution backfill is read-only, so a session
+            # collision never reaches here.)
             await session.rollback()
             live = await batches_repo.get_live_batch(
                 session, tenant_id, for_update=True

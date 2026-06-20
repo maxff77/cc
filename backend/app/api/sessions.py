@@ -1,21 +1,29 @@
-"""Sessions router (Story 3.3): the Historial — list, detail, rename, delete;
-plus ``POST /{id}/continue`` (Story 3.4): reopen a closed session as the
-active capture session, and ``GET /{id}/export`` (Story 3.5): the
-Completa/Filtrada views as downloadable ``.txt``.
+"""Sessions router (sessionless cockpit, PR-1).
 
-CRUD (GET/PATCH/DELETE) follows architecture's literal route list
-(``/api/sessions/{id}``); continue is the non-CRUD verb-suffix action
-(idiom ``/api/batches/{id}/pause|resume|stop``); export is a GET — a safe,
-idempotent read (the verb-suffix POST idiom is for actions that mutate).
+The cockpit collapses to exactly ONE ever-living ``capture_session`` per tenant
+(``ensure_perpetual``, never rotated/renamed/continued/closed). The user-facing
+session lifecycle is GONE: this router no longer exposes list / detail / rename /
+continue / new / delete. What remains:
+
+- ``POST /api/sessions/clear`` — the cockpit "Limpiar": resolve the tenant's one
+  perpetual session FOR UPDATE, stamp the non-destructive view-cutoff
+  (``cleared_response_id = MAX(responses.id)``), commit, and re-emit
+  ``session.active`` carrying the now-empty post-cutoff slice. Deletes ZERO
+  ``responses`` rows — approved ✅ rows survive for the deferred PR-2 history.
+- ``GET /api/sessions/export`` — the COCKPIT ``.txt`` export (no path id): the
+  perpetual session's live, post-Limpiar view (CUTOFF-RESPECTING), mirroring the
+  same ``view`` query param the panel footer already sends.
+- ``GET /api/sessions/{id}/export`` — the ADMIN / PR-2 export (cutoff-AGNOSTIC,
+  full history) — KEPT, NOT removed.
+
+The shared schemas (``SessionOut``/``SessionDetailOut``/``SessionResponseRow``/
+``SessionCcRow``/``session_to_out``) stay too: the admin cross-tenant support
+view (``api/admin.py``, Story 3.6) imports them, and PR-2 will reuse them.
 
 Tenant scoping: ``tenant_id`` comes ONLY from ``user.tenant_id`` (the session)
-— never from the body or path (architecture mandate). Any authenticated role
-may browse: the owner navigates their own Historial exactly like a client
-(same criterion as ``POST /api/batches``); the cross-tenant support view
-lives in ``api/admin.py`` (Story 3.6), which imports these schemas +
-``session_to_out`` so both surfaces serve the identical shapes. Every lookup
-here is tenant-scoped and the 404 never leaks existence (unknown id, another
-tenant's id and out-of-int4 id look the same).
+— never from the body or path (architecture mandate). The cockpit ``/clear`` and
+``/export`` resolve the perpetual session by tenant; a tenant with none yet 404s
+identically (no existence leak), exactly as the per-id lookups do.
 """
 
 from datetime import datetime
@@ -23,20 +31,16 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, field_validator
-from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.broadcaster import broadcaster
-from app.core.display_transform import display_transform
-from app.core.redact import redact_reply_text
 from app.db.base import get_session
 from app.db.models import CaptureSession, User
-from app.db.repos import batches as batches_repo
 from app.db.repos import capture_sessions as capture_sessions_repo
 from app.db.repos import responses as responses_repo
-from app.errors import batch_live, session_conflict, session_in_use, session_not_found
+from app.errors import session_not_found
 from app.services import batches as batches_service
 from app.services import exports
 
@@ -44,12 +48,10 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 _PG_INT_MAX = 2**31 - 1  # ids are int4; larger binds overflow asyncpg
 
-# The friendly-name cap of AC 4 = ``CaptureSession.name`` String(200) —
-# mirror of legacy ``escribir_nombre``'s 200-char cap.
-_NAME_MAX = 200
-
 
 # --- Schemas (inline, codebase convention) ---------------------------------
+# KEPT for the admin support view (api/admin.py imports these) + PR-2. The
+# client-facing CRUD that used to consume them is gone (sessionless cockpit).
 
 
 class SessionOut(BaseModel):
@@ -64,11 +66,6 @@ class SessionOut(BaseModel):
     # decision), not from "bound to a live batch".
     is_active: bool
     created_at: datetime
-
-
-class SessionListResponse(BaseModel):
-    items: list[SessionOut]
-    total: int
 
 
 class SessionResponseRow(BaseModel):
@@ -97,29 +94,9 @@ class SessionDetailOut(SessionOut):
     cc_total: int
 
 
-class RenameSessionRequest(BaseModel):
-    name: str
-
-    @field_validator("name")
-    @classmethod
-    def _valid_name(cls, v: str) -> str:
-        # Idiom _validate_gate_name (api/admin.py): trimmed, non-empty, no
-        # control/invisible chars, ≤200. ValueError ⇒ 422; the frontend
-        # mirrors this validation before sending.
-        v = v.strip()
-        if not v:
-            raise ValueError("nombre vacío")
-        if any(not ch.isprintable() for ch in v):
-            raise ValueError("el nombre no puede contener caracteres invisibles")
-        if len(v) > _NAME_MAX:
-            raise ValueError("nombre demasiado largo")
-        return v
-
-
 def session_to_out(capture_session: CaptureSession) -> SessionOut:
-    """Shared CaptureSession → SessionOut mapper (also used by the admin
-    support view, Story 3.6 — exact mirror of the ``gate_to_out``
-    precedent)."""
+    """Shared CaptureSession → SessionOut mapper (used by the admin support
+    view, Story 3.6 — exact mirror of the ``gate_to_out`` precedent)."""
     return SessionOut(
         id=capture_session.id,
         name=capture_session.name,
@@ -130,23 +107,22 @@ def session_to_out(capture_session: CaptureSession) -> SessionOut:
     )
 
 
-async def _require_session(
+async def _require_perpetual(
     session: AsyncSession,
     tenant_id: int,
-    session_id: int,
     *,
     for_update: bool = False,
 ) -> CaptureSession:
-    """Tenant-scoped lookup shared by detail/rename/delete.
+    """Resolve the tenant's ONE perpetual capture session, or 404.
 
-    Unknown id, another tenant's id and out-of-int4 id all 404 alike
-    (idiom ``_controlled_batch``). ``for_update=True`` (the delete path)
-    locks the row until commit — see ``delete_session``.
+    ``tenant_id`` is the session's, never the path's. A tenant with no session
+    yet (never sent a batch) 404s identically to every other missing-session
+    case (no existence leak). ``for_update=True`` (the ``/clear`` path) locks
+    the row until commit so a concurrent batch-start / clear serializes against
+    the cutoff stamp.
     """
-    if not 0 < session_id <= _PG_INT_MAX:
-        raise session_not_found()
-    target = await capture_sessions_repo.get_for_tenant(
-        session, tenant_id, session_id, for_update=for_update
+    target = await capture_sessions_repo.get_active(
+        session, tenant_id, for_update=for_update
     )
     if target is None:
         raise session_not_found()
@@ -156,54 +132,86 @@ async def _require_session(
 # --- Routes ------------------------------------------------------------------
 
 
-@router.get("", response_model=SessionListResponse)
-async def list_sessions(
+@router.post("/clear")
+async def clear_view(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> SessionListResponse:
-    """The tenant's sessions, newest first (AC 1).
+) -> dict[str, int | None]:
+    """The cockpit "Limpiar" (sessionless cockpit, PR-1): clear all three live
+    panels (Completa, Aprobadas ✅, Datos CC) via a NON-destructive view-cutoff.
 
-    Flat list — the grouping by gate is presentation, done client-side.
+    Resolves the tenant's ONE perpetual session FOR UPDATE and stamps
+    ``cleared_response_id = MAX(responses.id)`` (an ``id`` high-water-mark, NOT a
+    timestamp). The DISPLAY reads (cockpit/snapshot panels + the cockpit export)
+    then hide every row with ``Response.id <= cutoff``; ZERO ``responses`` rows
+    are deleted, so the approved-✅ history survives for the deferred PR-2 and
+    every integrity / attribution / reconciler / dedup / credit / awaiting_reply
+    query is untouched — "esperando respuesta" does NOT spike.
+
+    Post-commit re-emit of ``session.active`` (verbatim ``active_session_data``,
+    which threads the new cutoff) rebinds every open tab to the now-empty slice;
+    a tab that misses it reconciles with its next snapshot (same merge). Tenant
+    scoped: a tenant with no session yet 404s identically (``tenant_id`` only
+    from the session). Returns ``{"cleared_response_id": cutoff}``.
     """
-    sessions = await capture_sessions_repo.list_for_tenant(session, user.tenant_id)
-    return SessionListResponse(
-        items=[session_to_out(s) for s in sessions], total=len(sessions)
-    )
+    target = await _require_perpetual(session, user.tenant_id, for_update=True)
+    cutoff = await capture_sessions_repo.clear_view(session, target)
+    await session.commit()
+    payload = await batches_service.active_session_data(session, user.tenant_id)
+    await broadcaster.emit(user.tenant_id, "session.active", payload)
+    return {"cleared_response_id": cutoff}
 
 
-@router.get("/{session_id}", response_model=SessionDetailOut)
-async def get_session_detail(
-    session_id: int,
+@router.get("/export", response_class=PlainTextResponse)
+async def export_cockpit(
+    view: Literal["completa", "filtrada", "filtrada_completa"],
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> SessionDetailOut:
-    """Detail with the COMPLETE Completa/Filtrada data (AC 2).
+) -> PlainTextResponse:
+    """The COCKPIT ``.txt`` export (sessionless cockpit, PR-1) — the panels'
+    ``↓ .txt`` footer, on the tenant's perpetual session, CUTOFF-RESPECTING.
 
-    ``limit=None`` — the ``_SNAPSHOT_ROWS`` cap is per-reconnection only; the
-    full data lives here (3.2's recorded promise). With no cap the totals ARE
-    the list lengths — the count queries stay snapshot-only.
+    Mirrors the SAME ``view`` selector the existing ``GET /{id}/export`` accepts
+    (``completa`` | ``filtrada`` | ``filtrada_completa``) but threads the
+    session's ``cleared_response_id`` into the export builders so the file
+    contains ONLY the live, post-Limpiar view — consistent with "limpiar
+    literal". (The full-history dump belongs to the deferred PR-2 / the admin
+    ``GET /{id}/export``, which stays cutoff-AGNOSTIC.)
+
+    No live-batch guard (works during a live batch and idle). Zero rows ⇒ 200
+    with an empty body. The tenant with no session yet 404s identically
+    (``tenant_id`` only from the session). ``PlainTextResponse`` sets
+    ``text/plain; charset=utf-8``; the filename is the backend's authority and
+    the body carries CC data (``Cache-Control: no-store``).
     """
-    target = await _require_session(session, user.tenant_id, session_id)
-    responses = await responses_repo.list_full(session, target.id, None)
-    cc = await responses_repo.list_cc(session, target.id, None)
-    return SessionDetailOut(
-        **session_to_out(target).model_dump(),
-        responses=[
-            SessionResponseRow(
-                id=row.id,
-                message_id=row.message_id,
-                status=row.status,
-                text=display_transform(redact_reply_text(row.text), target.cookie_mode),
-                created_at=row.created_at,
-            )
-            for row in responses
-        ],
-        cc=[SessionCcRow(id=row.id, text=row.text) for row in cc],
-        responses_total=len(responses),
-        responses_ok_total=await responses_repo.full_count(
-            session, target.id, status=responses_repo.STATUS_OK
-        ),
-        cc_total=len(cc),
+    target = await _require_perpetual(session, user.tenant_id)
+    cutoff = target.cleared_response_id
+    if view == "completa":
+        rows = await responses_repo.list_full(
+            session, target.id, None, cleared_response_id=cutoff
+        )
+        content = exports.completa_txt(rows, target.cookie_mode)
+    elif view == "filtrada_completa":
+        # "Filtrada con response": the full text of only the ✅ revisions —
+        # same builder as Completa, fed the status-filtered rows.
+        rows = await responses_repo.list_full(
+            session, target.id, None, status=responses_repo.STATUS_OK,
+            cleared_response_id=cutoff,
+        )
+        content = exports.completa_txt(rows, target.cookie_mode)
+    else:
+        rows = await responses_repo.list_cc(
+            session, target.id, None, cleared_response_id=cutoff
+        )
+        content = exports.filtrada_txt(rows)
+    filename = exports.export_filename(target, view)
+    return PlainTextResponse(
+        content,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # The body carries CC data — "no cache" in the HTTP contract.
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -214,28 +222,25 @@ async def export_session(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> PlainTextResponse:
-    """Download one view as ``.txt`` (Story 3.5, FR18) — generated on the fly
-    from rows, no cache, no files on disk (architecture mandate).
+    """The ADMIN / PR-2 per-session ``.txt`` export — CUTOFF-AGNOSTIC (full
+    history), KEPT from Story 3.5.
 
-    ``view`` maps the legacy ``?tipo=completa|filtrada`` (``tipo``→``view``);
-    the ``Literal`` validates at the edge ⇒ 422 on anything else (same
-    treatment as every validation 422 in the project — the UI never builds an
-    invalid view). The tenant-scoped lookup's 404 trío (unknown / foreign /
-    out-of-int4 id) IS the AC 3 isolation — no new code, no existence leak.
-
-    NO live-batch guard (AC 2: works both during a live batch and on closed
-    sessions — same lane as rename). Zero rows ⇒ 200 with an empty body
-    (recorded decision: a 404 here would conflate "no data" with "no
-    session"). ``PlainTextResponse`` already sets ``text/plain; charset=utf-8``;
-    the filename in ``Content-Disposition`` is the backend's single authority.
+    Unlike the cockpit ``GET /export``, this NEVER applies the Limpiar cutoff:
+    it dumps the complete Completa/Filtrada data of one session by id. Tenant
+    scoped — unknown / foreign / out-of-int4 id all 404 identically (no
+    existence leak). Generated on the fly, no cache, no files on disk.
     """
-    target = await _require_session(session, user.tenant_id, session_id)
+    if not 0 < session_id <= _PG_INT_MAX:
+        raise session_not_found()
+    target = await capture_sessions_repo.get_for_tenant(
+        session, user.tenant_id, session_id
+    )
+    if target is None:
+        raise session_not_found()
     if view == "completa":
         rows = await responses_repo.list_full(session, target.id, None)
         content = exports.completa_txt(rows, target.cookie_mode)
     elif view == "filtrada_completa":
-        # "Filtrada con response": the full text of only the ✅ revisions —
-        # same builder as Completa, fed the status-filtered rows.
         rows = await responses_repo.list_full(
             session, target.id, None, status=responses_repo.STATUS_OK
         )
@@ -248,200 +253,6 @@ async def export_session(
         content,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            # AC 1's "no cache" enforced in the HTTP contract, not just by
-            # current browser heuristics: the body carries CC data.
             "Cache-Control": "no-store",
         },
     )
-
-
-@router.patch("/{session_id}", response_model=SessionOut)
-async def rename_session(
-    session_id: int,
-    body: RenameSessionRequest,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> SessionOut:
-    """Rename (AC 4). NO live-batch guard — recorded legacy parity
-    ("renombrar is unguarded") — and no uniqueness: names may repeat, the
-    stable id is the DB id. ``updated_at`` refreshes itself (onupdate)."""
-    target = await _require_session(session, user.tenant_id, session_id)
-    target.name = body.name
-    await session.commit()
-    return session_to_out(target)
-
-
-@router.post("/{session_id}/continue", response_model=SessionOut)
-async def continue_session(
-    session_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> SessionOut:
-    """Continuar (Story 3.4, AC 1–3): reactivate this session as the tenant's
-    active capture session.
-
-    The CC dedup needs NO preloading here — it is DB-backed per
-    ``capture_session_id`` (``add_new_cc`` + ``uq_responses_session_cc``), so
-    reactivating the session is the whole "dedup set preserved": the next
-    batch of the same gate binds to it via ``resolve_for_batch`` and every
-    already-captured CC value stays deduped.
-
-    Guard (AC 3): ANY live batch of the tenant (sending|paused|stopping) ⇒
-    409 ``batch_live`` — legacy parity "nueva/continuar return HTTP 409 while
-    a batch is live or paused (`_lote_vivo`)". Unlike delete's guard it does
-    NOT matter which session the live batch is bound to.
-
-    The lookup takes ``FOR UPDATE`` so it serializes with a concurrent DELETE
-    of the same target (3.3 takes the same lock) and with another continue of
-    the SAME target. Two continues of DIFFERENT targets (or a continue
-    crossing a batch start) can still race into
-    ``uq_capture_sessions_one_active_per_tenant`` at commit — mapped to 409
-    ``session_conflict``, never a raw 500.
-
-    Idempotent: continuing the ALREADY-active session (surface idle) is a
-    clean no-op in ``activate`` ⇒ 200 + emit (cheap multi-tab reconcile; the
-    UI never offers the button on "En curso", but another tab may have
-    activated it in between). Function name: ``continue`` is a reserved word.
-    """
-    target = await _require_session(
-        session, user.tenant_id, session_id, for_update=True
-    )
-    live = await batches_repo.get_live_batch(session, user.tenant_id)
-    if live is not None:
-        raise batch_live()
-    try:
-        await capture_sessions_repo.activate(session, target)
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise session_conflict() from None
-    # POST-commit: fresh SELECTs in the same request session see the
-    # committed state; the payload leaves fully materialized (flat dicts,
-    # isoformat timestamps — the 2.3 MissingGreenlet lesson is solved inside
-    # the helper). Emitted VERBATIM as the snapshot's session slice so a tab
-    # that misses the event reconciles with its next snapshot.
-    payload = await batches_service.active_session_data(session, user.tenant_id)
-    await broadcaster.emit(user.tenant_id, "session.active", payload)
-    # expire_on_commit=False (db/base.py) keeps the attributes valid here.
-    return session_to_out(target)
-
-
-@router.post("/new", response_model=SessionOut)
-async def new_session(
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> SessionOut:
-    """Nueva sesión: explicitly start a FRESH active capture session on the
-    same gate as the current active one (a clean per-session dedup set).
-
-    The implicit lifecycle (``resolve_for_batch``) only ever *reuses* the
-    active same-gate session, so a client working one gate can never reset
-    dedup or produce a closed (``is_active=False``) row that Historial would
-    offer to "Continuar". This is the explicit opt-out: it forks the active
-    session's gate via ``create_active`` (which deactivates the prior one
-    UPDATE-first, so the partial unique index never trips on the honest path),
-    making the old session closed-and-retomable.
-
-    Gate source: the CURRENTLY active session — there is no gate picker in the
-    cockpit (to start on a new gate, send a batch on it). No active session ⇒
-    404 ``session_not_found`` (nothing to fork; the cockpit hides the button
-    when no session is active anyway).
-
-    Guards mirror ``continue_session`` exactly: ANY live batch
-    (sending|paused|stopping) ⇒ 409 ``batch_live`` (reshuffling the active
-    session mid-batch would split capture); a concurrent new/continue/batch
-    racing into ``uq_capture_sessions_one_active_per_tenant`` ⇒ 409
-    ``session_conflict``, never a raw 500. The post-commit ``session.active``
-    emit (verbatim ``active_session_data``) rebinds every tab — the new
-    session's slice is empty, so the cockpit panels clear.
-    """
-    active = await capture_sessions_repo.get_active(
-        session, user.tenant_id, for_update=True
-    )
-    if active is None:
-        raise session_not_found()
-    live = await batches_repo.get_live_batch(session, user.tenant_id)
-    if live is not None:
-        raise batch_live()
-    try:
-        fresh = await capture_sessions_repo.create_active(
-            session,
-            user.tenant_id,
-            active.gate_value,
-            active.gate_name,
-            active.gate_display_value,
-            active.special_mode,
-            active.cookie_mode,
-        )
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise session_conflict() from None
-    payload = await batches_service.active_session_data(session, user.tenant_id)
-    await broadcaster.emit(user.tenant_id, "session.active", payload)
-    return session_to_out(fresh)
-
-
-@router.post("/{session_id}/clear-declined")
-async def clear_declined(
-    session_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, int]:
-    """Soft-hide the declined (❌) revisions of a capture session — the cockpit
-    "Limpiar" action.
-
-    The client wipes the rejected noise from the Completa view PERMANENTLY (it
-    survives reload) while Aprobadas (✅) and Datos CC stay intact. Tenant-scoped
-    via ``_require_session`` — an unknown/foreign/out-of-int4 id 404s identically
-    (no existence leak), ``tenant_id`` only from the session.
-
-    Soft-hide, NOT delete: a physically removed ❌ would look unanswered to the
-    reply reconciler (45s / 72h window), which would re-fetch it from Telegram
-    and re-insert it, and would shrink ``responded_line_count`` (spiking
-    "esperando respuesta"). ``hidden_at`` is read ONLY by the Completa
-    display/export queries; every integrity query still counts the row.
-
-    Post-commit re-emit of ``session.active`` (verbatim ``active_session_data``)
-    rebinds every open tab to the trimmed Completa — a tab that misses it
-    reconciles with its next snapshot. Returns ``{"hidden": n}``."""
-    target = await _require_session(session, user.tenant_id, session_id)
-    hidden = await responses_repo.hide_rejected(session, target.id)
-    await session.commit()
-    payload = await batches_service.active_session_data(session, user.tenant_id)
-    await broadcaster.emit(user.tenant_id, "session.active", payload)
-    return {"hidden": hidden}
-
-
-@router.delete("/{session_id}", status_code=204)
-async def delete_session(
-    session_id: int,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    """Hard delete (AC 5) guarded by the LIVE-batch binding (AC 6).
-
-    The guard is "bound to a live batch", NOT ``is_active``: deleting the
-    active session with the surface idle IS allowed (no batch to stop) — the
-    tenant just has no active session until the next batch creates one.
-    ``responses`` rows die via FK CASCADE; the batch history survives with
-    ``capture_session_id`` NULL (SET NULL).
-
-    The lookup takes ``FOR UPDATE`` BEFORE the live-batch guard to close the
-    TOCTOU against a concurrent ``POST /api/batches`` binding this same
-    session (review 3-3 — the window is NOT harmless: the FK is SET NULL, so
-    a POST committing between the guard's read and this commit would not
-    500, it would be silently unbound, leaving a LIVE batch with no session).
-    A concurrent binding's batch INSERT takes ``FOR KEY SHARE`` on the
-    session row during its FK check, which conflicts with ``FOR UPDATE``:
-    either that POST blocks and errors on the gone row, or it commits first
-    and the guard's read here sees the live batch ⇒ 409.
-    """
-    target = await _require_session(
-        session, user.tenant_id, session_id, for_update=True
-    )
-    live = await batches_repo.get_live_batch(session, user.tenant_id)
-    if live is not None and live.capture_session_id == target.id:
-        raise session_in_use()
-    await capture_sessions_repo.delete(session, target)
-    await session.commit()

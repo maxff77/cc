@@ -30,10 +30,7 @@ interface Me {
 
 type NavLink = { href: string; label: string };
 
-const ITEMS: readonly NavLink[] = [
-  { href: "/app", label: "Envío" },
-  { href: "/app/sessions", label: "Historial" },
-];
+const ITEMS: readonly NavLink[] = [{ href: "/app", label: "Envío" }];
 
 // Cross-links to admin, shown ONLY to staff. Gates/Destinos are owner-only.
 const ADMIN_ITEMS: readonly NavLink[] = [

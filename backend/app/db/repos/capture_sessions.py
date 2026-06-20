@@ -10,10 +10,11 @@ repos/batches.py, the documented exception) but still resolves one explicit
 Pure ORM, flush not commit — callers own the transaction.
 """
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CaptureSession
+from app.db.models import CaptureSession, Response
 
 
 async def get_active(
@@ -37,6 +38,50 @@ async def get_active(
     if for_update:
         stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalars().first()
+
+
+async def ensure_perpetual(
+    session: AsyncSession, tenant_id: int
+) -> CaptureSession:
+    """Get-or-create the tenant's ONE ever-living capture session (sessionless
+    cockpit, PR-1) — a PURE singleton, no rotation/activation churn.
+
+    Exactly one ``is_active=true`` row exists per tenant for its whole life: the
+    cockpit no longer rotates sessions per gate, so there is by definition no
+    "prior active row to clear" — the "clear prior row FIRST" flip pattern of
+    ``create_active``/``activate`` does NOT apply here. The partial unique index
+    ``uq_capture_sessions_one_active_per_tenant`` guards ONLY the single
+    first-ever-creation race; this code does NOT run a deactivate-all UPDATE and
+    never touches ``is_active``/``id`` on an existing row.
+
+    SELECT the active row FOR UPDATE → return it if found; else INSERT a fresh
+    ``is_active=true`` row with EMPTY gate snapshots (``resolve_for_batch``
+    refreshes them in place on the first batch). On a concurrent first-ever
+    INSERT the partial index trips ⇒ rollback + re-SELECT returns the single
+    winning row. Flush-not-commit — the caller owns the transaction (and owns
+    the IntegrityError fallback if it batches more work into the same txn).
+    """
+    active = await get_active(session, tenant_id, for_update=True)
+    if active is not None:
+        return active
+    capture_session = CaptureSession(
+        tenant_id=tenant_id,
+        gate_value="",
+        gate_name="",
+        gate_display_value="",
+        is_active=True,
+    )
+    session.add(capture_session)
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Lost the first-ever-creation race — the single row exists now.
+        await session.rollback()
+        existing = await get_active(session, tenant_id, for_update=True)
+        if existing is None:  # not the one-active conflict — surface it
+            raise
+        return existing
+    return capture_session
 
 
 async def list_for_tenant(
@@ -172,37 +217,42 @@ async def resolve_for_batch(
     special_mode: bool = False,
     cookie_mode: bool = False,
 ) -> CaptureSession:
-    """The AC 3 legacy semantics: reuse the active session when its gate
-    matches, otherwise auto-create a fresh active one.
+    """Bind a new batch to the tenant's ONE perpetual capture session
+    (sessionless cockpit, PR-1) — get-or-create, then refresh the gate snapshots
+    IN PLACE.
 
-    Exact port of "/api/enviar reuses the active Sesion when its slug matches
-    the submitted prefix, otherwise auto-creates one". Reuse still keys on the
-    REAL ``gate_value`` (the gate's identity), not the display string.
+    The cockpit no longer rotates sessions per gate: a gate change REUSES the
+    same session (no second row, no ``is_active``/``id`` churn) and just
+    overwrites the ``gate_value``/``gate_name``/``gate_display_value`` +
+    ``special_mode``/``cookie_mode`` snapshots so the capture pipeline parses
+    THIS batch's replies under the right gate. The CC dedup widens to
+    tenant-lifetime by construction (one ``capture_session_id`` for the tenant's
+    whole life) — accepted invariant.
 
-    On reuse, the session's ``special_mode`` AND ``cookie_mode`` are refreshed
-    to the gate's current values (special-mode + cookie-vault features):
-    toggling the category takes effect on the client's NEXT batch instead of
-    waiting for a brand-new session — the gate identity is unchanged, so this
-    only ever tracks an owner's deliberate flip.
+    Per the PR-2 note: the per-batch gate snapshot is overwritten here, so
+    history MUST key on ``responses.batch_id → batches.gate_*``, not this
+    session snapshot — the batch keeps carrying its own immutable gate columns.
     """
-    active = await get_active(session, tenant_id)
-    if active is not None and active.gate_value == gate_value:
-        if active.special_mode != special_mode:
-            active.special_mode = special_mode
-            await session.flush()
-        if active.cookie_mode != cookie_mode:
-            active.cookie_mode = cookie_mode
-            await session.flush()
-        return active
-    return await create_active(
-        session,
-        tenant_id,
-        gate_value,
-        gate_name,
-        gate_display_value,
-        special_mode,
-        cookie_mode,
-    )
+    active = await ensure_perpetual(session, tenant_id)
+    changed = False
+    if active.gate_value != gate_value:
+        active.gate_value = gate_value
+        changed = True
+    if active.gate_name != gate_name:
+        active.gate_name = gate_name
+        changed = True
+    if active.gate_display_value != gate_display_value:
+        active.gate_display_value = gate_display_value
+        changed = True
+    if active.special_mode != special_mode:
+        active.special_mode = special_mode
+        changed = True
+    if active.cookie_mode != cookie_mode:
+        active.cookie_mode = cookie_mode
+        changed = True
+    if changed:
+        await session.flush()
+    return active
 
 
 async def resolve_for_backfill(
@@ -212,37 +262,55 @@ async def resolve_for_backfill(
     gate_name: str,
     gate_display_value: str,
     cookie_mode: bool = False,
-) -> CaptureSession:
-    """Late-reply backfill (attribution path): like ``resolve_for_batch`` but
-    it NEVER changes which session is active (review 3-1).
+) -> CaptureSession | None:
+    """Late-reply backfill (attribution path) — READ-ONLY (sessionless cockpit,
+    PR-1).
 
-    ``cookie_mode`` is accepted for signature parity with ``resolve_for_batch``
-    (cookie-vault feature) but, like the absent ``special_mode``, is NOT applied
-    to the INACTIVE fallback insert: a stray late reply must not snapshot a flag
-    onto a session it never activates — the fallback relies on the column's
-    ``server_default false`` and is rewritten properly when a real batch
-    activates the session. The current caller (``attribution.py``) does not pass
-    it.
+    🔒 The capture consumer must NEVER INSERT or activate a session: a partial-
+    index IntegrityError here would bubble to the capture poison-drop path and
+    LOSE the reply. So this is a plain SELECT of the tenant's perpetual active
+    session; if none exists yet (a reply arriving before the tenant's first
+    batch ever ran ``ensure_perpetual``), it returns ``None`` and the caller
+    defers to the existing ``send_log``/``batch`` attribution WITHOUT inserting
+    or activating anything — activation stays an API-only act at batch start.
 
-    A stray late reply to an unbound batch must not deactivate the tenant's
-    live session as a side effect — that would silently move the snapshot's
-    ``cc_new`` mid-use, split the tenant's next batch into yet another
-    session, and let a concurrent batch start trip
-    ``uq_capture_sessions_one_active_per_tenant`` outside the one race its
-    IntegrityError fallback covers. Reuse the active session on exact gate
-    match; otherwise insert an INACTIVE fallback — activation stays an
-    API-only act at batch start.
+    The gate args are accepted for caller signature parity (the old fallback
+    snapshotted them onto an INACTIVE row); they are unused now that the path
+    never inserts.
     """
-    active = await get_active(session, tenant_id)
-    if active is not None and active.gate_value == gate_value:
-        return active
-    capture_session = CaptureSession(
-        tenant_id=tenant_id,
-        gate_value=gate_value,
-        gate_name=gate_name,
-        gate_display_value=gate_display_value,
-        is_active=False,
-    )
-    session.add(capture_session)
+    return await get_active(session, tenant_id)
+
+
+async def clear_view(
+    session: AsyncSession, capture_session: CaptureSession
+) -> int | None:
+    """Stamp the cockpit "Limpiar" view-cutoff (sessionless cockpit, PR-1).
+
+    Sets ``cleared_response_id = MAX(responses.id)`` so the DISPLAY reads (and
+    ONLY the display reads) hide every row with ``Response.id <= cutoff``. This
+    is the ``hidden_at`` discipline as an ``id`` HIGH-WATER-MARK: it deletes
+    ZERO ``responses`` rows (the approved-✅ history survives for PR-2) and is
+    invisible to every integrity / attribution / reconciler / dedup / credit /
+    ``awaiting_reply`` query. ``id`` (monotonic) — not ``created_at`` (txn-start
+    ``now()`` ties) — makes the cutoff tie-immune.
+
+    ``MAX(responses.id)`` is the GLOBAL high-water-mark across the whole table:
+    ids are monotonic, so any row already captured for this session has
+    ``id <= MAX`` and is hidden, and any row captured AFTER the clear gets a
+    larger id and reappears. Returns the new cutoff (``None`` only if the
+    ``responses`` table is empty). Flush-not-commit — the caller owns the txn.
+
+    ponytail: ``MAX`` sees only COMMITTED rows, and the capture consumer commits
+    in its OWN transaction. A reply mid-capture (id already allocated from the
+    sequence, not yet committed) can land just above the stamped cutoff and
+    reappear ONCE in the cockpit. Strictly a transient DISPLAY glitch (the cutoff
+    touches display reads only — never integrity/attribution/dedup), self-heals
+    on the next Limpiar (a higher MAX hides it). Not worth an advisory lock on
+    this rare, rate-paced, single-consumer path; revisit only if it ever bites.
+    """
+    cutoff = (
+        await session.execute(select(func.max(Response.id)))
+    ).scalar_one_or_none()
+    capture_session.cleared_response_id = cutoff
     await session.flush()
-    return capture_session
+    return cutoff

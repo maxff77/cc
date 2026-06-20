@@ -52,11 +52,14 @@ async def resolve(
        so attribution holds").
     2. ``(chat_id, reply_to_msg_id)`` → ``send_log`` → the batch's bound capture
        session. A pre-3.1 batch (``capture_session_id`` NULL) resolves via
-       ``resolve_for_backfill`` with the batch's own gate snapshots, and the
-       binding is BACKFILLED (recorded decision: late replies to old batches
-       are not lost). The backfill NEVER changes which session is active
-       (review 3-1): exact gate match reuses the active session, anything
-       else gets an INACTIVE fallback — activation stays an API-only act.
+       ``resolve_for_backfill`` and the binding is BACKFILLED (recorded
+       decision: late replies to old batches are not lost). 🔒 The backfill is
+       READ-ONLY (sessionless cockpit, PR-1): it returns the tenant's perpetual
+       active session if one exists, else ``None`` — the capture consumer must
+       NEVER INSERT/activate a session (a partial-index IntegrityError here
+       would hit the capture poison-drop path and lose the reply). When backfill
+       finds no session yet, the reply is treated as unmatched (case 3) rather
+       than minting one — activation stays an API-only act at batch start.
     3. Nothing matched → ``None`` (the caller logs it to the
        unmatched-replies bucket, AC 7).
 
@@ -92,6 +95,13 @@ async def resolve(
             session, record.tenant_id, batch.gate_value, batch.gate_name,
             batch.gate_display_value,
         )
+        if capture_session is None:
+            # No perpetual session yet (a reply for a pre-PR-1 batch that
+            # never bound one, before the tenant's first sessionless batch).
+            # The backfill is READ-ONLY — minting a session here is forbidden
+            # (it would risk the partial-index IntegrityError → capture
+            # poison-drop). Treat as unmatched; the caller buckets it.
+            return None
         batch.capture_session_id = capture_session.id
         await session.flush()
         capture_session_id = capture_session.id

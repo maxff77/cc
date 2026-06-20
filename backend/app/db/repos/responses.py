@@ -205,9 +205,19 @@ async def add_new_cc(
     return inserted
 
 
-async def cc_count(session: AsyncSession, capture_session_id: int) -> int:
+async def cc_count(
+    session: AsyncSession,
+    capture_session_id: int,
+    *,
+    cleared_response_id: int | None = None,
+) -> int:
     """Total deduped CC rows of one capture session (the ``cc_total`` /
-    snapshot ``cc_new`` metric — counters never reset, legacy parity)."""
+    snapshot ``cc_new`` metric — counters never reset, legacy parity).
+
+    ``cleared_response_id`` (sessionless cockpit, PR-1) is a DISPLAY cutoff: when
+    set, only rows with ``Response.id > cleared_response_id`` count — the cockpit
+    "Limpiar" high-water-mark, applied ONLY on the cockpit/snapshot read path
+    (NEVER on the ``add_new_cc`` dedup SELECT, which stays tenant-lifetime)."""
     stmt = (
         select(func.count())
         .select_from(Response)
@@ -216,6 +226,8 @@ async def cc_count(session: AsyncSession, capture_session_id: int) -> int:
             Response.kind == KIND_CC,
         )
     )
+    if cleared_response_id is not None:
+        stmt = stmt.where(Response.id > cleared_response_id)
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 
@@ -226,6 +238,7 @@ async def full_count(
     status: str | None = None,
     *,
     include_hidden: bool = False,
+    cleared_response_id: int | None = None,
 ) -> int:
     """Total 'full' revisions of one capture session (Story 3.2: the Completa
     badge — the REAL total, honest even when the snapshot list is capped).
@@ -236,7 +249,13 @@ async def full_count(
     ``include_hidden=False`` (default) EXCLUDES soft-hidden rows
     (clear-declined): this is a DISPLAY count (the Completa badge), so it must
     match ``list_full``. Integrity counters (e.g. ``responded_line_count``) do
-    NOT go through here and keep counting hidden rows."""
+    NOT go through here and keep counting hidden rows.
+
+    ``cleared_response_id`` (sessionless cockpit, PR-1) is a DISPLAY cutoff: when
+    set, only rows with ``Response.id > cleared_response_id`` count — the cockpit
+    "Limpiar" high-water-mark, applied ONLY on the cockpit/snapshot read path
+    (admin reads pass it ``None`` positionally — keyword-only keeps that
+    correct)."""
     stmt = (
         select(func.count())
         .select_from(Response)
@@ -249,13 +268,23 @@ async def full_count(
         stmt = stmt.where(Response.status == status)
     if not include_hidden:
         stmt = stmt.where(Response.hidden_at.is_(None))
+    if cleared_response_id is not None:
+        stmt = stmt.where(Response.id > cleared_response_id)
     count: int = (await session.execute(stmt)).scalar_one()
     return count
 
 
 async def hide_rejected(session: AsyncSession, capture_session_id: int) -> int:
     """Soft-hide every still-visible REJECTED (❌) 'full' revision of a capture
-    session (clear-declined) — the cockpit "Limpiar" action.
+    session (the legacy per-session clear-declined).
+
+    ponytail: DEAD since PR-1 removed the per-id ``clear-declined`` endpoint (its
+    only caller). The cockpit "Limpiar" is now a NON-destructive view-cutoff
+    (``capture_sessions.clear_view``), not a soft-hide — nothing writes
+    ``hidden_at`` today, so the ``include_hidden`` display filter is an inert
+    no-op. Kept (with the ``hidden_at`` column) for forward-compat / possible
+    PR-2 reuse rather than ripping out a column + filter; delete if PR-2 lands
+    without needing it.
 
     Stamps ``hidden_at`` so ``list_full``/``full_count`` drop these rows from
     Completa and the ``.txt`` export, while EVERY integrity query keeps seeing
@@ -319,6 +348,8 @@ async def _list_last(
     limit: int | None,
     status: str | None = None,
     include_hidden: bool = False,
+    *,
+    cleared_response_id: int | None = None,
 ) -> list[Response]:
     """The LAST ``limit`` rows of ``kind``, returned ASCENDING by ``id``.
 
@@ -330,6 +361,11 @@ async def _list_last(
 
     ``status`` restricts 'full' rows to that status (the "Filtrada con
     response" view = only ✅ revisions).
+
+    ``cleared_response_id`` (sessionless cockpit, PR-1) is a DISPLAY cutoff: when
+    set, only rows with ``Response.id > cleared_response_id`` are returned — the
+    cockpit "Limpiar" high-water-mark. ``Response.id`` is already the sort key,
+    so this composes cleanly and is tie-immune (unlike a ``created_at`` cutoff).
     """
     stmt = select(Response).where(
         Response.capture_session_id == capture_session_id,
@@ -341,6 +377,8 @@ async def _list_last(
         # DISPLAY/export read: drop soft-hidden rows (clear-declined). 'cc' rows
         # are never hidden, so this is a no-op for the Filtrada list.
         stmt = stmt.where(Response.hidden_at.is_(None))
+    if cleared_response_id is not None:
+        stmt = stmt.where(Response.id > cleared_response_id)
     if limit is None:
         stmt = stmt.order_by(Response.id.asc())
         return list((await session.execute(stmt)).scalars().all())
@@ -357,6 +395,7 @@ async def list_full(
     status: str | None = None,
     *,
     include_hidden: bool = False,
+    cleared_response_id: int | None = None,
 ) -> list[Response]:
     """The session's last ``limit`` 'full' revisions (``None`` = all),
     oldest→newest — the rows that rebuild the Completa view. ``status`` (e.g.
@@ -365,15 +404,41 @@ async def list_full(
 
     ``include_hidden=False`` (default) drops soft-hidden rows (clear-declined):
     this feeds the Completa display and the ``.txt`` export, both of which must
-    hide the cleared declined revisions."""
+    hide the cleared declined revisions.
+
+    ``cleared_response_id`` (sessionless cockpit, PR-1) is the cockpit "Limpiar"
+    DISPLAY cutoff (``Response.id > cleared_response_id``). Keyword-only so the
+    admin support read keeps calling ``list_full(session, id, None)``
+    POSITIONALLY with no cutoff."""
     return await _list_last(
-        session, capture_session_id, KIND_FULL, limit, status, include_hidden
+        session,
+        capture_session_id,
+        KIND_FULL,
+        limit,
+        status,
+        include_hidden,
+        cleared_response_id=cleared_response_id,
     )
 
 
 async def list_cc(
-    session: AsyncSession, capture_session_id: int, limit: int | None
+    session: AsyncSession,
+    capture_session_id: int,
+    limit: int | None,
+    *,
+    cleared_response_id: int | None = None,
 ) -> list[Response]:
     """The session's last ``limit`` deduped CC values (``None`` = all) in
-    insertion order — the rows that rebuild the Filtrada view."""
-    return await _list_last(session, capture_session_id, KIND_CC, limit)
+    insertion order — the rows that rebuild the Filtrada view.
+
+    ``cleared_response_id`` (sessionless cockpit, PR-1) is the cockpit "Limpiar"
+    DISPLAY cutoff (``Response.id > cleared_response_id``). Keyword-only so the
+    admin support read keeps calling ``list_cc(session, id, None)``
+    POSITIONALLY with no cutoff."""
+    return await _list_last(
+        session,
+        capture_session_id,
+        KIND_CC,
+        limit,
+        cleared_response_id=cleared_response_id,
+    )

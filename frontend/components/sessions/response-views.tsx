@@ -152,11 +152,12 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
-// Footer "Limpiar" (clear-declined) — cockpit-only: opens a confirm that
-// soft-hides the session's declined (❌) revisions in the backend. Permanent
-// (survives reload); Aprobadas (✅) and Datos CC are untouched. Now carries a
-// `trash` icon — it DOES remove the declined from the view for good. Disabled
-// when there are no declined rows to clear (caller passes `disabled`).
+// Footer "Limpiar" (PR-1 literal) — cockpit-only: opens a confirm that clears
+// ALL THREE live panels at once (Completa, Aprobadas-✅, Datos-CC) via a
+// non-destructive per-session view cutoff in the backend (no `responses` rows
+// deleted — approved ✅ rows survive for the deferred history). Permanent
+// (survives reload). Carries a `trash` icon — it clears the live view for good.
+// Disabled when ALL panels are already empty (caller passes `disabled`).
 function ClearButton({
   disabled,
   onClick,
@@ -166,7 +167,7 @@ function ClearButton({
 }) {
   return (
     <button
-      aria-label="Borrar las respuestas declinadas de Completa"
+      aria-label="Limpiar todas las vistas"
       className="rx-focus inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--surface-secondary)] px-3 py-[5px] font-mono text-[11.5px] leading-none text-foreground transition-colors hover:border-[var(--muted)] hover:bg-[var(--surface-tertiary)] disabled:opacity-40 disabled:hover:border-[var(--border-strong)] disabled:hover:bg-[var(--surface-secondary)]"
       disabled={disabled}
       type="button"
@@ -212,9 +213,10 @@ function ResponsePanel({
   rows: RowData[];
   exportPath?: string;
   // Present ⇒ render a "Limpiar" button in the footer (Completa, cockpit only).
+  // It clears all three live panels at once (the cutoff lives server-side).
   onClear?: () => void;
-  // Caller-driven disable (no declined rows to clear). Falls back to "empty
-  // list" when omitted.
+  // Caller-driven disable (all panels empty). Falls back to "empty list" when
+  // omitted.
   clearDisabled?: boolean;
   listClassName?: string;
   className?: string;
@@ -358,12 +360,12 @@ interface ResponseViewsProps {
   exportPathCompleta?: string;
   exportPathFiltradaCompleta?: string;
   exportPathFiltrada?: string;
-  // Cockpit-only (clear-declined): present ⇒ render the Completa "Limpiar"
-  // button, which opens a confirm that soft-hides the session's declined (❌)
-  // revisions in the backend (the snapshot already excludes them, so Completa
-  // just shows `responses`). `clearDisabled` greys it out when there is nothing
-  // to clear. Absent in Historial/admin ⇒ no button.
-  onClearCompleta?: () => void;
+  // Cockpit-only (PR-1 "Limpiar literal"): present ⇒ render the "Limpiar"
+  // button in the Completa footer, which opens a confirm that clears ALL THREE
+  // live panels at once via a non-destructive per-session view cutoff in the
+  // backend (zero `responses` rows deleted). `clearDisabled` greys it out when
+  // ALL panels are already empty. Absent in Historial/admin ⇒ no button.
+  onClear?: () => void;
   clearDisabled?: boolean;
   className?: string;
   // `fill` (cockpit): the parent is height-capped to the viewport, so stretch
@@ -385,7 +387,7 @@ export function ResponseColumns({
   exportPathCompleta,
   exportPathFiltradaCompleta,
   exportPathFiltrada,
-  onClearCompleta,
+  onClear,
   clearDisabled,
   className,
   fill,
@@ -409,7 +411,7 @@ export function ResponseColumns({
         listClassName={listClassName}
         responses={responses}
         total={responsesTotal}
-        onClear={onClearCompleta}
+        onClear={onClear}
       />
       <FiltradaConResponsePanel
         className={panelClassName}
@@ -443,7 +445,7 @@ export function ResponseTabs({
   exportPathCompleta,
   exportPathFiltradaCompleta,
   exportPathFiltrada,
-  onClearCompleta,
+  onClear,
   clearDisabled,
   className,
 }: ResponseViewsProps) {
@@ -451,8 +453,9 @@ export function ResponseTabs({
 
   const TABS: { id: TabId; label: string; count: number; tone?: "success" }[] =
     [
-      // The Completa tab badge mirrors the panel total — it drops once a clear
-      // soft-hides the declined rows (the snapshot total already excludes them).
+      // The Completa tab badge mirrors the panel total — it drops to 0 once a
+      // Limpiar stamps the view cutoff (snapshot/session.active re-emit the
+      // post-cutoff slice).
       {
         id: "completa",
         label: "Completa",
@@ -502,7 +505,7 @@ export function ResponseTabs({
             listClassName={TAB_LIST}
             responses={responses}
             total={responsesTotal}
-            onClear={onClearCompleta}
+            onClear={onClear}
           />
         )}
         {tab === "con-response" && (

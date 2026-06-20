@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
-import { useLiveBatch } from "@/lib/ws";
+import { clearCockpit, useLiveBatch } from "@/lib/ws";
 import { ClaimKey } from "@/components/keys/claim-key";
 import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
@@ -33,7 +33,6 @@ import { SendForm, type GateOut } from "@/components/batch/send-form";
 import { VerdictTimeoutNotice } from "@/components/batch/verdict-timeout-notice";
 import { WaitingNotice } from "@/components/batch/waiting-notice";
 import { WatchdogNotice } from "@/components/batch/watchdog-notice";
-import { ActiveSessionCard } from "@/components/sessions/active-session-card";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { SectionCard } from "@/components/ui/section-card";
 import { Notice } from "@/components/ui/notice";
@@ -106,21 +105,23 @@ export default function EnvioPage() {
     return () => window.clearTimeout(id);
   }, [completed]);
 
-  // "Limpiar" la vista Completa (clear-declined): borra de forma PERSISTENTE
-  // (soft-hide en el backend) las revisiones declinadas (❌) de la sesión activa.
-  // Aprobadas (✅) y Datos CC quedan intactas; al confirmar, el backend re-emite
-  // `session.active` y el store recompone Completa en todas las pestañas (sin
-  // mutación local). Sólo hay declinadas que ocultar si el total de Completa
-  // supera al de Aprobadas — eso habilita el botón.
+  // "Limpiar" literal (PR-1): vacía las TRES vistas en vivo a la vez (Completa,
+  // Aprobadas-✅, Datos-CC). No borra ninguna fila de `responses` — el backend
+  // sella un corte de vista por sesión (`cleared_response_id`, un high-water de
+  // id) sobre la única sesión perpetua del tenant y re-emite `session.active`
+  // con el slice (ya vacío) posterior al corte; las ✅ aprobadas sobreviven en
+  // la base para el historial diferido (PR-2). Al confirmar también reseteamos
+  // el store local (`clearCockpit`) para que la pestaña que actúa vea las vistas
+  // vacías al instante (las demás reconcilian con el evento / su próximo
+  // snapshot). El botón se habilita sólo si alguna vista tiene filas.
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
-  const declinedCount = live.responsesTotal - live.responsesOkTotal;
-  const clearDeclined = useMutation({
+  const allPanelsEmpty = live.responsesTotal === 0 && live.ccNew === 0;
+  const clear = useMutation({
     mutationFn: () =>
-      api.post<{ hidden: number }>(
-        `/api/sessions/${live.sessionId}/clear-declined`,
-      ),
+      api.post<{ cleared_response_id: number | null }>("/api/sessions/clear"),
     onSuccess: () => {
+      clearCockpit();
       setConfirmOpen(false);
       setClearError(null);
     },
@@ -132,24 +133,21 @@ export default function EnvioPage() {
       ),
   });
 
-  // Si la sesión activa cambia con el diálogo abierto (cambio de gate /
-  // Continuar / otra pestaña), cancelar la confirmación: nunca limpiar las
-  // declinadas de una sesión distinta a la que el operador estaba viendo al
-  // abrir el diálogo (el `mutationFn` lee `live.sessionId` en el submit).
-  useEffect(() => {
-    setConfirmOpen(false);
-    setClearError(null);
-  }, [live.sessionId]);
-
-  // Export `↓ .txt` (Story 3.5): paths exist only once a session does. NOT gated
-  // on isLive: export works DURING the lote (AC 2) and after.
-  const exportBase =
-    live.sessionId !== null ? `/api/sessions/${live.sessionId}/export` : null;
-  const exportCompleta = exportBase ? `${exportBase}?view=completa` : undefined;
-  const exportFiltradaCompleta = exportBase
+  // Export `↓ .txt` (cockpit): the perpetual-session export at GET
+  // /api/sessions/export (no path id) RESPECTS the Limpiar cutoff — the file
+  // mirrors the live post-clear view. Same `view` selector the footer already
+  // sends. NOT gated on isLive: export works DURING the lote and after. (The
+  // admin/PR-2 full-history export keeps its own `/{id}/export` route.)
+  // Gated on a perpetual session existing — a brand-new tenant that never sent
+  // a batch has none, so we hide the footer (undefined ⇒ no button) instead of
+  // letting a click hit a 404.
+  const exportBase = "/api/sessions/export";
+  const canExport = live.sessionId !== null;
+  const exportCompleta = canExport ? `${exportBase}?view=completa` : undefined;
+  const exportFiltradaCompleta = canExport
     ? `${exportBase}?view=filtrada_completa`
     : undefined;
-  const exportFiltrada = exportBase ? `${exportBase}?view=filtrada` : undefined;
+  const exportFiltrada = canExport ? `${exportBase}?view=filtrada` : undefined;
 
   return (
     <div className="grid gap-5 overflow-hidden lg:h-full lg:min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -171,7 +169,6 @@ export default function EnvioPage() {
           <IdleRing />
         )}
 
-        <ActiveSessionCard />
         <PlanExpiryNotice />
         <BatchControls live={live} />
         <WatchdogNotice />
@@ -225,7 +222,7 @@ export default function EnvioPage() {
           <ResponseColumns
             cc={live.cc}
             ccTotal={live.ccNew}
-            clearDisabled={declinedCount <= 0}
+            clearDisabled={allPanelsEmpty}
             exportPathCompleta={exportCompleta}
             exportPathFiltrada={exportFiltrada}
             exportPathFiltradaCompleta={exportFiltradaCompleta}
@@ -233,33 +230,33 @@ export default function EnvioPage() {
             responses={live.responses}
             responsesOkTotal={live.responsesOkTotal}
             responsesTotal={live.responsesTotal}
-            onClearCompleta={() => setConfirmOpen(true)}
+            onClear={() => setConfirmOpen(true)}
           />
         </div>
         <ResponseTabs
           cc={live.cc}
           ccTotal={live.ccNew}
           className="lg:hidden"
-          clearDisabled={declinedCount <= 0}
+          clearDisabled={allPanelsEmpty}
           exportPathCompleta={exportCompleta}
           exportPathFiltrada={exportFiltrada}
           exportPathFiltradaCompleta={exportFiltradaCompleta}
           responses={live.responses}
           responsesOkTotal={live.responsesOkTotal}
           responsesTotal={live.responsesTotal}
-          onClearCompleta={() => setConfirmOpen(true)}
+          onClear={() => setConfirmOpen(true)}
         />
       </div>
 
-      {/* Confirmación de "Limpiar" (clear-declined) — borrado irreversible de
-          las declinadas; Aprobadas y Datos CC se conservan. */}
+      {/* Confirmación de "Limpiar" (literal, PR-1) — vacía las tres vistas en
+          vivo; no se borra ningún dato del servidor (corte de vista). */}
       <ConfirmDialog
-        confirmLabel={clearDeclined.isPending ? "Limpiando…" : "Limpiar"}
-        confirmVariant="danger"
-        heading="¿Borrar las respuestas declinadas (❌) de Completa? Se conservan las aprobadas (✅) y los Datos CC. No se puede deshacer."
+        confirmLabel={clear.isPending ? "Limpiando…" : "Limpiar"}
+        confirmVariant="primary"
+        heading="¿Limpiar las tres vistas (Completa, Aprobadas y Datos CC)? Quedarán vacías en pantalla; no se borra ningún dato del servidor."
         open={confirmOpen}
-        pending={clearDeclined.isPending}
-        onConfirm={() => clearDeclined.mutate()}
+        pending={clear.isPending}
+        onConfirm={() => clear.mutate()}
         onOpenChange={(open) => {
           setConfirmOpen(open);
           if (!open) setClearError(null);
