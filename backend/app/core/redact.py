@@ -34,6 +34,16 @@ _CHECKED_BY = re.compile(r"(?i)\bchecked\s*by\b")
 # The bot's stats-line separator.
 _SEP = "ヾ⌿"
 
+# Decorative dot-divider lines the gateway bots wrap the CC block in
+# (``· · · · · · · · ·`` — GLOBAL, every gateway). Pure ornament: they carry no
+# data and, once the tenant rows render newlines, just clutter the reply. A line
+# is a divider when it is ONLY middle-dot/bullet chars and spaces (≥2 dots, so a
+# real content line is never matched). Removing it leaves the surrounding
+# newlines — the "salto de línea" — and the blank-run collapse keeps that to a
+# single gap so the fields read clean.
+_DOT_DIVIDER = re.compile(r"(?m)^[ \t]*(?:[·•・∙⋅][ \t]*){2,}$")
+_BLANK_RUN = re.compile(r"\n{3,}")
+
 # Stats-segment matchers. Case-insensitive and tolerant of the optional ✅/❌
 # glyph (the label word is specific enough not to over-match). The value runs to
 # the next separator/end-of-line. ``Credits`` consumes a digit run WITH grouping
@@ -65,19 +75,27 @@ def _tidy_separators(text: str) -> str:
     return "\n".join(out)
 
 
+def _strip_dot_dividers(text: str) -> str:
+    """Drop the gateway bots' decorative ``· · ·`` divider lines, collapsing the
+    blank run a removed divider leaves to a single gap. Idempotent."""
+    return _BLANK_RUN.sub("\n\n", _DOT_DIVIDER.sub("", text))
+
+
 def redact_reply_text(text: str) -> str:
-    """Return ``text`` with the "Checked By" line and any ``Credits:`` segment
-    removed (the GLOBAL scrub applied at capture AND on read).
+    """Return ``text`` with the "Checked By" line, any ``Credits:`` segment, and
+    the decorative ``· · ·`` divider lines removed (the GLOBAL scrub applied at
+    capture AND on read).
 
     Drops "Checked By" lines entirely; removes the ``Credits: <n>`` segment in
-    place and tidies the separator it leaves. Preserves the rest verbatim and
-    is idempotent.
+    place and tidies the separator it leaves; strips dot-divider lines and
+    collapses the blank run they leave. Preserves the rest verbatim and is
+    idempotent.
     """
     if not text:
         return text
     kept = [line for line in text.splitlines() if not _CHECKED_BY.search(line)]
     redacted = _CREDITS.sub("", "\n".join(kept))
-    return _tidy_separators(redacted)
+    return _strip_dot_dividers(_tidy_separators(redacted))
 
 
 def parse_approveds(text: str) -> int | None:

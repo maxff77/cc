@@ -97,3 +97,45 @@ def test_special_strip_is_idempotent():
 def test_special_strip_leaves_non_stats_text_alone():
     text = "✅ Approved\nCC: 4111111111111111|12|2026|123"
     assert strip_special_stats(text) == text
+
+
+# --- Dot-divider scrub (GLOBAL — every gateway) -----------------------------
+
+# A typical gateway reply: dot dividers wrap the CC block (Checked By redacted).
+_REPLY = (
+    "Amazon MX\n"
+    "· · · · · · · · · · · · · · ·\n"
+    "\n"
+    "☇ CC: 377481016137504|05|2033|3845\n"
+    "⌿ Status: Approved ✅\n"
+    "⌿ Response: Tarjeta vinculada correctamente. | Removed: ✅ Removido\n"
+    "· · · · · · · · · · · · · · ·\n"
+    "⌿ Gate: Amazon MX\n"
+    "⌿ Total Time: 8's\n"
+    f"{_NAME_LINE}"
+)
+
+
+def test_dot_dividers_removed_data_lines_kept():
+    out = redact_reply_text(_REPLY)
+    assert "·" not in out  # every decorative dot is gone
+    # The real fields survive verbatim.
+    for line in (
+        "☇ CC: 377481016137504|05|2033|3845",
+        "⌿ Status: Approved ✅",
+        "⌿ Gate: Amazon MX",
+        "⌿ Total Time: 8's",
+    ):
+        assert line in out
+    # Removing a divider leaves a single blank gap, never a triple newline.
+    assert "\n\n\n" not in out
+
+
+def test_dot_divider_needs_two_dots():
+    # A lone middle dot inside real content is NOT a divider — left untouched.
+    assert redact_reply_text("a · b") == "a · b"
+
+
+def test_dot_divider_scrub_is_idempotent():
+    once = redact_reply_text(_REPLY)
+    assert redact_reply_text(once) == once

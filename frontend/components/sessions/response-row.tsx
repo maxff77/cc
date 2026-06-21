@@ -24,7 +24,9 @@ export function DataRow({ left, text, status, nueva }: DataRowProps) {
       )}
     >
       <span className="shrink-0 text-muted tabular-nums">{left}</span>
-      <span className="min-w-0 flex-1 break-words">{text}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-line break-words">
+        {text}
+      </span>
       {nueva && (
         <span className="shrink-0 rounded-md bg-success/20 px-1 text-[10px] font-medium uppercase tracking-[0.1em] text-success">
           nueva
