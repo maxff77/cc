@@ -37,6 +37,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.display_transform import display_transform
+from app.core.redact import redact_reply_text
 from app.db.base import get_session
 from app.db.models import User
 from app.db.repos import responses as responses_repo
@@ -100,7 +102,23 @@ async def list_history(
     for msg in messages:
         item = HistoryItem(
             id=msg.id,
-            text=msg.text,
+            # Mirror the cockpit "Aprobadas" composition (services/batches.py):
+            # redact on read, THEN display_transform. ``redact_reply_text`` is
+            # idempotent (rows are redacted at capture going forward) but
+            # load-bearing for LEGACY rows captured before redaction shipped: it
+            # scrubs the operator ``⌿ Checked By`` line / ``Credits:`` balance
+            # that would otherwise leak here only. ``cookie_mode=True``
+            # unconditionally — there is no durable per-message cookie_mode flag
+            # (Batch has no such column, CaptureSession's is mutated per batch),
+            # so the text-keyed parse_amazon_verdict inside display_transform is
+            # the only correct per-message signal; it is a no-op for any
+            # non-verdict reply. NOTE: this canonicalizes EVERY Amazon verdict,
+            # so an old verdict stays stripped here even after the tenant
+            # switches to a normal gate — whereas the sessionless cockpit reads
+            # the mutable live ``cookie_mode`` and would re-show the raw
+            # ``⌿ Response`` line for those stale rows (a cockpit bug; see
+            # deferred-work). History is the canonical, intended view.
+            text=display_transform(redact_reply_text(msg.text), True),
             captured_at=msg.created_at,
             cc=msg.cc,
         )
