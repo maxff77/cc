@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Batch, Response
+from app.db.models import Batch, Response, SendLog
 from app.db.repos import tenants as tenants_repo
 
 # Row discriminator — plain strings, no DB enum (2.2 decision).
@@ -594,6 +594,20 @@ async def delete_message_group(
             Response.message_id == owner.message_id,
         )
     )
+    # Tombstone the line's send_log row so the reply reconciler won't re-fetch
+    # this reply from Telegram and re-insert it (the bug: deleted history
+    # reappearing). Only the (chat_id, message_id) the reconciler keys on needs
+    # tombstoning — a NULL pair was never reconcilable to begin with.
+    if owner.chat_id is not None and owner.message_id is not None:
+        await session.execute(
+            update(SendLog)
+            .where(
+                SendLog.tenant_id == tenant_id,
+                SendLog.chat_id == owner.chat_id,
+                SendLog.message_id == owner.message_id,
+            )
+            .values(reply_purged_at=func.now())
+        )
     await session.flush()
     return result.rowcount
 
@@ -620,6 +634,15 @@ async def delete_by_gate(
             Response.batch_id.in_(batch_ids),
         )
     )
+    # Tombstone these lines' send_log rows so the reconciler won't resurrect them.
+    await session.execute(
+        update(SendLog)
+        .where(
+            SendLog.tenant_id == tenant_id,
+            SendLog.batch_id.in_(batch_ids),
+        )
+        .values(reply_purged_at=func.now())
+    )
     await session.flush()
     return result.rowcount
 
@@ -631,6 +654,13 @@ async def delete_all_for_tenant(session: AsyncSession, tenant_id: int) -> int:
     are touched; the batches/lines/send_log stay. Flush-not-commit."""
     result = await session.execute(
         delete(Response).where(Response.tenant_id == tenant_id)
+    )
+    # Tombstone every send_log row of the tenant so the reconciler won't
+    # resurrect any purged reply.
+    await session.execute(
+        update(SendLog)
+        .where(SendLog.tenant_id == tenant_id)
+        .values(reply_purged_at=func.now())
     )
     await session.flush()
     return result.rowcount

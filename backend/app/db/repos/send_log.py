@@ -157,6 +157,9 @@ async def awaiting_sent_keys(
         .where(
             SendLog.chat_id.is_not(None),
             SendLog.message_id.is_not(None),
+            # A user-purged line (deleted from Historial) is NOT awaiting — its
+            # missing 'full' row is a deliberate delete, not a dropped reply.
+            SendLog.reply_purged_at.is_(None),
             Batch.created_at >= within,
             ~answered,
         )
@@ -192,6 +195,7 @@ async def count_awaiting_beyond_window(
         .where(
             SendLog.chat_id.is_not(None),
             SendLog.message_id.is_not(None),
+            SendLog.reply_purged_at.is_(None),  # user-purged lines aren't awaiting
             Batch.created_at < within,
             ~_answered_full_exists(),
         )

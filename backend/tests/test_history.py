@@ -30,7 +30,8 @@ import pytest
 from app.core import capture, send_worker
 from app.core.capture import IncomingReply
 from app.db.base import async_session_factory
-from app.db.models import Batch, Response, User
+from app.db.models import Batch, Response, SendLog, User
+from app.db.repos import send_log as send_log_repo
 from app.main import app
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
@@ -422,6 +423,55 @@ async def test_delete_all_wipes_only_acting_tenant(
     finally:
         await other_http.aclose()
         await cleanup_users({other.email})
+
+
+# --- DELETE tombstones send_log so the reconciler won't resurrect ------------
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_delete_tombstones_send_log_against_reconciler(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """Deleting a message from Historial tombstones its send_log row, so the
+    reply reconciler's work-list (``awaiting_sent_keys``) keeps EXCLUDING it —
+    otherwise the deleted ✅ would be re-fetched from Telegram and re-inserted
+    within ~45s (the "I delete it and it comes back on refresh" bug)."""
+    http, user = client_user
+    await _post_batch(http, "a", gate["id"])
+    await _drain()  # message_id 1
+    await _capture(1, 1, "✅ Aprobada CC: 4111 Status a")
+
+    within = datetime.now(UTC) - timedelta(hours=72)
+
+    async with async_session_factory() as session:
+        pairs = {
+            (c, m)
+            for c, m in (
+                await session.execute(
+                    select(SendLog.chat_id, SendLog.message_id).where(
+                        SendLog.tenant_id == user.tenant_id,
+                        SendLog.message_id.is_not(None),
+                    )
+                )
+            ).all()
+        }
+        # Delivered send, and NOT awaiting while its ✅ response still exists.
+        assert pairs
+        awaiting = await send_log_repo.awaiting_sent_keys(session, within=within)
+    assert not (pairs & awaiting)
+
+    # Delete the ✅ message from Historial.
+    item = (await http.get("/api/history")).json()["gates"][0]["items"][0]
+    res = await http.delete(f"/api/history/response/{item['id']}")
+    assert res.status_code == 200, res.text
+
+    # The response row is gone, but the send_log row is tombstoned — the
+    # reconciler still excludes the pair, so the delete is NOT undone.
+    async with async_session_factory() as session:
+        awaiting = await send_log_repo.awaiting_sent_keys(session, within=within)
+    assert not (pairs & awaiting), "purged line reappeared in reconciler work-list"
 
 
 # --- Auth: every endpoint requires a session ---------------------------------

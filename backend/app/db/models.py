@@ -584,6 +584,16 @@ class SendLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Set by a Historial delete (api/history) to STOP the reply reconciler from
+    # resurrecting a user-purged message. The reconciler treats a line with no
+    # 'full' response row as "awaiting a reply" and re-fetches it from Telegram,
+    # so a delete that (by invariant) removes only `responses` rows and leaves
+    # send_log intact would be undone within one ~45s pass. The tombstone is
+    # per-line and terminal (line ids are never reused); NULL = not purged.
+    # Mirrors the `responses.hidden_at` soft-state idiom.
+    reply_purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class CaptureSession(Base):
