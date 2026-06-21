@@ -225,3 +225,37 @@ async def sent_count_for_session(
         )
     )
     return (await session.execute(stmt)).scalar_one()
+
+
+async def awaiting_count_for_session(
+    session: AsyncSession, capture_session_id: int, *, within: datetime
+) -> int:
+    """The cockpit "esperando respuesta" counter: delivered lines of this
+    capture session, sent within ``within``, that still have NO ✅/❌ reply.
+
+    DECAY WINDOW (``within`` — same 72h horizon as the reply reconciler): a
+    verdict that has not arrived within the window is treated as LOST, not
+    awaiting, so on a perpetual sessionless cockpit the counter self-heals to ~0
+    when idle instead of growing forever (the old ``sent − responded`` over the
+    whole session lifetime only ever climbed — hundreds of ⏳/never-answered
+    test sends stuck it high).
+
+    Counts SEND_LOG rows (one per line — ``uq_send_log_line_id``), so a rotated
+    cookie-mode line counts ONCE. Excludes ``message_id IS NULL`` (unconfirmed),
+    ``reply_purged_at`` (deleted from Historial — the delete asymmetry that
+    would otherwise inflate the count), and any line with a 'full' row
+    (``_answered_full_exists`` — a ⏳-only line wrote no 'full' row, so it stays
+    counted). One indexed query; replaces the two-call subtraction."""
+    stmt = (
+        select(func.count())
+        .select_from(SendLog)
+        .join(Batch, Batch.id == SendLog.batch_id)
+        .where(
+            Batch.capture_session_id == capture_session_id,
+            SendLog.message_id.is_not(None),
+            SendLog.reply_purged_at.is_(None),
+            Batch.created_at >= within,
+            ~_answered_full_exists(),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one()

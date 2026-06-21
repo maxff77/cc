@@ -33,6 +33,7 @@ from app.db.base import async_session_factory
 from app.db.models import Batch, Response, SendLog, User
 from app.db.repos import send_log as send_log_repo
 from app.main import app
+from app.services import batches as batches_service
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
@@ -439,11 +440,12 @@ async def test_delete_tombstones_send_log_against_reconciler(
     otherwise the deleted ✅ would be re-fetched from Telegram and re-inserted
     within ~45s (the "I delete it and it comes back on refresh" bug)."""
     http, user = client_user
-    await _post_batch(http, "a", gate["id"])
+    batch_id = await _post_batch(http, "a", gate["id"])
     await _drain()  # message_id 1
     await _capture(1, 1, "✅ Aprobada CC: 4111 Status a")
 
     within = datetime.now(UTC) - timedelta(hours=72)
+    sess_id = await _bound_session_id(batch_id)
 
     async with async_session_factory() as session:
         pairs = {
@@ -457,9 +459,10 @@ async def test_delete_tombstones_send_log_against_reconciler(
                 )
             ).all()
         }
-        # Delivered send, and NOT awaiting while its ✅ response still exists.
+        # Delivered send, NOT awaiting while its ✅ response exists, counter 0.
         assert pairs
         awaiting = await send_log_repo.awaiting_sent_keys(session, within=within)
+        assert await batches_service.awaiting_reply_count(session, sess_id) == 0
     assert not (pairs & awaiting)
 
     # Delete the ✅ message from Historial.
@@ -467,11 +470,52 @@ async def test_delete_tombstones_send_log_against_reconciler(
     res = await http.delete(f"/api/history/response/{item['id']}")
     assert res.status_code == 200, res.text
 
-    # The response row is gone, but the send_log row is tombstoned — the
-    # reconciler still excludes the pair, so the delete is NOT undone.
+    # The response row is gone, but the send_log row is tombstoned, so:
+    # (1) the reconciler still excludes the pair (delete not undone), and
+    # (2) "esperando respuesta" does NOT spike — the purged line drops from BOTH
+    #     sent and responded (the 300-stuck bug). Without the tombstone, sent
+    #     would still count it while responded dropped to 0 ⇒ a phantom "1".
     async with async_session_factory() as session:
         awaiting = await send_log_repo.awaiting_sent_keys(session, within=within)
+        esperando = await batches_service.awaiting_reply_count(session, sess_id)
     assert not (pairs & awaiting), "purged line reappeared in reconciler work-list"
+    assert esperando == 0, f"esperando respuesta spiked to {esperando} after delete"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_awaiting_reply_decays_after_window(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """"esperando respuesta" only counts unanswered sends from RECENT batches:
+    an old (>72h) delivered-but-unanswered line drops out (lost, not awaiting),
+    so the perpetual sessionless cockpit does not accumulate stale ⏳ forever
+    (the bug where a tenant with "nada" still saw esperando=300)."""
+    http, user = client_user
+    # Two delivered lines, NEITHER answered (a ⏳-only line writes no 'full' row).
+    b_old = await _post_batch(http, "old1", gate["id"])
+    await _drain()
+    b_new = await _post_batch(http, "new1", gate["id"])
+    await _drain()
+    sess_id = await _bound_session_id(b_old)  # one perpetual session per tenant
+
+    async with async_session_factory() as session:
+        # Both recent ⇒ both awaiting.
+        assert await batches_service.awaiting_reply_count(session, sess_id) == 2
+
+    # Backdate the first batch beyond the 72h decay window.
+    async with async_session_factory() as session:
+        await session.execute(
+            Batch.__table__.update()
+            .where(Batch.id == b_old)
+            .values(created_at=datetime.now(UTC) - timedelta(hours=80))
+        )
+        await session.commit()
+
+    async with async_session_factory() as session:
+        # The old unanswered line is now "lost", not awaiting ⇒ only the new one.
+        assert await batches_service.awaiting_reply_count(session, sess_id) == 1
 
 
 # --- Auth: every endpoint requires a session ---------------------------------

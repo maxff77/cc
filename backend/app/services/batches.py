@@ -6,6 +6,8 @@
 order (in-batch dedup is an AC).
 """
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.display_transform import display_transform
@@ -68,31 +70,32 @@ async def _n_effective(session: AsyncSession, batch: Batch) -> int:
     return max(1, n_eff)
 
 
+# Decay horizon for "esperando respuesta": match the reply reconciler's window
+# (core.reconciler._RECONCILE_WINDOW_HOURS). A delivered line with no ✅/❌ after
+# this long is treated as a LOST reply, not an awaiting one — the reconciler has
+# given up on it too — so the counter self-heals instead of climbing forever on
+# the perpetual sessionless cockpit.
+_AWAITING_WINDOW_HOURS = 72
+
+
 async def awaiting_reply_count(
     session: AsyncSession, capture_session_id: int | None
 ) -> int:
-    """Lines delivered in this capture session that have NO ✅/❌ reply yet.
+    """Lines delivered in this capture session that have NO ✅/❌ reply yet —
+    bounded to a recent decay window so the count doesn't accumulate forever.
 
-    ``delivered − distinct-answered-LINES`` over the whole session (counters
-    never reset between batches). The answered side counts DISTINCT ``line_id``
-    among 'full' rows (``responded_line_count``), so a multi-attempt (rotated)
-    Amazon cookie-mode line — which yields two answered message rows but ONE
-    line — counts ONCE, matching the minuend (``sent_count_for_session`` counts
-    each line once; send_log reuses one row per line). For non-cookie lines this
-    is equivalent to the old distinct-message count (one reply message per line).
-
-    Clamped at ≥0: the subtrahend counts only lines that also exist in send_log
-    (attribution links a reply back to a delivered line), so it can never exceed
-    the minuend — the clamp is a belt-and-suspenders guard. ``None`` (a batch
-    with no session bound yet) ⇒ 0. A line the bot never answers stays counted
-    (honest "still waiting") — intended, not a leak."""
+    Counts delivered, non-purged lines from batches created within
+    ``_AWAITING_WINDOW_HOURS`` that lack a 'full' response (see
+    ``send_log_repo.awaiting_count_for_session`` for the rotation/purge/⏳
+    semantics). Older unanswered sends are "lost", not "awaiting", and drop out
+    — fixing the perpetual-session counter that stuck at hundreds of stale
+    ⏳/never-answered test sends. ``None`` (a batch with no session bound yet) ⇒ 0."""
     if capture_session_id is None:
         return 0
-    sent = await send_log_repo.sent_count_for_session(session, capture_session_id)
-    responded = await responses_repo.responded_line_count(
-        session, capture_session_id
+    within = datetime.now(UTC) - timedelta(hours=_AWAITING_WINDOW_HOURS)
+    return await send_log_repo.awaiting_count_for_session(
+        session, capture_session_id, within=within
     )
-    return max(0, sent - responded)
 
 
 def state_data(
