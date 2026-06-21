@@ -393,6 +393,14 @@ def invalid_send_interval() -> AppError:
     )
 
 
+def invalid_live_channel() -> AppError:
+    return AppError(
+        status_code=400,
+        code="invalid_live_channel",
+        message="No pudimos resolver ese canal. Revisa el id/@usuario y el acceso de la cuenta.",
+    )
+
+
 # --- Codes the plan-catalog feature defines ------------------------------
 
 

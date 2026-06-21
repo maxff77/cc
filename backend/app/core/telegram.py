@@ -348,6 +348,45 @@ class TelegramGateway:
         self._send_index = idx + 1
         return (int(peer_id), int(message.id))
 
+    async def send_to(self, identifier: int | str, text: str) -> bool:
+        """Best-effort out-of-band send to a FIXED chat (the lives-forward
+        channel). NOT round-robined and NOT paced — low-volume, off the send
+        loop. Returns ``True`` on delivery, ``False`` on ANY failure
+        (gateway not ready, unresolved peer, FloodWait, auth loss, …): the
+        caller treats forwarding as fire-and-forget so a forward failure NEVER
+        touches the capture path. Telethon stays confined to this module.
+
+        ponytail: catch-all + no retry queue — a dropped forward still lives in
+        ``responses``/Historial; add a queue only if drops ever matter.
+        """
+        if self.client is None or not self.authorized:
+            return False
+        try:
+            # parse_mode=None for consistency with send() — never let markdown
+            # rendering mangle the verbatim card we are forwarding.
+            await self.client.send_message(identifier, text, parse_mode=None)
+            return True
+        except _AUTH_LOSS_ERRORS as e:
+            # A forward is off the send loop, but if auth-loss surfaces HERE
+            # first, don't hide it: demote ``authorized`` (so new sends 503 and
+            # the next ``send()`` raises SessionLostError → watchdog latches).
+            # Still fire-and-forget — never raise into the caller.
+            self.authorized = False
+            logger.error(
+                "event=session_lost source=send_to error=%s: %s",
+                type(e).__name__,
+                e,
+            )
+            return False
+        except Exception as e:  # noqa: BLE001 — best-effort, every failure is non-fatal
+            logger.warning(
+                "event=live_forward_failed identifier=%r error=%s: %s",
+                identifier,
+                type(e).__name__,
+                e,
+            )
+            return False
+
     async def recent_outgoing(
         self, limit: int = 50
     ) -> list[tuple[int, int, str]]:

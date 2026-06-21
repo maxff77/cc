@@ -345,6 +345,9 @@ export default function AdminUsersPage() {
 
           {/* Owner knob: constant send interval (configurable pacing). */}
           {isOwner && <SendIntervalCard />}
+
+          {/* Owner knob: Telegram channel for Amazon lives. */}
+          {isOwner && <LiveChannelCard />}
         </div>
 
         {/* Right zone: the users table. */}
@@ -857,6 +860,106 @@ function SendIntervalCard() {
           <Btn
             className="sm:mb-1"
             disabled={mutation.isPending || interval.isLoading}
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Guardando…" : "Guardar"}
+          </Btn>
+        </form>
+      )}
+    </SectionCard>
+  );
+}
+
+// --- Live-forward channel (Amazon lives → Telegram, owner only) -----------
+
+interface LiveChannelOut {
+  live_forward_channel: string; // "" = disabled
+}
+
+const LIVE_CHANNEL_KEY = ["admin-live-channel"] as const;
+
+function LiveChannelCard() {
+  const queryClient = useQueryClient();
+  // null = untouched → render the server value; editing overrides it.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  const channel = useQuery({
+    queryKey: LIVE_CHANNEL_KEY,
+    queryFn: () => api.get<LiveChannelOut>("/api/admin/live-channel"),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (value: string) =>
+      api.put<LiveChannelOut>("/api/admin/live-channel", {
+        live_forward_channel: value,
+      }),
+    onSuccess: (data) => {
+      setDraft(null);
+      setBanner(null);
+      queryClient.setQueryData(LIVE_CHANNEL_KEY, data);
+    },
+    onError: (err) => {
+      // invalid_live_channel (and anything else) carries the server's Spanish
+      // message — render it verbatim ({code, message} contract).
+      setBanner(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  const value = draft ?? (channel.data?.live_forward_channel ?? "");
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (mutation.isPending) return;
+    setBanner(null);
+    // Empty disables forwarding; non-empty is validated server-side
+    // (resolved against telegram), so no client-side format gate.
+    mutation.mutate(value.trim());
+  }
+
+  return (
+    <SectionCard legend="Canal de lives (Amazon)" legendAs="h2">
+      <p className="mb-3 text-sm leading-relaxed text-muted">
+        Canal o grupo de Telegram donde se reenvía cada live (tarjeta aprobada)
+        del gate Amazon, tal cual la responde el bot. Pega el id (ej:
+        -1001234567890) o @usuario; la cuenta compartida debe ser miembro/admin.
+        Déjalo vacío para desactivar.
+      </p>
+
+      {banner && (
+        <Notice className="mb-3" status="danger">
+          {banner}
+        </Notice>
+      )}
+
+      {channel.isError ? (
+        <Notice status="danger">
+          No pudimos cargar el canal. Recarga la página.
+        </Notice>
+      ) : (
+        <form
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={onSubmit}
+        >
+          <Field
+            className="sm:flex-1"
+            disabled={channel.isLoading}
+            label="Canal / grupo"
+            name="live_forward_channel"
+            placeholder="-1001234567890"
+            type="text"
+            value={value}
+            onChange={(v) => setDraft(v)}
+          />
+
+          <Btn
+            className="sm:mb-1"
+            disabled={mutation.isPending || channel.isLoading}
             type="submit"
             variant="primary"
           >

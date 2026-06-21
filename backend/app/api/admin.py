@@ -34,6 +34,7 @@ from app.core import send_worker
 from app.core.broadcaster import broadcaster
 from app.core.redact import redact_reply_text
 from app.core.scheduler import scheduler
+from app.core.telegram import gateway
 from app.db.base import get_session
 from app.db.models import Gate, GateCategory, Plan, User
 from app.db.repos import audit as audit_repo
@@ -55,6 +56,7 @@ from app.errors import (
     invalid_contact,
     invalid_credits,
     invalid_gate,
+    invalid_live_channel,
     invalid_plan,
     invalid_plan_days,
     invalid_renewal,
@@ -62,11 +64,13 @@ from app.errors import (
     plan_not_found,
     renewal_would_shorten,
     session_not_found,
+    telegram_unauthorized,
     tenant_not_found,
     user_not_found,
 )
 from app.services import admission as admission_service
 from app.services import auth as auth_service
+from app.services import live_forward as live_forward_service
 from app.services import pacing as pacing_service
 from app.services import plans as plans_service
 from app.services import users as users_service
@@ -913,6 +917,65 @@ async def update_interval(
     await session.commit()
     scheduler.set_floor(body.interval_seconds)
     return IntervalOut(interval_seconds=body.interval_seconds)
+
+
+# --- Live-forward channel (Amazon lives → Telegram) --------------------------
+#
+# Owner-only knob: the GLOBAL Telegram channel/group where every Amazon "live"
+# (approved card) is forwarded verbatim. Lives in ``system_settings``. Empty =
+# forwarding disabled. The id/@username is validated against telegram on save
+# (``resolve_one``, like send targets) and stored as the resolved marked id.
+
+
+class LiveChannelOut(BaseModel):
+    live_forward_channel: str  # "" = disabled
+
+
+class UpdateLiveChannelRequest(BaseModel):
+    live_forward_channel: str
+
+
+@router.get("/live-channel", response_model=LiveChannelOut)
+async def get_live_channel(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> LiveChannelOut:
+    """Current live-forward channel id ("" = disabled)."""
+    return LiveChannelOut(
+        live_forward_channel=await live_forward_service.get_channel(session)
+    )
+
+
+@router.put("/live-channel", response_model=LiveChannelOut)
+async def update_live_channel(
+    body: UpdateLiveChannelRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> LiveChannelOut:
+    """Set the live-forward channel; empty string disables forwarding.
+
+    A non-empty value is resolved against telegram first (same validation as
+    send targets); an unresolvable id/@username raises ``invalid_live_channel``
+    instead of silently storing a dead destination. The RESOLVED marked id is
+    persisted so the forward send doesn't need to re-resolve a bare username.
+    """
+    raw = body.live_forward_channel.strip()
+    if not raw:
+        await live_forward_service.set_channel(session, "")
+        await session.commit()
+        return LiveChannelOut(live_forward_channel="")
+    # Distinguish a transient session outage from a bad channel (mirror
+    # create_target): a down/unauthorized gateway makes resolve_one return None
+    # for ANY id, so guard first and surface 503 "retry later" instead of the
+    # misleading invalid_live_channel.
+    if not gateway.authorized:
+        raise telegram_unauthorized()
+    resolved = await gateway.resolve_one(live_forward_service.as_identifier(raw))
+    if resolved is None:
+        raise invalid_live_channel()
+    await live_forward_service.set_channel(session, str(resolved))
+    await session.commit()
+    return LiveChannelOut(live_forward_channel=str(resolved))
 
 
 # --- Gate category CRUD (Story 2.2, owner addition) --------------------------
