@@ -61,6 +61,10 @@ _MIN_SILENCE_SPAN_SECONDS = 60.0
 
 REASON_REPLY_RATE = "reply_rate_collapse"
 REASON_SESSION_LOST = "session_lost"
+# Boot guard (services/account_guard): the Telegram account fingerprint changed
+# while historical send_log/responses exist — latch fail-closed so a silent
+# account swap can never mis-attribute replies across tenants.
+REASON_ACCOUNT_CHANGED = "telegram_account_changed"
 
 
 class Watchdog:

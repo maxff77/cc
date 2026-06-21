@@ -124,6 +124,22 @@ class TelegramGateway:
         # the lifespan from the DB list (multi-target sending) — the gateway
         # stays agnostic of the DB. connect() only owns the client + auth.
 
+    async def account_id(self) -> int | None:
+        """The connected account's own user id — the boot identity fingerprint
+        (services/account_guard). Re-authing ``anon.session`` to a DIFFERENT
+        account changes this id AND restarts the per-chat message-id sequences,
+        so a change is the one signal that attribution may now mis-map across
+        tenants. ``None`` when unauthorized (nothing to fingerprint — sending is
+        already 503) or if the lookup fails (never crash boot over it)."""
+        if self.client is None or not self.authorized:
+            return None
+        try:
+            me = await self.client.get_me()
+        except Exception:
+            logger.warning("event=account_id_lookup_failed", exc_info=True)
+            return None
+        return int(me.id) if me is not None else None
+
     async def reload_targets(
         self, targets: list[tuple[int, str]]
     ) -> dict[str, list[int]]:

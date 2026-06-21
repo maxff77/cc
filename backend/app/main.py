@@ -39,9 +39,10 @@ from app.core import capture
 from app.core.reconciler import run_reconciler
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
-from app.core.watchdog import watchdog
+from app.core.watchdog import REASON_ACCOUNT_CHANGED, watchdog
 from app.db.base import async_session_factory, engine
 from app.errors import AppError
+from app.services import account_guard
 from app.services import pacing as pacing_service
 from app.services import targets as targets_service
 
@@ -70,6 +71,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Restore a persisted watchdog latch BEFORE the worker can claim anything
     # (Story 4.1, AC 3: a deploy/restart never resumes sending on its own).
     await watchdog.load_persisted()
+    # Boot-time Telegram account-identity guard (cross-tenant leak fence): if
+    # ``anon.session`` was re-authed to a DIFFERENT account while historical
+    # send_log/responses exist, the per-chat message-id sequences restarted and
+    # attribution could mis-map across tenants — latch the global pause
+    # FAIL-CLOSED until the owner wipes that state and resumes. A plain restart
+    # reuses the same account → ``ok``, silent. (services/account_guard.)
+    async with async_session_factory() as guard_db:
+        account_decision = await account_guard.decide_account_identity(
+            guard_db, await gateway.account_id()
+        )
+        await guard_db.commit()
+    if account_decision == account_guard.LOCKED:
+        await watchdog.trigger(
+            REASON_ACCOUNT_CHANGED,
+            detail=(
+                "Telegram account fingerprint changed with existing send_log/"
+                "responses — sending latched to prevent cross-tenant "
+                "mis-attribution. Wipe send_log/responses, then resume."
+            ),
+        )
     worker_task = asyncio.create_task(run_worker())
     capture_task = asyncio.create_task(capture.run_capture())
     # Reply reconciler: a periodic safety net that recovers bot replies the
