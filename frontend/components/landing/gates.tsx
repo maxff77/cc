@@ -46,7 +46,7 @@ export function Gates() {
   ) {
     body = (
       <div className="rounded-[16px] border border-border bg-surface p-7 text-center text-[15px] text-muted">
-        Catálogo en preparación. Consultá los gates disponibles al crear tu
+        Catálogo en preparación. Consultá los gateways disponibles al crear tu
         cuenta.
       </div>
     );
@@ -56,7 +56,7 @@ export function Gates() {
     body = (
       <>
         <p className="mb-7 font-mono text-[13px] text-faint">
-          {total} {total === 1 ? "gate" : "gates"} · {categories.length}{" "}
+          {total} {total === 1 ? "gateway" : "gateways"} · {categories.length}{" "}
           {categories.length === 1 ? "categoría" : "categorías"}
         </p>
         <div className="flex flex-col gap-5">
@@ -91,7 +91,7 @@ export function Gates() {
       id="gates"
     >
       <h2 className="font-display text-[clamp(1.7rem,4vw,2.5rem)] font-extrabold tracking-[-0.02em] text-foreground">
-        Nuestros gates
+        Nuestros gateways
       </h2>
       <p className="mb-9 mt-3 max-w-[52ch] text-[15px] text-muted">
         Un catálogo amplio, organizado por categoría. Elegís uno por lote desde

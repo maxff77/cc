@@ -161,7 +161,7 @@ def gate_exists() -> AppError:
     return AppError(
         status_code=409,
         code="gate_exists",
-        message="Ya existe ese gate en el catálogo.",
+        message="Ya existe ese gateway en el catálogo.",
     )
 
 
@@ -169,7 +169,7 @@ def gate_not_found() -> AppError:
     return AppError(
         status_code=404,
         code="gate_not_found",
-        message="Ese gate no existe.",
+        message="Ese gateway no existe.",
     )
 
 
@@ -183,7 +183,7 @@ def invalid_gate(message: str | None = None) -> AppError:
     return AppError(
         status_code=400,
         code="invalid_gate",
-        message=message or "Datos del gate inválidos.",
+        message=message or "Datos del gateway inválidos.",
     )
 
 
@@ -207,7 +207,7 @@ def category_in_use() -> AppError:
     return AppError(
         status_code=409,
         code="category_in_use",
-        message="No puedes eliminar una categoría con gates. Reasigna sus gates primero.",
+        message="No puedes eliminar una categoría con gateways. Reasigna sus gateways primero.",
     )
 
 
@@ -455,7 +455,7 @@ def insufficient_credits(*, gate_name: str) -> AppError:
         status_code=403,
         code="insufficient_credits",
         message=(
-            f"No tienes créditos para usar el gate «{gate_name}». "
+            f"No tienes créditos para usar el gateway «{gate_name}». "
             "Recarga créditos para continuar."
         ),
     )
@@ -558,7 +558,7 @@ def gate_not_cookie_mode() -> AppError:
     return AppError(
         status_code=409,
         code="gate_not_cookie_mode",
-        message="Ese gate no admite cookies.",
+        message="Ese gateway no admite cookies.",
     )
 
 
@@ -578,7 +578,7 @@ def cookie_limit_reached() -> AppError:
     return AppError(
         status_code=409,
         code="cookie_limit_reached",
-        message="Alcanzaste el máximo de cookies para este gate. Elimina alguna para agregar otra.",
+        message="Alcanzaste el máximo de cookies para este gateway. Elimina alguna para agregar otra.",
     )
 
 
@@ -622,7 +622,7 @@ def cookie_delete_failed() -> AppError:
 
 PAUSE_REASON_MESSAGES: dict[str, str] = {
     "cookies_exhausted": (
-        "Se agotaron las cookies de este gate. Agrega más cookies y reanuda "
+        "Se agotaron las cookies de este gateway. Agrega más cookies y reanuda "
         "para continuar desde la línea pendiente."
     ),
     "verdict_timeout": (

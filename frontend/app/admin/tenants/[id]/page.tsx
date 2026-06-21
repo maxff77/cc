@@ -207,7 +207,7 @@ export default function AdminTenantSessionsPage() {
                     Nombre
                   </th>
                   <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
-                    Gate
+                    Gateway
                   </th>
                   <th className="px-3 py-2.5 font-display text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
                     Estado

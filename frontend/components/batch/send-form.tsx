@@ -264,8 +264,8 @@ export function SendForm({
     if (gateId == null) {
       setSelectError(
         isLive
-          ? "No hay gates en el catálogo."
-          : "Elige una categoría y un gate.",
+          ? "No hay gateways en el catálogo."
+          : "Elige una categoría y un gateway.",
       );
 
       return;
@@ -276,7 +276,7 @@ export function SendForm({
     // gates (cost 0) never block.
     if (blockedByCredits) {
       setSelectError(
-        `Sin créditos para el gate “${effectiveGate?.name ?? ""}”. Recarga para continuar.`,
+        `Sin créditos para el gateway “${effectiveGate?.name ?? ""}”. Recarga para continuar.`,
       );
 
       return;
@@ -328,7 +328,7 @@ export function SendForm({
           {isLive ? (
             // Active-gate chip (UX-DR9): name · comando visible.
             <div className="flex flex-wrap items-center gap-2">
-              <LabelCaps>Gate activo</LabelCaps>
+              <LabelCaps>Gateway activo</LabelCaps>
               <MonoChip>
                 {live.gateName} · {live.gateDisplayValue}
               </MonoChip>
@@ -366,9 +366,9 @@ export function SendForm({
                     ? selectError
                     : null
                 }
-                label="Gate"
+                label="Gateway"
                 options={gateOptions}
-                placeholder="Elige un gate"
+                placeholder="Elige un gateway"
                 value={gateKey}
                 onChange={(key) => {
                   setGateKey(key);

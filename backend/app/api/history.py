@@ -51,7 +51,7 @@ _PG_INT_MAX = 2**31 - 1  # ids are int4; larger binds overflow asyncpg
 # The trailing "no gate" group's label (a message whose batch was SET-NULL'd or
 # never carried a gate). ``name`` stays ``null`` (the delete-by-gate handle); the
 # display label is fixed client copy.
-_NO_GATE_DISPLAY = "Sin gate"
+_NO_GATE_DISPLAY = "Sin gateway"
 
 
 # --- Schemas (inline, codebase convention) ---------------------------------

@@ -183,7 +183,7 @@ export default function HistorialPage() {
             Historial
           </h1>
           <p className="mt-0.5 text-sm text-muted">
-            Tus respuestas aprobadas (✅), agrupadas por gate.
+            Tus respuestas aprobadas (✅), agrupadas por gateway.
           </p>
         </div>
         {hasHistory && (
@@ -266,7 +266,7 @@ export default function HistorialPage() {
                 }}
               >
                 <Icon name="trash" size={13} />
-                Borrar historial de este gate
+                Borrar historial de este gateway
               </button>
             </div>
           )}
@@ -280,7 +280,7 @@ export default function HistorialPage() {
         confirmVariant="danger"
         heading={
           confirm?.kind === "gate"
-            ? `¿Borrar todo el historial del gate "${confirm.label}"? Esta acción no se puede deshacer.`
+            ? `¿Borrar todo el historial del gateway "${confirm.label}"? Esta acción no se puede deshacer.`
             : "¿Borrar TODO tu historial de respuestas aprobadas? Esta acción no se puede deshacer."
         }
         open={confirm !== null}

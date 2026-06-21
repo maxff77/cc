@@ -25,7 +25,7 @@ const ITEMS = [
   // Gift keys: admins + owner mint here (the tier is owner-fixed in Planes).
   { href: "/admin/keys", label: "Keys", ownerOnly: false },
   { href: "/admin/plans", label: "Planes", ownerOnly: true },
-  { href: "/admin/gates", label: "Gates", ownerOnly: true },
+  { href: "/admin/gates", label: "Gateways", ownerOnly: true },
   { href: "/admin/destinos", label: "Destinos", ownerOnly: true },
 ] as const;
 

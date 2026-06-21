@@ -96,7 +96,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
   return (
     <SectionCard
       className="flex flex-col gap-3.5"
-      legend="Cookies del gate"
+      legend="Cookies del gateway"
       legendAs="h2"
     >
       {okMsg && <Notice status="success">{okMsg}</Notice>}
@@ -137,7 +137,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
 
         {atCap && (
           <Notice status="warning">
-            Alcanzaste el máximo de {COOKIE_CAP} cookies para este gate. Elimina
+            Alcanzaste el máximo de {COOKIE_CAP} cookies para este gateway. Elimina
             una para agregar otra.
           </Notice>
         )}
@@ -160,7 +160,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
         )}
 
         {!list.isLoading && !list.isError && cookies.length === 0 && (
-          <EmptyState message="Todavía no guardaste cookies para este gate." />
+          <EmptyState message="Todavía no guardaste cookies para este gateway." />
         )}
 
         {cookies.length > 0 && (

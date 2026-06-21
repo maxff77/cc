@@ -42,7 +42,7 @@ const ADMIN_ITEMS: readonly NavLink[] = [
   { href: "/admin/users", label: "Usuarios" },
 ];
 const OWNER_ITEMS: readonly NavLink[] = [
-  { href: "/admin/gates", label: "Gates" },
+  { href: "/admin/gates", label: "Gateways" },
   { href: "/admin/destinos", label: "Destinos" },
 ];
 

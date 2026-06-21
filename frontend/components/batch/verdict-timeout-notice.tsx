@@ -35,7 +35,7 @@ export function VerdictTimeoutNotice() {
       role="alert"
     >
       <p className="text-xs font-semibold text-danger">
-        El gate no respondió a tiempo. Puedes reanudar.
+        El gateway no respondió a tiempo. Puedes reanudar.
       </p>
 
       <div className="flex flex-col gap-1">

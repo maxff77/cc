@@ -565,17 +565,17 @@ def _validate_gate_value(value: str) -> str:
     requirement."""
     value = value.strip()
     if not value:
-        raise ValueError("gate vacío")
+        raise ValueError("gateway vacío")
     if any(not ch.isprintable() for ch in value):
         raise ValueError(
-            "el gate no puede contener tabulaciones, saltos de línea ni caracteres invisibles"
+            "el gateway no puede contener tabulaciones, saltos de línea ni caracteres invisibles"
         )
     # Collapse internal ASCII-space runs to one. A stored double space would
     # desync apply_gate's ``startswith(gate_value + " ")`` dedup and silently
     # double-prefix re-pasted lines — the send-corruption class this repo guards.
     value = re.sub(r" {2,}", " ", value)
     if len(value) > GATE_VALUE_MAX:
-        raise ValueError("gate demasiado largo")
+        raise ValueError("gateway demasiado largo")
     return value
 
 

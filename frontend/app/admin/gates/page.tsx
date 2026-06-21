@@ -84,7 +84,7 @@ function validateGateValue(raw: string): string | null {
   // stores a single inner space (a stored double space would desync apply_gate).
   const value = raw.trim().replace(/ {2,}/g, " ");
 
-  if (!value) return "Ingresá un gate.";
+  if (!value) return "Ingresá un gateway.";
   // `[^\S ]` = any whitespace except the plain ASCII space (tabs, NBSP, unicode
   // separators). The second class adds the control/format/zero-width chars JS
   // `\s` misses (soft hyphen, bidi overrides, isolates, BOM…) so this stays a
@@ -94,7 +94,7 @@ function validateGateValue(raw: string): string | null {
       value,
     )
   )
-    return "El gate solo admite un espacio simple, sin tabulaciones ni caracteres invisibles.";
+    return "El gateway solo admite un espacio simple, sin tabulaciones ni caracteres invisibles.";
   if (value.length > GATE_VALUE_MAX)
     return `Máximo ${GATE_VALUE_MAX} caracteres.`;
 
@@ -227,7 +227,7 @@ export default function AdminGatesPage() {
 
   return (
     // Only the owner reaches this page (backend guard) → Gates nav visible.
-    <AdminShell gatesVisible title="Gates">
+    <AdminShell gatesVisible title="Gateways">
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         {/* Left zone: categories + create form (sticky on desktop). On mobile
             it drops below the catalog (order-2) — the owner came to see the
@@ -273,7 +273,7 @@ export default function AdminGatesPage() {
                       el?.querySelector<HTMLInputElement>("input")?.focus();
                     }}
                   >
-                    Crea tu primer gate
+                    Crea tu primer gateway
                   </Btn>
                 }
                 message="El catálogo está vacío."
@@ -289,7 +289,7 @@ export default function AdminGatesPage() {
                 padding="none"
               >
                 {rows.length === 0 ? (
-                  <EmptyState message="Sin gates en esta categoría." />
+                  <EmptyState message="Sin gateways en esta categoría." />
                 ) : (
                   <ul className="m-0 list-none p-0">
                     {rows.map((g, i) => (
@@ -792,7 +792,7 @@ function CreateGateForm({
       setValue("");
       setDisplayValue("");
       setCreditCost("0");
-      flashOk("Gate creado");
+      flashOk("Gateway creado");
       onCreated();
     },
     onError: (err) => {
@@ -847,7 +847,7 @@ function CreateGateForm({
     // id is the scroll target for the empty-catalog "Crea tu primer gate" CTA.
     <div id="create-gate-form">
       {/* legendAs="h2": replaces the old "Crear gate" h2 heading. */}
-      <SectionCard legend="CREAR GATE" legendAs="h2">
+      <SectionCard legend="CREAR GATEWAY" legendAs="h2">
         <div className="flex flex-col gap-3">
           {banner && <Notice status="danger">{banner}</Notice>}
           {okMsg && <Notice status="success">{okMsg}</Notice>}
@@ -870,7 +870,7 @@ function CreateGateForm({
               mono
               required
               error={fieldError}
-              label="Gate (comando real)"
+              label="Gateway (comando real)"
               name="value"
               placeholder=".ej"
               value={value}
@@ -927,7 +927,7 @@ function CreateGateForm({
               type="submit"
               variant="primary"
             >
-              {mutation.isPending ? "Creando…" : "Crear gate"}
+              {mutation.isPending ? "Creando…" : "Crear gateway"}
             </Btn>
           </form>
         </div>
@@ -985,7 +985,7 @@ function EditGateAction({
     onSuccess: () => {
       setOpen(false);
       clearErrors();
-      notify("Gate actualizado");
+      notify("Gateway actualizado");
       onChanged();
     },
     onError: (err) => {
@@ -1059,7 +1059,7 @@ function EditGateAction({
       <ConfirmDialog
         confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
         confirmVariant="primary"
-        heading="Editar gate"
+        heading="Editar gateway"
         open={open}
         pending={mutation.isPending}
         role="dialog"
@@ -1091,7 +1091,7 @@ function EditGateAction({
           <Field
             mono
             error={valueError}
-            label="Gate (comando real)"
+            label="Gateway (comando real)"
             name="value"
             value={value}
             onChange={(v) => {
@@ -1161,7 +1161,7 @@ function DeleteGateAction({
     onSuccess: () => {
       setOpen(false);
       setError(null);
-      notify("Gate eliminado");
+      notify("Gateway eliminado");
       onDeleted();
     },
     onError: (err) => {
@@ -1197,7 +1197,7 @@ function DeleteGateAction({
       <ConfirmDialog
         confirmLabel={mutation.isPending ? "Eliminando…" : "Eliminar"}
         confirmVariant="danger"
-        heading={`¿Eliminar este gate? (${gate.value})`}
+        heading={`¿Eliminar este gateway? (${gate.value})`}
         open={open}
         pending={mutation.isPending}
         onConfirm={() => mutation.mutate()}

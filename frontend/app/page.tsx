@@ -15,7 +15,7 @@ import { CtaFooter } from "@/components/landing/cta-footer";
 export const metadata: Metadata = {
   title: "Ranger-X Check — Envíos por Telegram con resultados en vivo",
   description:
-    "Pegá tus líneas, elegí un gate y mirá las respuestas ✅/❌ atribuidas al instante. Multi-tenant, pausable y con ritmo anti-ban.",
+    "Pegá tus líneas, elegí un gateway y mirá las respuestas ✅/❌ atribuidas al instante. Multi-tenant, pausable y con ritmo anti-ban.",
 };
 
 export default function LandingPage() {

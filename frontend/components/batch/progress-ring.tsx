@@ -189,7 +189,7 @@ export function IdleRing() {
     <section className="flex flex-col items-center gap-3 py-2">
       <Ring idle percent={0} />
       <p className="text-center text-sm text-muted">
-        Pega tus líneas y elige un gate.
+        Pega tus líneas y elige un gateway.
       </p>
     </section>
   );
