@@ -193,6 +193,9 @@ async def test_progress_and_captured_events_carry_authoritative_awaiting(
     )
     captured = _captured(events)
     assert captured[-1][2]["awaiting_reply"] == 1
+    # The emit carries the persisted Response.id (ws.ts dedups response.captured
+    # by it — same value as the snapshot's s-${id} row key).
+    assert isinstance(captured[-1][2]["id"], int)
 
 
 @pytest.mark.asyncio(loop_scope="session")

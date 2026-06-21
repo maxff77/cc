@@ -41,6 +41,10 @@ export interface PendingLine {
 // reconciliation, not novelty.
 export interface ResponseRow {
   key: string;
+  // The persisted Response.id — the dedup identity (matches the snapshot
+  // `s-${id}` key and the live `response.captured` `id`). Distinguishes a
+  // re-seed-race re-delivery (same id) from a genuine new revision (new id).
+  responseId: number;
   messageId: number;
   status: "ok" | "rejected";
   text: string;
@@ -242,6 +246,9 @@ interface BatchStateData {
 
 // VERBATIM mirror of the `response.captured` emit (backend core/capture.py).
 interface ResponseCapturedData {
+  // The persisted Response.id (same value as the snapshot row's `id`) — the
+  // dedup key: a re-seed-race re-delivery repeats it, a new revision is fresh.
+  id: number;
   session_id: number;
   batch_id: number | null;
   message_id: number;
@@ -388,6 +395,7 @@ function reduce(event: string, data: unknown) {
         sessionDisplayValue: d.session_gate_display_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
+          responseId: row.id,
           messageId: row.message_id,
           status: row.status,
           text: row.text,
@@ -585,19 +593,22 @@ function reduce(event: string, data: unknown) {
       // replies keep landing with the surface idle.
       if (store.sessionId !== null && d.session_id !== store.sessionId) break;
 
-      // Snapshot-race dedup (3.2 review fix): the backend commits BEFORE it
-      // emits (core/capture.py), and ws.py registers a connecting socket
-      // BEFORE building its snapshot — so a tab connecting inside that gap
-      // gets a snapshot that already contains this row, and this frame
-      // arrives AFTER it. The (messageId, status, text) triple can only
-      // repeat consecutively via that race: process_incoming already no-ops
-      // identical-text editions against the last revision.
-      const lastRow = store.responses[store.responses.length - 1];
+      // Re-seed-race dedup (cockpit-duplicate-responses fix): a server-pushed
+      // slice — the `snapshot` after every reconnect, or the `session.active`
+      // re-emit on Limpiar / gate-refresh — already carries this revision (as an
+      // `s-${id}` row), and an in-flight `response.captured` for it can arrive
+      // AFTER that slice, appending a duplicate `l-N` twin that stays on screen
+      // (the perpetual session never resets the list). Dedup by the persisted
+      // `Response.id` — the exact physical revision identity carried on both the
+      // snapshot rows and this emit. A re-delivery repeats the id (drop it); a
+      // genuine new revision — INCLUDING a re-flip to a prior exact (status,text)
+      // state — has a fresh id (keep it). (messageId/status/text can't dedup:
+      // Completa keeps every revision, so that triple legitimately recurs.)
+      // `d.id != null` tolerates the brief deploy rollover where an old backend
+      // emits no id — without it two id-less frames would collide
+      // (undefined === undefined) and the 2nd real reply would be dropped.
       const isDupRow =
-        lastRow !== undefined &&
-        lastRow.messageId === d.message_id &&
-        lastRow.status === d.status &&
-        lastRow.text === d.text;
+        d.id != null && store.responses.some((row) => row.responseId === d.id);
       // CC values are session-unique (uq_responses_session_cc), so a plain
       // text match is an exact dedup against snapshot rows.
       const knownCc = new Set(store.cc.map((row) => row.text));
@@ -618,6 +629,7 @@ function reduce(event: string, data: unknown) {
               ...store.responses,
               {
                 key: `l-${++liveRowSeq}`,
+                responseId: d.id,
                 messageId: d.message_id,
                 status: d.status,
                 text: d.text,
@@ -675,6 +687,7 @@ function reduce(event: string, data: unknown) {
         sessionDisplayValue: d.session_gate_display_value,
         responses: d.responses.map((row) => ({
           key: `s-${row.id}`,
+          responseId: row.id,
           messageId: row.message_id,
           status: row.status,
           text: row.text,

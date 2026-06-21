@@ -490,7 +490,7 @@ async def process_incoming(reply: IncomingReply) -> None:
                     cost=batch_row.gate_credit_cost,
                 )
 
-        await responses_repo.add_full(
+        full_row = await responses_repo.add_full(
             session,
             tenant_id=attributed.tenant_id,
             capture_session_id=attributed.capture_session_id,
@@ -569,6 +569,10 @@ async def process_incoming(reply: IncomingReply) -> None:
         capture_session_id = attributed.capture_session_id
         batch_id = attributed.batch_id
         line_id = attributed.line_id
+        # The persisted revision's PK — read here (post-flush, pre-commit) so the
+        # emit can carry it WITHOUT an expired-attribute lazy-load after commit.
+        # ws.ts dedups response.captured by this id (it IS the snapshot s-${id}).
+        response_id = full_row.id
         await session.commit()
 
     # 🔒 Capture→worker verdict signal (Amazon cookie-mode, Phase 2). Emit AFTER
@@ -631,6 +635,10 @@ async def process_incoming(reply: IncomingReply) -> None:
         tenant_id,
         "response.captured",
         {
+            # Stable per-revision identity (the persisted Response.id) — ws.ts
+            # dedups by this (same value as the snapshot's s-${id} row key), so a
+            # re-seed-race re-delivery is dropped and a real revision is kept.
+            "id": response_id,
             "session_id": capture_session_id,
             "batch_id": batch_id,
             "message_id": reply.message_id,

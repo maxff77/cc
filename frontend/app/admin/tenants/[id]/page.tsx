@@ -287,6 +287,7 @@ function SessionDetail({
   // live landing; support is a read surface (same criterion as 3.3).
   const responses: ResponseRow[] = data.responses.map((row) => ({
     key: `s-${row.id}`,
+    responseId: row.id,
     messageId: row.message_id,
     status: row.status,
     text: row.text,
