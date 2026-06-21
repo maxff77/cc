@@ -36,14 +36,17 @@ export interface PendingLine {
   text: string;
 }
 
-// One Completa row (Story 3.2): a captured 'full' revision. `nueva` is true
-// ONLY for rows that landed live via `response.captured` — snapshot rows are
+// One Completa row (Story 3.2): a message's LATEST captured 'full' revision —
+// ONE row per message, not per edit (cockpit-completa-one-row-per-message). A
+// later revision updates this row in place. `nueva` is true ONLY for rows that
+// landed/updated live via `response.captured` — snapshot rows are
 // reconciliation, not novelty.
 export interface ResponseRow {
   key: string;
-  // The persisted Response.id — the dedup identity (matches the snapshot
-  // `s-${id}` key and the live `response.captured` `id`). Distinguishes a
-  // re-seed-race re-delivery (same id) from a genuine new revision (new id).
+  // `messageId` is the row IDENTITY (the live upsert key, parity with the
+  // server's latest-per-(chat,message) collapse). `responseId` is the persisted
+  // Response.id of the revision now shown — used only to drop an EXACT
+  // re-delivery (same id) carried by a snapshot/session.active re-seed race.
   responseId: number;
   messageId: number;
   status: "ok" | "rejected";
@@ -593,60 +596,75 @@ function reduce(event: string, data: unknown) {
       // replies keep landing with the surface idle.
       if (store.sessionId !== null && d.session_id !== store.sessionId) break;
 
-      // Re-seed-race dedup (cockpit-duplicate-responses fix): a server-pushed
-      // slice — the `snapshot` after every reconnect, or the `session.active`
-      // re-emit on Limpiar / gate-refresh — already carries this revision (as an
-      // `s-${id}` row), and an in-flight `response.captured` for it can arrive
-      // AFTER that slice, appending a duplicate `l-N` twin that stays on screen
-      // (the perpetual session never resets the list). Dedup by the persisted
-      // `Response.id` — the exact physical revision identity carried on both the
-      // snapshot rows and this emit. A re-delivery repeats the id (drop it); a
-      // genuine new revision — INCLUDING a re-flip to a prior exact (status,text)
-      // state — has a fresh id (keep it). (messageId/status/text can't dedup:
-      // Completa keeps every revision, so that triple legitimately recurs.)
+      // One row per message (cockpit-completa-one-row-per-message): the cockpit
+      // shows each message's LATEST revision, never every edit. The snapshot
+      // collapses server-side (latest-per-(chat_id,message_id), parity with
+      // Historial); the live path must match, so a later revision of a message
+      // already on screen REPLACES its row in place instead of appending a
+      // revision twin (the perpetual session never resets the list, so an append
+      // would accumulate ⏳→✅→edit rows that only a refresh used to reveal).
+      // Keyed on `messageId` — the durable per-message identity. This also
+      // subsumes the old re-seed-race dedup: a snapshot/session.active slice
+      // already carries the message as an `s-${id}` row, and an in-flight
+      // `response.captured` for it now updates that same row rather than twinning
+      // it. An EXACT re-delivery (same persisted `responseId`) is a no-op.
+      const existing = store.responses.find(
+        (row) => row.messageId === d.message_id,
+      );
       // `d.id != null` tolerates the brief deploy rollover where an old backend
-      // emits no id — without it two id-less frames would collide
-      // (undefined === undefined) and the 2nd real reply would be dropped.
-      const isDupRow =
-        d.id != null && store.responses.some((row) => row.responseId === d.id);
+      // emits no id; without it a null id would falsely match an existing null.
+      const isReDelivery =
+        d.id != null && existing != null && existing.responseId === d.id;
       // CC values are session-unique (uq_responses_session_cc), so a plain
       // text match is an exact dedup against snapshot rows.
       const knownCc = new Set(store.cc.map((row) => row.text));
       const freshCc = d.new_cc.filter((value) => !knownCc.has(value));
+      // ✅-count delta: a NEW message adds its ok-ness; a revision of an existing
+      // message swaps the old for the new (✅→❌ subtracts, ❌→✅ adds). Same
+      // drift-then-reconcile contract — snapshot/session.active reassign it.
+      const wasOk = existing != null && existing.status === "ok";
+      const isOk = d.status === "ok";
+      const okDelta = isReDelivery ? 0 : (isOk ? 1 : 0) - (wasOk ? 1 : 0);
 
       setStore({
         ...store,
         sessionId: store.sessionId ?? d.session_id,
-        // Live lists are capped (mirror of `_SNAPSHOT_ROWS`): the session
-        // never resets while the gate is reused and capture stays armed
-        // between batches, so without a cap the longest-lived tab grows —
-        // and re-renders — without bound. The badges stay honest (they come
-        // from the authoritative totals, not the list lengths), and any
-        // reconnect already truncates the lists to the snapshot's 200.
-        responses: isDupRow
+        // Live lists are capped (mirror of `_SNAPSHOT_ROWS`): a long-lived tab
+        // otherwise grows — and re-renders — without bound. Only a NEW message
+        // grows the list (and trips the cap); a revision updates in place.
+        responses: isReDelivery
           ? store.responses
-          : [
-              ...store.responses,
-              {
-                key: `l-${++liveRowSeq}`,
-                responseId: d.id,
-                messageId: d.message_id,
-                status: d.status,
-                text: d.text,
-                capturedAt: d.captured_at,
-                nueva: true,
-              },
-            ].slice(-_LIVE_ROWS),
-        responsesTotal: isDupRow
-          ? store.responsesTotal
-          : store.responsesTotal + 1,
-        // "Filtrada con response": one more ✅ revision when this captured row
-        // is ok (a ❌ revision adds to Completa only). Same drift-then-reconcile
-        // contract as responsesTotal — the snapshot/session.active reset it.
-        responsesOkTotal:
-          isDupRow || d.status !== "ok"
-            ? store.responsesOkTotal
-            : store.responsesOkTotal + 1,
+          : existing != null
+            ? store.responses.map((row) =>
+                row.messageId === d.message_id
+                  ? {
+                      ...row,
+                      responseId: d.id,
+                      status: d.status,
+                      text: d.text,
+                      capturedAt: d.captured_at,
+                      nueva: true,
+                    }
+                  : row,
+              )
+            : [
+                ...store.responses,
+                {
+                  key: `l-${++liveRowSeq}`,
+                  responseId: d.id,
+                  messageId: d.message_id,
+                  status: d.status,
+                  text: d.text,
+                  capturedAt: d.captured_at,
+                  nueva: true,
+                },
+              ].slice(-_LIVE_ROWS),
+        // New message ⇒ +1; a revision of a message already counted ⇒ unchanged.
+        responsesTotal:
+          isReDelivery || existing != null
+            ? store.responsesTotal
+            : store.responsesTotal + 1,
+        responsesOkTotal: store.responsesOkTotal + okDelta,
         // `new_cc` may be [] (e.g. an edit with nothing session-new).
         cc: [
           ...store.cc,

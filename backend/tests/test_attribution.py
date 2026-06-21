@@ -1084,6 +1084,51 @@ async def test_snapshot_rows_capped_but_totals_stay_honest(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_snapshot_collapses_revisions_to_one_row_per_message(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """Two revisions of the SAME (chat_id, message_id) collapse to ONE Completa
+    row (the LATEST) and responses_total counts the MESSAGE once — not every edit
+    (cockpit-completa-one-row-per-message). Storage keeps both rows; the COLLAPSE
+    is a read."""
+    http, user = client_user
+    await _post_batch(http, "uno", gate["id"])
+    await _drain()  # message_id 1
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=7701, reply_to_msg_id=1, text="✅ Primera", edited=False
+        )
+    )
+    await capture.process_incoming(  # EDIT of the SAME bot message
+        IncomingReply(
+            message_id=7701, reply_to_msg_id=1, text="✅ Segunda", edited=True
+        )
+    )
+
+    # Storage still holds BOTH revisions — the collapse never deletes.
+    async with async_session_factory() as session:
+        full = (
+            await session.execute(
+                select(Response).where(
+                    Response.tenant_id == user.tenant_id,
+                    Response.kind == "full",
+                    Response.message_id == 7701,
+                )
+            )
+        ).scalars().all()
+        assert len(full) == 2
+
+        snap = await batches_service.snapshot(session, user.tenant_id)
+    assert snap["responses_total"] == 1  # one MESSAGE, not two revisions
+    assert snap["responses_ok_total"] == 1
+    (row,) = snap["responses"]  # one row...
+    assert row["text"] == "✅ Segunda"  # ...the LATEST revision
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_snapshot_session_rows_are_tenant_isolated(
     client_user: tuple[AsyncClient, User],
     gate: dict,

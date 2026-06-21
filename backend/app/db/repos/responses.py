@@ -235,6 +235,38 @@ async def cc_count(
     return count
 
 
+def _latest_full_ids(
+    capture_session_id: int,
+    *,
+    include_hidden: bool = False,
+    cleared_response_id: int | None = None,
+):  # type: ignore[no-untyped-def]
+    """Subquery of the LATEST 'full' revision id per ``(chat_id, message_id)`` of
+    one capture session — the cockpit Completa "one row per message" identity
+    (parity with ``history_grouped``: the cockpit now collapses a message's
+    revisions to its newest one instead of listing every edit).
+
+    ``DISTINCT ON ((chat_id, message_id)) ORDER BY …, id DESC`` keeps the newest
+    revision. The ``Limpiar`` cutoff and the ``hidden_at`` filter restrict the
+    ELIGIBLE revisions BEFORE the pick (a message whose only post-cutoff activity
+    is an edit still surfaces its latest post-cutoff revision). ``status`` is
+    deliberately NOT applied here — the caller filters the OUTER row so "latest
+    revision is ✅" is what Aprobadas counts/lists (a ✅→❌ message drops out)."""
+    stmt = select(Response.id).where(
+        Response.capture_session_id == capture_session_id,
+        Response.kind == KIND_FULL,
+    )
+    if not include_hidden:
+        stmt = stmt.where(Response.hidden_at.is_(None))
+    if cleared_response_id is not None:
+        stmt = stmt.where(Response.id > cleared_response_id)
+    return (
+        stmt.distinct(Response.chat_id, Response.message_id)
+        .order_by(Response.chat_id, Response.message_id, Response.id.desc())
+        .subquery()
+    )
+
+
 async def full_count(
     session: AsyncSession,
     capture_session_id: int,
@@ -243,11 +275,13 @@ async def full_count(
     include_hidden: bool = False,
     cleared_response_id: int | None = None,
 ) -> int:
-    """Total 'full' revisions of one capture session (Story 3.2: the Completa
-    badge — the REAL total, honest even when the snapshot list is capped).
+    """Number of distinct MESSAGES of one capture session (Story 3.2: the
+    Completa badge — the REAL total, honest even when the snapshot list is
+    capped). Counts the latest-revision-per-``(chat_id, message_id)`` set, so it
+    matches the collapsed ``list_full`` row count (one per message, not per edit).
 
-    ``status`` (e.g. ``STATUS_OK``) restricts the count to that status — the
-    "Filtrada con response" badge: only the ✅ revisions.
+    ``status`` (e.g. ``STATUS_OK``) restricts to messages whose LATEST revision
+    is that status — the "Filtrada con response" badge: only the ✅ messages.
 
     ``include_hidden=False`` (default) EXCLUDES soft-hidden rows
     (clear-declined): this is a DISPLAY count (the Completa badge), so it must
@@ -259,21 +293,17 @@ async def full_count(
     "Limpiar" high-water-mark, applied ONLY on the cockpit/snapshot read path
     (admin reads pass it ``None`` positionally — keyword-only keeps that
     correct)."""
-    stmt = (
-        select(func.count())
-        .select_from(Response)
-        .where(
-            Response.capture_session_id == capture_session_id,
-            Response.kind == KIND_FULL,
-        )
+    latest = _latest_full_ids(
+        capture_session_id,
+        include_hidden=include_hidden,
+        cleared_response_id=cleared_response_id,
     )
+    inner = select(Response.id).where(Response.id.in_(select(latest.c.id)))
     if status is not None:
-        stmt = stmt.where(Response.status == status)
-    if not include_hidden:
-        stmt = stmt.where(Response.hidden_at.is_(None))
-    if cleared_response_id is not None:
-        stmt = stmt.where(Response.id > cleared_response_id)
-    count: int = (await session.execute(stmt)).scalar_one()
+        inner = inner.where(Response.status == status)
+    count: int = (
+        await session.execute(select(func.count()).select_from(inner.subquery()))
+    ).scalar_one()
     return count
 
 
@@ -400,10 +430,12 @@ async def list_full(
     include_hidden: bool = False,
     cleared_response_id: int | None = None,
 ) -> list[Response]:
-    """The session's last ``limit`` 'full' revisions (``None`` = all),
-    oldest→newest — the rows that rebuild the Completa view. ``status`` (e.g.
-    ``STATUS_OK``) yields only that status — the "Filtrada con response"
-    view's full ✅ texts.
+    """The session's ONE-ROW-PER-MESSAGE Completa view (last ``limit`` messages,
+    ``None`` = all), oldest→newest — each message's LATEST 'full' revision, not
+    every edit (cockpit-completa-one-row-per-message: parity with Historial).
+    ``status`` (e.g. ``STATUS_OK``) keeps only messages whose LATEST revision is
+    that status — the Aprobadas / "Filtrada con response" ✅ texts (a ✅→❌
+    message drops out).
 
     ``include_hidden=False`` (default) drops soft-hidden rows (clear-declined):
     this feeds the Completa display and the ``.txt`` export, both of which must
@@ -413,15 +445,24 @@ async def list_full(
     DISPLAY cutoff (``Response.id > cleared_response_id``). Keyword-only so the
     admin support read keeps calling ``list_full(session, id, None)``
     POSITIONALLY with no cutoff."""
-    return await _list_last(
-        session,
+    latest = _latest_full_ids(
         capture_session_id,
-        KIND_FULL,
-        limit,
-        status,
-        include_hidden,
+        include_hidden=include_hidden,
         cleared_response_id=cleared_response_id,
     )
+    stmt = select(Response).where(Response.id.in_(select(latest.c.id)))
+    if status is not None:
+        stmt = stmt.where(Response.status == status)
+    # Same cap dance as the old per-revision read: SELECT newest-first + reverse
+    # so a capped snapshot carries the most RECENT messages but paints
+    # oldest→newest. ``limit=None`` ⇒ the COMPLETE set, ascending directly.
+    if limit is None:
+        stmt = stmt.order_by(Response.id.asc())
+        return list((await session.execute(stmt)).scalars().all())
+    stmt = stmt.order_by(Response.id.desc()).limit(limit)
+    rows = list((await session.execute(stmt)).scalars().all())
+    rows.reverse()
+    return rows
 
 
 async def list_cc(

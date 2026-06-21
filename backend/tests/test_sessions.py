@@ -6,7 +6,8 @@ remains under ``/api/sessions``:
 
 - the per-session ``GET /{id}/export`` (admin / PR-2, CUTOFF-AGNOSTIC full
   history) — legacy-parity bodies asserted EXACT (filtrada: one datum per line +
-  final newline; completa: ``[ts] {text}`` blocks per revision), the
+  final newline; completa: ``[ts] {text}`` block per MESSAGE — latest revision,
+  cockpit-completa-one-row-per-message), the
   Content-Disposition filename from the gate slug, on-the-fly generation (no
   cache), works during a live batch, empty body for a session with no rows, and
   422 on an invalid view;
@@ -157,14 +158,15 @@ async def test_export_filtrada_is_one_datum_per_line_with_final_newline(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_export_completa_carries_every_revision_as_timestamped_blocks(
+async def test_export_completa_is_one_block_per_message_latest_revision(
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
 ) -> None:
-    """AC 1, completa: legacy ``completa.txt`` parity VERBATIM — one
-    ``[YYYY-MM-DD HH:MM:SS] {text}\\n\\n`` block per 'full' revision,
-    ascending; an EDIT of an already-✅ message is a second block."""
+    """completa: ONE ``[YYYY-MM-DD HH:MM:SS] {text}\\n\\n`` block per MESSAGE —
+    the LATEST 'full' revision, never every edit (cockpit-completa-one-row-per-
+    message). Storage is unchanged: both revisions still live in ``responses``;
+    only the VIEW collapses to the newest one."""
     http, _ = client_user
     batch_id = await _post_batch(http, "uno", gate["id"])
     await _drain()  # message_id 1
@@ -183,13 +185,15 @@ async def test_export_completa_carries_every_revision_as_timestamped_blocks(
     assert res.status_code == 200, res.text
     _assert_txt_headers(res, gate["display_value"], session_id, "completa")
     full_rows = [r for r in await _response_rows(session_id) if r.kind == "full"]
+    # Storage parity: every revision is STILL persisted (the collapse is a read).
     assert [r.text for r in full_rows] == [
         "✅ Aprobada CC: 4111 Status a",
         "✅ Aprobada CC: 4111 Status b",
     ]
-    assert res.text == "".join(
-        f"[{r.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {r.text}\n\n"
-        for r in full_rows
+    # View: only the LATEST revision's block (one per message).
+    latest = full_rows[-1]
+    assert res.text == (
+        f"[{latest.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {latest.text}\n\n"
     )
 
 
