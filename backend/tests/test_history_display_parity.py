@@ -2,7 +2,7 @@
 through the SAME composition the cockpit "Aprobadas" panel uses —
 ``display_transform(redact_reply_text(text), True)``.
 
-- An Amazon Approved verdict drops the bot's ``⌿ Response: …`` line; a normal
+- An Amazon Approved verdict is rewritten to the branded LIVE card; a normal
   ✅ is unchanged; a non-verdict reply (``Status: live``) is left ALONE even
   with a ``⌿ Response:`` substring (locks the unconditional ``cookie_mode=True``
   boundary — only a real Amazon verdict is ever transformed).
@@ -65,7 +65,13 @@ async def test_history_text_matches_aprobadas_display_transform(
         "⌿ Status: Approved ✅\n"
         "⌿ Response: Tarjeta vinculada correctamente. | Removed: ✅ Removido"
     )
-    amazon_transformed = "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅"
+    amazon_transformed = (
+        "CC: 377481016137504|05|2033|3845\n"
+        "- Status: LIVE 100% ✅\n"
+        "- Details: Tarjeta apta / Card successfully linked\n"
+        "- Response: Process completed successfully ✅\n"
+        "- System: Ranger Validation Engine"
+    )
     normal = "✅ Aprobada CC: 4111 Status x"
     # Token after Status: is "live" (→ cookie_dead, NOT approved/declined), so
     # display_transform must NOT strip its ⌿ Response substring.
@@ -79,7 +85,7 @@ async def test_history_text_matches_aprobadas_display_transform(
     items = res.json()["gates"][0]["items"]
     texts = {i["text"] for i in items}
 
-    assert amazon_transformed in texts, texts  # ⌿ Response dropped (Aprobadas)
+    assert amazon_transformed in texts, texts  # rewritten LIVE card (Aprobadas)
     assert amazon_raw not in texts, texts
     assert normal in texts, texts  # normal ✅ unchanged
     assert nonverdict in texts, texts  # non-verdict untouched (⌿ Response kept)

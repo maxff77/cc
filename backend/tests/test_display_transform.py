@@ -2,53 +2,60 @@ import pytest
 
 from app.core.display_transform import display_transform
 
+_LIVE = (
+    "- Status: LIVE 100% ✅\n"
+    "- Details: Tarjeta apta / Card successfully linked\n"
+    "- Response: Process completed successfully ✅\n"
+    "- System: Ranger Validation Engine"
+)
+_DEAD = (
+    "- Status: DEAD ❌\n"
+    "- Details: No apta / Not eligible\n"
+    "- Response: Delete complete / Eliminación completada ✅\n"
+    "- System: Ranger Validation Engine"
+)
+
 
 @pytest.mark.parametrize(
     "text,cookie_mode,expected",
     [
-        # Approved — drop ONLY the Response line, keep CC + Status
+        # Approved → LIVE template, CC card kept
         (
             "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada correctamente. | Removed: ✅ Removido",
             True,
-            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅",
+            "CC: 377481016137504|05|2033|3845\n" + _LIVE,
         ),
-        # Full production shape — keep Gate / Total Time / dividers / blank line,
-        # drop only the Response line
+        # Full production shape — Gate/Total Time/dividers all replaced by the
+        # template; only the CC card survives
         (
             "· · · · · · · · · · · · · · ·\n\n☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada correctamente. | Removed: ✅ Removido\n· · · · · · · · · · · · · · ·\n⌿ Gate: Amazon MX\n⌿ Total Time: 8's",
             True,
-            "· · · · · · · · · · · · · · ·\n\n☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n· · · · · · · · · · · · · · ·\n⌿ Gate: Amazon MX\n⌿ Total Time: 8's",
+            "CC: 377481016137504|05|2033|3845\n" + _LIVE,
         ),
-        # Approved + Time — Response dropped, Time KEPT
-        (
-            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Response: Tarjeta vinculada. | Removed: ✅\n⌿ Time: 32.95s",
-            True,
-            "☇ CC: 377481016137504|05|2033|3845\n⌿ Status: Approved ✅\n⌿ Time: 32.95s",
-        ),
-        # Declined WITH a CC line → drop Response, keep CC + Status + Time
+        # Declined WITH a CC line → DEAD template
         (
             "☇ CC: 377481016138023|05|2033|7050\n⌿ Status: Declined ❌\n⌿ Response: Tarjeta inexistente.\n⌿ Time: 28.14s",
             True,
-            "☇ CC: 377481016138023|05|2033|7050\n⌿ Status: Declined ❌\n⌿ Time: 28.14s",
+            "CC: 377481016138023|05|2033|7050\n" + _DEAD,
         ),
-        # Declined with the Response as the trailing line → just what's left
+        # Declined with no CC line → DEAD template, bare "CC:" line
         (
             "⌿ Status: Declined ❌\n⌿ Response: Tarjeta inexistente / datos inválidos. | Removed: ✅ Removido",
             True,
-            "⌿ Status: Declined ❌",
+            "CC:\n" + _DEAD,
         ),
-        # Inline ☇/⌿ separators (single line) → drop the inline Response segment,
-        # keep the rest inline
+        # Inline ☇/⌿ separators (single line) → card stripped clean of the welded
+        # separator, LIVE template
         (
             "☇ CC: 123|01|2030|456 ⌿ Status: Approved ✅ ⌿ Response: ok",
             True,
-            "☇ CC: 123|01|2030|456 ⌿ Status: Approved ✅",
+            "CC: 123|01|2030|456\n" + _LIVE,
         ),
-        # Approved with no Response field → untouched
+        # Approved with no Response field → still rewritten (verdict is the trigger)
         (
-            "⌿ Status: Approved ✅ trailing junk here",
+            "☇ CC: 1|01|2030|2\n⌿ Status: Approved ✅ trailing junk here",
             True,
-            "⌿ Status: Approved ✅ trailing junk here",
+            "CC: 1|01|2030|2\n" + _LIVE,
         ),
         # Near-miss token (NOT exact "approved") → engine treats as dead cookie,
         # so display must NOT touch it; pass through raw.
