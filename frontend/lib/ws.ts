@@ -618,10 +618,6 @@ function reduce(event: string, data: unknown) {
       // emits no id; without it a null id would falsely match an existing null.
       const isReDelivery =
         d.id != null && existing != null && existing.responseId === d.id;
-      // CC values are session-unique (uq_responses_session_cc), so a plain
-      // text match is an exact dedup against snapshot rows.
-      const knownCc = new Set(store.cc.map((row) => row.text));
-      const freshCc = d.new_cc.filter((value) => !knownCc.has(value));
 
       setStore({
         ...store,
@@ -668,15 +664,24 @@ function reduce(event: string, data: unknown) {
         // emits no field (keep last-known, don't blank the badge); the next
         // snapshot reconciles — same defensive intent as the `d.id != null` guard.
         responsesOkTotal: d.responses_ok_total ?? store.responsesOkTotal,
-        // `new_cc` may be [] (e.g. an edit with nothing session-new).
-        cc: [
-          ...store.cc,
-          ...freshCc.map((value) => ({
-            key: `l-${++liveRowSeq}`,
-            text: value,
-            nueva: true,
-          })),
-        ].slice(-_LIVE_ROWS),
+        // `new_cc` is the message's freshly-inserted CC (backend dedups
+        // PER-MESSAGE now — uq_responses_session_msg_cc), so append it verbatim:
+        // the same value on another approved message is intentionally a new row
+        // (Datos CC mirrors Aprobadas). NO client-side text dedup — that hid
+        // duplicates the server stores and re-introduced panel/server drift.
+        // `isReDelivery` (same persisted id) still guards an exact re-delivery
+        // so a snapshot/session.active re-seed race can't double-append.
+        // `new_cc` may be [] (e.g. an edit with nothing new for this message).
+        cc: isReDelivery
+          ? store.cc
+          : [
+              ...store.cc,
+              ...d.new_cc.map((value) => ({
+                key: `l-${++liveRowSeq}`,
+                text: value,
+                nueva: true,
+              })),
+            ].slice(-_LIVE_ROWS),
         // Authoritative server total (the ring's "CC nuevas" metric) — never
         // client-side sums, which drift on lost frames; assigning reconciles
         // for free. Same number as the snapshot's cc_new.

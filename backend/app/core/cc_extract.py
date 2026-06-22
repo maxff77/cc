@@ -2,9 +2,9 @@
 
 🔒 project-context rule: each captured value is truncated at the literal
 substring ``Status`` — this is INTENTIONAL parsing of the bot's reply format;
-do not "fix" it. No dedup here: the per-session dedup lives in
-``repos/responses.add_new_cc`` (mirror of ``services/batches.apply_gate``,
-which ported ``agregar_prefijo`` just as literally).
+do not "fix" it. No dedup here: the per-MESSAGE dedup lives in
+``repos/responses.add_new_cc`` (each approved card contributes its CC, so Datos
+CC mirrors Aprobadas — the same value on two messages lands twice).
 """
 
 import re

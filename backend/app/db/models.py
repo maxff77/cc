@@ -252,7 +252,7 @@ class GateCookie(Base):
     is never logged. ``value_hash`` is the sha256 hex of the canonical
     (``value.strip()``) string: the unique index keys on the HASH, not the
     value, because a cookie can exceed the ~2704-byte btree row limit that the
-    ``uq_responses_session_cc`` text index runs into. Dedup is DB-enforced by
+    ``uq_responses_session_msg_cc`` text index runs into. Dedup is DB-enforced by
     ``uq_gate_cookies_tenant_gate_hash`` — store-first / catch-IntegrityError,
     never SELECT-then-INSERT.
 
@@ -269,7 +269,7 @@ class GateCookie(Base):
     __table_args__ = (
         # Per-(tenant, gate) dedup, guaranteed by Postgres — not by code. Keyed
         # on the sha256 hash (not the raw value) so an oversized cookie still
-        # fits the btree; mirrors the ``uq_responses_session_cc`` precedent but
+        # fits the btree; mirrors the ``uq_responses_session_msg_cc`` precedent but
         # over a fixed-width hash instead of a length-truncated text.
         Index(
             "uq_gate_cookies_tenant_gate_hash",
@@ -688,11 +688,12 @@ class Response(Base):
       is part of the key because message ids are per-chat, not account-global
       (see ``SendLog``): keying on message_id alone would collapse two distinct
       replies that share an id across two supergroups.
-    - ``'cc'``: one session-new extracted CC value — ``text`` is the VALUE,
-      ``status`` is NULL. Per-session dedup is DB-enforced by the partial
-      unique index ``uq_responses_session_cc`` (FR17: Story 3.4's "continuar"
-      reactivates the session and this dedup-from-existing-rows IS the
-      "dedup set preserved" — no preloading code, the rows are the set).
+    - ``'cc'``: one message-new extracted CC value — ``text`` is the VALUE,
+      ``status`` is NULL. Per-MESSAGE dedup is DB-enforced by the partial
+      unique index ``uq_responses_session_msg_cc`` (keyed on session + chat +
+      message + text): each approved card contributes its CC, so the same value
+      seen on two messages lands twice (Datos CC mirrors Aprobadas), while a
+      capture retry / reconciler edit-replay of ONE message stays idempotent.
 
     ``batch_id``/``line_id`` are SET NULL on purpose: the capture survives
     batch cleanup — the session is the real owner.
@@ -705,10 +706,16 @@ class Response(Base):
         # The per-message state lookup of AC 5, namespaced per chat (message
         # ids are per-chat, not account-global — see SendLog).
         Index("ix_responses_chat_message", "chat_id", "message_id"),
-        # Session-scoped CC dedup, guaranteed by Postgres — not just by code.
+        # Per-MESSAGE CC dedup, guaranteed by Postgres — not just by code. Keyed
+        # on (session, chat, message, text) so the same CC value on two distinct
+        # approved messages lands twice (Datos CC mirrors Aprobadas), while a
+        # retry/edit-replay of ONE message stays idempotent. The net, not the
+        # mechanism (the single capture consumer is).
         Index(
-            "uq_responses_session_cc",
+            "uq_responses_session_msg_cc",
             "capture_session_id",
+            "chat_id",
+            "message_id",
             "text",
             unique=True,
             postgresql_where=text("kind = 'cc'"),

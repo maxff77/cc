@@ -12,8 +12,9 @@ This background task is the reply-side mirror of ``send_worker._boot_recovery``
 asks the DB which of our delivered sends still have NO captured reply, re-reads
 the target chat's recent inbound messages, and re-feeds any reply addressed to
 one of those sends through the EXISTING ``capture.process_incoming`` path. That
-path is already idempotent (text-equality dedup + the ``uq_responses_session_cc``
-unique index), so re-injecting an already-captured reply is a no-op — the
+path is already idempotent (per-message text-equality dedup + the
+``uq_responses_session_msg_cc`` unique index), so re-injecting an
+already-captured reply is a no-op — the
 reconciler only ever fills gaps, never duplicates. The scan is TARGETED on the
 ``(chat_id, reply_to_msg_id)`` pair (message ids are per-chat — it must match an
 awaiting send IN ITS OWN chat), so attribution always succeeds and the

@@ -27,8 +27,8 @@ KIND_CC = "cc"
 STATUS_OK = "ok"
 STATUS_REJECTED = "rejected"
 
-# Hard cap on an INDEXED CC value (review 3-1): ``uq_responses_session_cc``
-# is a btree over the raw text and Postgres rejects index rows over ~2704
+# Hard cap on an INDEXED CC value (review 3-1): ``uq_responses_session_msg_cc``
+# is a btree including the raw text and Postgres rejects index rows over ~2704
 # bytes (btree v4 limit) — a Telegram message carries up to 4096 chars, so an
 # adversarial "CC:" line would otherwise make the INSERT fail identically on
 # every retry and wedge the capture consumer. 600 chars × 4 bytes/char (UTF-8
@@ -159,12 +159,16 @@ async def add_new_cc(
     message_id: int,
     values: list[str],
 ) -> list[str]:
-    """Insert only the session-NEW CC values, preserving order; return them.
+    """Insert this MESSAGE's new CC values, preserving order; return them.
 
-    SELECT the session's existing 'cc' texts among ``values`` → INSERT the
-    rest. Race-free without locks: the capture consumer is single
-    (core.capture) — the partial unique index ``uq_responses_session_cc`` is
-    the net, not the mechanism.
+    SELECT the existing 'cc' texts of THIS ``(capture_session_id, chat_id,
+    message_id)`` among ``values`` → INSERT the rest. Dedup is PER-MESSAGE, not
+    cross-message (Datos CC mirrors Aprobadas one-row-per-approved-card: the
+    same CC value seen on two different approved messages lands TWICE — the old
+    tenant-lifetime collapse is gone). The per-message scope still makes capture
+    retries / reconciler edit-replays of the SAME message idempotent. Race-free
+    without locks: the capture consumer is single (core.capture) — the partial
+    unique index ``uq_responses_session_msg_cc`` is the net, not the mechanism.
     """
     if not values:
         return []
@@ -177,6 +181,8 @@ async def add_new_cc(
                 select(Response.text).where(
                     Response.capture_session_id == capture_session_id,
                     Response.kind == KIND_CC,
+                    Response.chat_id == chat_id,
+                    Response.message_id == message_id,
                     Response.text.in_(values),
                 )
             )
@@ -220,7 +226,7 @@ async def cc_count(
     ``cleared_response_id`` (sessionless cockpit, PR-1) is a DISPLAY cutoff: when
     set, only rows with ``Response.id > cleared_response_id`` count — the cockpit
     "Limpiar" high-water-mark, applied ONLY on the cockpit/snapshot read path
-    (NEVER on the ``add_new_cc`` dedup SELECT, which stays tenant-lifetime)."""
+    (NEVER on the ``add_new_cc`` dedup SELECT, which is per-message)."""
     stmt = (
         select(func.count())
         .select_from(Response)

@@ -1,6 +1,6 @@
 """Story 3.1 capture/attribution tests: session binding at batch start, reply
 mapping (``reply_to_msg_id`` → send_log → tenant/batch/line/session), the
-edit state machine, per-session CC dedup, the unmatched-replies bucket,
+edit state machine, per-message CC dedup, the unmatched-replies bucket,
 cross-tenant isolation (which must fail), the DB-down reply buffer and the
 boot-reconciliation intent fix (deferred 2-5 :616).
 
@@ -457,20 +457,21 @@ async def test_ok_edit_without_new_cc_persists_without_emitting(
     assert len(_captured(events)) == 1  # only the ok transition emitted
 
 
-# --- CC dedup is tenant-lifetime over the one perpetual session (PR-1) --------
+# --- CC dedup is PER-MESSAGE (Datos CC mirrors Aprobadas) ---------------------
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_cc_dedup_is_tenant_lifetime_across_gates(
+async def test_cc_dedup_is_per_message_not_tenant_lifetime(
     ctx: dict[str, object],
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
     events: list[tuple],
 ) -> None:
-    """PR-1 Decided invariant change: with ONE perpetual session,
-    uq_responses_session_cc dedups a CC value for the tenant's whole life — even
-    across gates (the old per-rotating-session reset is gone)."""
+    """Datos CC mirrors Aprobadas one-row-per-approved-card: dedup is
+    PER-MESSAGE (uq_responses_session_msg_cc), not tenant-lifetime — the same CC
+    value approved on two distinct messages lands TWICE (even across gates that
+    reuse the one perpetual session)."""
     http, _ = client_user
     batch_id = await _post_batch(http, "uno\ndos", gate["id"])
     await _drain()  # message ids 1 and 2
@@ -490,14 +491,15 @@ async def test_cc_dedup_is_tenant_lifetime_across_gates(
         )
     )
 
-    assert [c.text for c in await _cc_rows(session_id)] == ["4111"]  # ONE row
+    # TWO rows now — a second approved message with the same CC is NOT collapsed.
+    assert [c.text for c in await _cc_rows(session_id)] == ["4111", "4111"]
     captured = _captured(events)
-    assert len(captured) == 2  # the second is still an ok transition …
-    assert captured[1][2]["new_cc"] == []  # … but brings nothing new
-    assert captured[1][2]["cc_total"] == 1
+    assert len(captured) == 2  # the second is an ok transition …
+    assert captured[1][2]["new_cc"] == ["4111"]  # … and brings its own CC
+    assert captured[1][2]["cc_total"] == 2
 
-    # A different gate REUSES the one session, so the dedup set carries over:
-    # the same CC value is NOT re-inserted (tenant-lifetime dedup).
+    # A different gate REUSES the one session; a third approved message with the
+    # same value still lands its own row (no cross-message collapse).
     other = await _create_other_gate(ctx, gate)
     other_batch_id = await _post_batch(http, "tres", other["id"])
     await _drain()  # message id 3
@@ -508,9 +510,9 @@ async def test_cc_dedup_is_tenant_lifetime_across_gates(
             edited=False,
         )
     )
-    assert [c.text for c in await _cc_rows(session_id)] == ["4111"]  # still ONE
-    assert _captured(events)[2][2]["new_cc"] == []  # deduped, nothing new
-    assert _captured(events)[2][2]["cc_total"] == 1
+    assert [c.text for c in await _cc_rows(session_id)] == ["4111", "4111", "4111"]
+    assert _captured(events)[2][2]["new_cc"] == ["4111"]
+    assert _captured(events)[2][2]["cc_total"] == 3
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -522,8 +524,8 @@ async def test_oversized_cc_value_is_truncated_never_poison(
 ) -> None:
     """Review 3-1 MEDIUM: a CC value longer than the btree index row cap would
     make the INSERT fail identically forever (uq_responses_session_cc) — the
-    value is truncated to CC_MAX_CHARS BEFORE insert, and dedup operates on
-    the truncated value."""
+    value is truncated to CC_MAX_CHARS BEFORE insert (uq_responses_session_msg_cc),
+    and per-message dedup operates on the truncated value."""
     http, _ = client_user
     batch_id = await _post_batch(http, "uno", gate["id"])
     await _drain()
@@ -540,13 +542,14 @@ async def test_oversized_cc_value_is_truncated_never_poison(
     assert len(ccs) == 1
     assert len(ccs[0].text) == responses_repo.CC_MAX_CHARS
 
-    # Same first CC_MAX_CHARS chars, different tail → dedups to the same row.
+    # Same message edited: same first CC_MAX_CHARS chars, different tail →
+    # truncates to the SAME value → per-message dedup keeps it one row.
     await capture.process_incoming(
         IncomingReply(
-            message_id=9202,
+            message_id=9201,
             reply_to_msg_id=1,
             text="✅ CC: " + "x" * 700 + "TAIL",
-            edited=False,
+            edited=True,
         )
     )
     assert len(await _cc_rows(session_id)) == 1

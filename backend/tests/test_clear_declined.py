@@ -10,8 +10,9 @@ Asserts the load-bearing invariants of the spec:
   approved ✅ rows survive).
 - the INTEGRITY queries IGNORE the cutoff: ``responded_line_count`` is
   unchanged (so "esperando respuesta" does NOT spike), ``has_ok_revision`` still
-  finds the ✅, and the ``add_new_cc`` dedup SELECT stays tenant-lifetime — a CC
-  value cleared then re-seen (incl. cross-gate) is NEVER re-inserted.
+  finds the ✅, and the ``add_new_cc`` dedup SELECT (now PER-MESSAGE) is
+  cutoff-agnostic — a CC value cleared then re-seen on a NEW message IS
+  re-inserted (Datos CC mirrors Aprobadas), only the pre-cutoff row stays hidden.
 - a same-instant tie (two rows sharing ``created_at``) is split cleanly by the
   ``id`` high-water-mark — a ``created_at`` cutoff would leak/hide a boundary row.
 - the endpoint is tenant-scoped (a foreign/unknown tenant ⇒ 404, no leak),
@@ -308,20 +309,20 @@ async def test_live_cc_total_event_respects_cutoff_after_clear(
     assert captured[-1][2]["cc_total"] == 1  # post-cutoff only (NOT 2)
 
 
-# --- Cross-gate CC re-capture after Limpiar: tenant-lifetime dedup -----------
+# --- Cross-gate CC re-capture after Limpiar: per-message dedup ---------------
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_cleared_cc_re_seen_cross_gate_is_not_reinserted(
+async def test_cleared_cc_re_seen_on_new_message_is_reinserted(
     ctx: dict[str, object],
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
 ) -> None:
     """A CC value captured on gate A, then CLEARED, then re-seen on a DIFFERENT
-    gate B is NOT re-inserted: ONE perpetual session ⇒ ``uq_responses_session_cc``
-    dedups tenant-lifetime, and Limpiar (cutoff-only) never touches the
-    ``add_new_cc`` dedup SELECT."""
+    message (gate B) IS re-inserted: dedup is PER-MESSAGE
+    (``uq_responses_session_msg_cc``), so each approved card contributes its CC.
+    Limpiar (cutoff-only) still hides the pre-cutoff row from the live panel."""
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     http, user = client_user
 
@@ -345,16 +346,17 @@ async def test_cleared_cc_re_seen_cross_gate_is_not_reinserted(
     assert await _bound_session_id(batch_b) == session_id
     await _drain()  # message_id 2
 
-    # Re-seeing "4111" on gate B does NOT re-insert it (tenant-lifetime dedup) …
+    # Re-seeing "4111" on a NEW message DOES re-insert it (per-message dedup) …
     await _capture(9002, 2, "✅ Aprobada CC: 4111 Status b")
-    assert await _cc_texts(session_id) == ["4111"]  # still exactly one
-    # … but a genuinely new value DOES land (and is above the cutoff ⇒ visible).
+    assert await _cc_texts(session_id) == ["4111", "4111"]  # census keeps both
+    # … and a genuinely new value lands too.
     await _capture(9003, 2, "✅ Aprobada CC: 4222 Status c")
-    assert await _cc_texts(session_id) == ["4111", "4222"]
+    assert await _cc_texts(session_id) == ["4111", "4111", "4222"]
     async with async_session_factory() as session:
         snap = await batches_service.active_session_data(session, user.tenant_id)
-    # Only the post-cutoff value shows in the live panel; the census keeps both.
-    assert [c["text"] for c in snap["cc"]] == ["4222"]
+    # The live panel shows only the POST-cutoff rows (the pre-Limpiar 4111 is
+    # below the cutoff): the re-seen 4111 + the new 4222.
+    assert [c["text"] for c in snap["cc"]] == ["4111", "4222"]
 
 
 # --- Same-instant tie: id high-water splits two rows sharing created_at ------
