@@ -32,7 +32,7 @@ endpoint owns the transaction — the deletes commit here (mirrors
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +82,7 @@ class HistoryOut(BaseModel):
 
 @router.get("", response_model=HistoryOut)
 async def list_history(
+    response: Response,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> HistoryOut:
@@ -92,7 +93,9 @@ async def list_history(
     message is its newest, and the gates come out ordered by most-recent
     activity. The ``None``-gate messages collect into a trailing "Sin gate"
     group. ``tenant_id`` is the session's only. Empty history ⇒ ``{gates: []}``.
+    ``Cache-Control: no-store`` — the body carries CC data (mirrors the exports).
     """
+    response.headers["Cache-Control"] = "no-store"
     messages = await responses_repo.history_grouped(session, user.tenant_id)
 
     # Group preserving first-seen order (newest-message-first ⇒ most-recent gate

@@ -17,7 +17,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import AwareDatetime, BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1505,6 +1505,7 @@ async def list_tenant_sessions(
 async def get_tenant_session_detail(
     tenant_id: int,
     session_id: int,
+    response: Response,
     actor: User = Depends(require_admin_or_owner),
     session: AsyncSession = Depends(get_session),
 ) -> SessionDetailOut:
@@ -1515,8 +1516,10 @@ async def get_tenant_session_detail(
     ascending data) with the path's tenant instead of the actor's. Unknown
     session id, another tenant's session and out-of-int4 id 404 identical
     (``session_not_found`` trio, intact). A GET that writes is deliberate —
-    see ``list_tenant_sessions``.
+    see ``list_tenant_sessions``. ``Cache-Control: no-store`` — the body carries
+    cross-tenant CC data (mirrors the admin .txt export).
     """
+    response.headers["Cache-Control"] = "no-store"
     target = await _require_client_tenant(session, tenant_id)
     if not 0 < session_id <= _PG_INT_MAX:
         raise session_not_found()

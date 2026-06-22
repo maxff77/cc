@@ -361,7 +361,7 @@ async def test_delete_by_gate_scopes_to_one_gate(
     names = [g["name"] for g in body["gates"]]
     assert gate["name"] in names and gate_b["name"] in names and None in names
     sin_gate = next(g for g in body["gates"] if g["name"] is None)
-    assert sin_gate["display_value"] == "Sin gate"
+    assert sin_gate["display_value"] == "Sin gateway"
     assert body["gates"][-1]["name"] is None  # trailing
 
     # Unknown name ⇒ 200 {deleted: 0}, nothing removed.
