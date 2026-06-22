@@ -562,14 +562,25 @@ async def process_incoming(reply: IncomingReply) -> None:
         # Limpiar would snap the badge back to the full historical CC count
         # while the snapshot/session.active path (which threads the cutoff)
         # shows the post-clear slice. ws.ts assigns this verbatim (`ccNew`).
+        cutoff = (
+            capture_session.cleared_response_id
+            if capture_session is not None
+            else None
+        )
         cc_total = await responses_repo.cc_count(
+            session, attributed.capture_session_id, cleared_response_id=cutoff
+        )
+        # The "Aprobadas" badge — messages whose latest 'full' revision is ✅ —
+        # was delta-summed in ws.ts and drifted (a lost frame, or a row evicted
+        # past the live cap, left it wrong until the next snapshot). Make it
+        # authoritative like cc_total: the SAME count the snapshot uses
+        # (full_count status=ok, same Limpiar cutoff). ws.ts ASSIGNS it verbatim
+        # (`responsesOkTotal`), killing the client-side drift.
+        responses_ok_total = await responses_repo.full_count(
             session,
             attributed.capture_session_id,
-            cleared_response_id=(
-                capture_session.cleared_response_id
-                if capture_session is not None
-                else None
-            ),
+            status=responses_repo.STATUS_OK,
+            cleared_response_id=cutoff,
         )
         # "Esperando respuesta" recomputed AFTER add_full's flush (so this
         # reply is already counted as answered): a message's FIRST ✅/❌ drops
@@ -677,6 +688,8 @@ async def process_incoming(reply: IncomingReply) -> None:
             "text": display_transform(clean_text, cookie_mode),
             "new_cc": new_cc,
             "cc_total": cc_total,
+            # Authoritative ✅-message total (see above) — ws.ts assigns it.
+            "responses_ok_total": responses_ok_total,
             "awaiting_reply": awaiting_reply,
             "captured_at": datetime.now(UTC).isoformat(),
         },

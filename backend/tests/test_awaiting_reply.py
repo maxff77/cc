@@ -196,6 +196,9 @@ async def test_progress_and_captured_events_carry_authoritative_awaiting(
     # The emit carries the persisted Response.id (ws.ts dedups response.captured
     # by it — same value as the snapshot's s-${id} row key).
     assert isinstance(captured[-1][2]["id"], int)
+    # The emit carries the authoritative ✅-message total (Aprobadas badge) so
+    # ws.ts assigns it instead of delta-summing — one ✅ message ⇒ 1.
+    assert captured[-1][2]["responses_ok_total"] == 1
 
 
 @pytest.mark.asyncio(loop_scope="session")

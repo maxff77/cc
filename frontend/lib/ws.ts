@@ -261,6 +261,9 @@ interface ResponseCapturedData {
   text: string;
   new_cc: string[];
   cc_total: number;
+  // Authoritative ✅-message total (Aprobadas badge) — assigned, not summed, so
+  // a lost frame / cap eviction can't drift it (parity with cc_total).
+  responses_ok_total: number;
   // Recomputed after this reply persists: a message's first ✅/❌ drops it.
   awaiting_reply: number;
   captured_at: string;
@@ -619,12 +622,6 @@ function reduce(event: string, data: unknown) {
       // text match is an exact dedup against snapshot rows.
       const knownCc = new Set(store.cc.map((row) => row.text));
       const freshCc = d.new_cc.filter((value) => !knownCc.has(value));
-      // ✅-count delta: a NEW message adds its ok-ness; a revision of an existing
-      // message swaps the old for the new (✅→❌ subtracts, ❌→✅ adds). Same
-      // drift-then-reconcile contract — snapshot/session.active reassign it.
-      const wasOk = existing != null && existing.status === "ok";
-      const isOk = d.status === "ok";
-      const okDelta = isReDelivery ? 0 : (isOk ? 1 : 0) - (wasOk ? 1 : 0);
 
       setStore({
         ...store,
@@ -664,7 +661,13 @@ function reduce(event: string, data: unknown) {
           isReDelivery || existing != null
             ? store.responsesTotal
             : store.responsesTotal + 1,
-        responsesOkTotal: store.responsesOkTotal + okDelta,
+        // Authoritative server total (full_count status=ok, same Limpiar cutoff)
+        // — assigned not summed, so it can't drift on a lost frame or a row
+        // evicted past the live cap. Reconciles for free, like cc_total/ccNew.
+        // `?? store` tolerates the brief deploy rollover where an old backend
+        // emits no field (keep last-known, don't blank the badge); the next
+        // snapshot reconciles — same defensive intent as the `d.id != null` guard.
+        responsesOkTotal: d.responses_ok_total ?? store.responsesOkTotal,
         // `new_cc` may be [] (e.g. an edit with nothing session-new).
         cc: [
           ...store.cc,
