@@ -1,6 +1,6 @@
 # Data Models — Ranger-X Check
 
-> Generated: 2026-06-20. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `9b1e4c7a2f08`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 17 tables.
+> Generated: 2026-06-22. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `c4e2f7a1b903`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 17 tables.
 
 ## Conventions (read first)
 
@@ -60,6 +60,7 @@ One line of a batch — the FULL message with the gate already applied. `batch_i
 ### `send_log` — the attribution write-ahead record
 One row per line (`uq_send_log_line_id` — retries reuse the row). Written by the send worker, read by capture/attribution: `(chat_id, reply_to_msg_id) → send_log → tenant/batch/line`. Intent is recorded in the SAME transaction as the `sending` claim, BEFORE calling Telegram; `chat_id`/`message_id` are filled in after delivery. A row with `message_id` NULL = "attempted, delivery unconfirmed" → boot reconciliation resolves it.
 - 🔒 `message_id` is per-chat. `chat_id` (BigInteger, marked peer id) namespaces it — attribution matches on the PAIR, never `message_id` alone, or replies mis-attribute across chats/tenants. Both BigInteger (supergroup `-100…` ids and Telegram message ids outgrow int4).
+- `reply_purged_at` (nullable timestamp, migration `c4e2f7a1b903`) — tombstone set when a **Historial delete** removes the line's `responses` rows but (by invariant) leaves `send_log` intact. The reply reconciler keys "awaiting a reply" on the ABSENCE of a `kind='full'` response, so without this a deleted message looked awaiting again and was re-fetched & re-inserted within one ~45s pass (deleted history resurrected). `awaiting_sent_keys` / `count_awaiting_beyond_window` skip tombstoned rows (`reply_purged_at IS NULL`).
 - **Indexes:** `ix_send_log_message_id`, `ix_send_log_chat_message(chat_id, message_id)` (the hot lookup).
 
 ---
@@ -98,7 +99,7 @@ Single-use redeemable key. `code` (unique), `days`, `plan_id` (FK RESTRICT — s
 One audited cross-tenant support read — written ONLY by the support view in `api/admin.py` (the single place tenant isolation is intentionally crossed). `actor_user_id` (FK SET NULL — trail survives the admin's removal), `tenant_id` (the TARGET, CASCADE), `action` (snake_case), `capture_session_id` (NO FK — historical reference, must not die/null when the client hard-deletes their session).
 
 ### `watchdog_state`
-Durable latch of the watchdog's GLOBAL send pause. ONE row (id=1, app-enforced get-or-create). `paused`, `reason` (`reply_rate_collapse` | `session_lost`), `detail`, `paused_at`, `resumed_at`. The in-process singleton (`core/watchdog.py`) is the operating authority (zero queries per worker step); this row survives a restart — CI deploys on every push, and a pause that evaporated on deploy would be the auto-resume that AC forbids.
+Durable latch of the watchdog's GLOBAL send pause. ONE row (id=1, app-enforced get-or-create). `paused`, `reason` (`reply_rate_collapse` | `session_lost` | `account_changed`), `detail`, `paused_at`, `resumed_at`. `account_changed` is the fail-closed latch set at boot by `services/account_guard.py` when `anon.session` was re-authed to a different Telegram account while attribution data exists. The in-process singleton (`core/watchdog.py`) is the operating authority (zero queries per worker step); this row survives a restart — CI deploys on every push, and a pause that evaporated on deploy would be the auto-resume that AC forbids.
 
 ### `system_settings`
-Owner-tunable runtime config as key/value rows (hot, from the UI, no redeploy — deliberately NOT in env). `key` (PK, String 64), `value` (String 200). First key: `max_active_senders` (admission cap; `"0"`/missing = disabled).
+Owner-tunable runtime config as key/value rows (hot, from the UI, no redeploy — deliberately NOT in env). `key` (PK, String 64), `value` (String 200). Keys: `max_active_senders` (admission cap; `"0"`/missing = disabled), `send_interval_seconds` (scheduler `G_min`), `telegram_account_id` (last-seen account fingerprint, written by `account_guard`), `live_forward_channel` (resolved marked chat id for Amazon-live forwarding; `""`/missing = disabled).

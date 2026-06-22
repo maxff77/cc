@@ -1,6 +1,6 @@
 # Project Documentation Index — Ranger-X Check
 
-> Generated: 2026-06-20 · Mode: initial scan (lean) · Primary entry point for AI-assisted development.
+> Generated: 2026-06-22 · Mode: full rescan (lean) · Primary entry point for AI-assisted development.
 
 ## Project Overview
 
@@ -51,7 +51,7 @@ The repo root holds a **dead** single-tenant prototype (`app.py`, `core.py`, `au
 
 ## Critical Invariants (excerpt — full list in CLAUDE.md)
 
-- 🔒 **Single shared Telegram account** — one `anon.session`; never run two `cc-core` instances. `(chat_id, message_id)` is the attribution key.
+- 🔒 **Single shared Telegram account** — one `anon.session`; never run two `cc-core` instances. `(chat_id, message_id)` is the attribution key. A boot-time **account-swap guard** (`services/account_guard.py`) latches the watchdog fail-closed if `anon.session` is re-authed to a different account while attribution data exists.
 - 🔒 **`tenant_id` only from the session** — never from request body/path.
 - 🔒 **Telethon stays in `core/telegram.py`** — `parse_mode=None` is load-bearing.
 - **Write-ahead + fail-stop** in the send worker (intent before send; `message_id` after, retry-forever).

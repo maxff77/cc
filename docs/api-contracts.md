@@ -1,6 +1,6 @@
 # API Contracts — Ranger-X Check
 
-> Generated: 2026-06-20. Source: `backend/app/api/*.py` + `backend/app/main.py`. All routers mount under `/api`. Live OpenAPI at `/openapi.json` (the frontend regenerates `types/api.ts` from it via `npm run generate:api`).
+> Generated: 2026-06-22. Source: `backend/app/api/*.py` + `backend/app/main.py`. All routers mount under `/api`. Live OpenAPI at `/openapi.json` (the frontend regenerates `types/api.ts` from it via `npm run generate:api`).
 
 ## Conventions
 
@@ -117,7 +117,7 @@ Client-owned history of approved (✅) captures, grouped by gate. **Cutoff-agnos
 `GET /api/admin/targets` · `GET /api/admin/targets/discover` (resolvable chats from the live gateway) · `POST /api/admin/targets` (201) · `PATCH|DELETE /api/admin/targets/{id}`.
 
 ### System knobs
-`GET|PUT /api/admin/admission` (the `max_active_senders` cap) · `GET|PUT /api/admin/interval` (the constant scheduler interval) · cross-tenant **audited** support views (`GET /api/admin/...` under `tenants/[id]` — every read writes an `audit_log` row).
+`GET|PUT /api/admin/admission` (the `max_active_senders` cap) · `GET|PUT /api/admin/interval` (the constant scheduler interval) · `GET|PUT /api/admin/live-channel` (**owner-only** — the Amazon-live forward channel; PUT resolves the id/@username against Telegram first → `invalid_live_channel` if unresolvable, `503` if the gateway is unauthorized; empty string disables) · cross-tenant **audited** support views (`GET /api/admin/...` under `tenants/[id]` — every read writes an `audit_log` row).
 
 ---
 

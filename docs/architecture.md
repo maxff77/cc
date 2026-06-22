@@ -1,6 +1,6 @@
 # Architecture — Ranger-X Check
 
-> Generated: 2026-06-20. Multi-part monorepo: `backend/` (FastAPI engine) + `frontend/` (Next.js SPA). For invariants and the legacy/production split, see [CLAUDE.md](../CLAUDE.md).
+> Generated: 2026-06-22. Multi-part monorepo: `backend/` (FastAPI engine) + `frontend/` (Next.js SPA). For invariants and the legacy/production split, see [CLAUDE.md](../CLAUDE.md).
 
 ## Executive Summary
 
@@ -23,7 +23,7 @@ Frontend ┘        │  scheduler (round-robin + pacing)              │
 
 **Path:** `backend/` · **Stack:** Python 3.12, FastAPI, async SQLAlchemy 2 (asyncpg), PostgreSQL, Telethon, Alembic, argon2-cffi, pydantic-settings.
 
-Single async FastAPI app. `app/main.py` builds it and owns the **lifespan**: connects the Telegram gateway (non-fatal — boots even if unauthorized; sending then 503s), starts the **send worker** task, runs boot recovery (reconciles unconfirmed `message_id`s), then releases the **capture consumer**. Errors surface as `{code, message}` JSON via one `AppError` handler (`app/errors.py`) — `code` is machine-readable snake_case, `message` is Spanish user copy.
+Single async FastAPI app. `app/main.py` builds it and owns the **lifespan**: restores any persisted watchdog latch, connects the Telegram gateway (non-fatal — boots even if unauthorized; sending then 503s), runs the **account-identity guard** (latches a fail-closed pause if `anon.session` was re-authed to a *different* account while attribution data exists — see below), starts the **send worker** task, runs boot recovery (reconciles unconfirmed `message_id`s), then releases the **capture consumer**. Errors surface as `{code, message}` JSON via one `AppError` handler (`app/errors.py`) — `code` is machine-readable snake_case, `message` is Spanish user copy.
 
 ### Layers
 
@@ -50,12 +50,14 @@ backend/app/
 │   ├── alerts.py      # observe-only ban-guardrail sliding-window alerts
 │   ├── broadcaster.py # tenant-scoped WS fan-out (emit / emit_global)
 │   ├── cookie_verdict.py display_transform.py redact.py  # Amazon cookie-mode helpers
+│   │                  #   display_transform → LIVE/DEAD branded card; redact → strip secrets + dot dividers
 ├── db/                # async SQLAlchemy + repos + Alembic models
 │   ├── base.py models.py
 │   └── repos/         # flush-not-commit repos; FOR UPDATE on read-modify-write
 ├── services/          # orchestration (auth, batches, admission, plans, users,
-│                      #   exports, targets, gift_keys, pacing)
-├── migrations/        # Alembic (head: 9b1e4c7a2f08)
+│                      #   exports, targets, gift_keys, pacing,
+│                      #   account_guard, live_forward)
+├── migrations/        # Alembic (head: c4e2f7a1b903)
 ├── scripts/           # bootstrap_owner, seed_user, telegram_auth, load tests
 └── tests/             # pytest (40+ test modules)
 ```
@@ -68,6 +70,8 @@ backend/app/
 - **`capture.py` / `attribution.py`** — a single consumer drains an async reply queue. Attribution resolves `(chat_id, reply_to_msg_id) → send_log → tenant/batch/line`. CC data is extracted (`cc_extract.py`) and persisted. Transient DB errors retry forever (the DB-down reply buffer); non-transient errors are bounded (poison item after 5).
 - **`reconciler.py`** — boot reconciliation resolves `send_log` rows whose `message_id` was never confirmed; a periodic sweep catches late ✅ edits.
 - **`watchdog.py`** — latches a **global** pause on Telegram session loss or reply-rate collapse; never auto-resumes; persisted to `watchdog_state`; the owner resumes via endpoint. `alerts.py` is observe-only (never pauses).
+- **`services/account_guard.py`** — boot-time account-identity fence. Compares the connected account's id against the last-seen fingerprint in `system_settings.telegram_account_id`. A plain restart reuses the same account → silent `ok`. A real account swap **with existing `send_log`/`responses`** returns `LOCKED` (the per-chat `message_id` sequences restarted → a new reply could mis-attribute to another tenant's line — a cross-tenant leak), and the lifespan latches the watchdog (`REASON_ACCOUNT_CHANGED`) until the owner wipes that state and resumes. `_classify` is a pure decision matrix (`FIRST_BOOT`/`OK`/`ADOPTED`/`LOCKED`/`SKIPPED`), tested without a DB or Telethon.
+- **`services/live_forward.py`** — forwards every fresh Amazon **live** (an `Approved` cookie-mode verdict) to an owner-configured GLOBAL Telegram channel (`system_settings.live_forward_channel`, empty = disabled). Best-effort and **out-of-band**: it does NOT go through the send worker/scheduler (no pacing, no `send_log`, no attribution), forwards the redacted `clean_text` verbatim (never the LIVE/DEAD rebrand), and swallows every failure so a forward can never disrupt capture. Triggered from `capture.py` once per line's first ✅ (`has_ok_revision` guard).
 
 ### Response storage (Completa vs Filtrada)
 
@@ -109,7 +113,7 @@ frontend/
 └── config/ styles/ public/
 ```
 
-- **Cockpit** (`app/app/page.tsx`) — **sessionless**: send form (paste + category→gate selectors), progress ring, failed/pending lines, flood/watchdog/plan notices, the cookie manager (Amazon cookie-mode gates), and the three live panels — **Completa** (✅+❌ revisions), **Aprobadas** (only ✅ revisions, full text), and **Datos CC** (extracted CC). A single non-destructive **Limpiar** button clears all three panels via the view-cutoff (it never deletes). Live state comes from the WebSocket store (`lib/ws.ts`, a reducer over `snapshot`/`batch.*`/`response.captured`/`session.active`/`flood`/`watchdog`/`credits.updated`); the gate catalog comes from a REST query.
+- **Cockpit** (`app/app/page.tsx`) — **sessionless**: send form (paste + category→gate selectors), progress ring, failed/pending lines, flood/watchdog/plan notices, the cookie manager (Amazon cookie-mode gates), and the three live panels — **Completa** (one row per message — the latest revision, deduped client-side by `(chat_id, message_id)` / `Response.id`, not every edit), **Aprobadas** (only ✅ messages, full text; its count is **server-authoritative**), and **Datos CC** (extracted CC). A single non-destructive **Limpiar** button clears all three panels via the view-cutoff (it never deletes). Live state comes from the WebSocket store (`lib/ws.ts`, a reducer over `snapshot`/`batch.*`/`response.captured`/`session.active`/`flood`/`watchdog`/`credits.updated`); the gate catalog comes from a REST query. **Client-visible label is "Gateway"** (the internal table/API/`value` stay "gate").
 - **History** (`app/app/historial/`) — read-only list of approved-✅ responses (latest `kind='full'` revision is `status='ok'`) grouped by the batch's client-visible gate, fed by `GET /api/history` **independently of the Limpiar cutoff** (it reads `responses` directly). Adds three DESTRUCTIVE deletes — one message (`DELETE /api/history/response/{id}`), one gate (`DELETE /api/history/gate?name=`), or all (`DELETE /api/history`) — which remove only `responses` rows.
 - **Admin** (`app/admin/`) — `users` (CRUD, plan renew/block, password reset, credits, admission cap, interval), `gates` (catalog + categories), `plans`, `keys` (gift keys), `destinos` (send targets), `tenants/[id]` (audited read-only cross-tenant browser).
 
@@ -136,5 +140,5 @@ See `deploy/` (Caddyfile, systemd units, `deploy.sh`, `backup_db.sh`) and `docs/
 
 ## Testing Strategy
 
-- **Backend:** `pytest` + `pytest-asyncio` + `httpx`, 40+ test modules under `backend/tests/` covering auth, batches, scheduler, attribution, reconciler, watchdog, admission, plans, gift keys, cookies, Amazon rotation, redaction, support views. `ruff` + `mypy` configured in `pyproject.toml`.
+- **Backend:** `pytest` + `pytest-asyncio` + `httpx`, 40+ test modules under `backend/tests/` covering auth, batches, scheduler, attribution, reconciler, watchdog, admission, plans, gift keys, cookies, Amazon rotation, redaction, support views, the account-swap guard (`test_account_guard.py`), live-forward (`test_live_forward.py`), and Historial display parity (`test_history_display_parity.py`). `ruff` + `mypy` configured in `pyproject.toml`.
 - **Frontend:** `eslint` (`npm run lint`); the real gate is `npm run build` (runs `tsc` — lint alone does not catch type errors and once broke a deploy).

@@ -1,7 +1,7 @@
 ---
 project_name: 'Ranger-X Check'
 user_name: 'Richard'
-date: '2026-06-20'
+date: '2026-06-22'
 sections_completed:
   ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']
 status: 'complete'
@@ -46,7 +46,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 - **`deps.get_current_user` is the only source of identity** — validates the HttpOnly session cookie, applies gates in order: blocked → plan-expired → must-change-password. `require_role` gates admin/owner.
 - **The WebSocket (`/ws`) is server→client ONLY.** All commands go through REST; clients send only keep-alives. Envelope `{event, data}`. Events: `snapshot`, `batch.state`, `batch.progress`, `response.captured`, `session.active`, `flood.wait`, `watchdog.paused|resumed`, `guardrail.alert`, `credits.updated`. Fan-out is tenant-scoped (`broadcaster.emit`; `emit_global` for system events). State lives in the DB, not the socket — it survives reconnects.
 - **Snapshot / denormalize on purpose.** `batches` and `capture_sessions` snapshot the gate `value`/`name`/`display_value`/`credit_cost`/mode flags at creation — no FK to `gates`. Retiring/renaming a gate must never rewrite history.
-- **Gate `value` is OWNER-ONLY** — never expose the real command to clients. Clients see `name` + category + `display_value` ("Comando visible"). Public/`/api/gates` omit `value`; only `/admin/gates` shows it.
+- **Gate `value` is OWNER-ONLY** — never expose the real command to clients. Clients see `name` + category + `display_value` ("Comando visible"). Public/`/api/gates` omit `value`; only `/admin/gates` shows it. The **client-visible label is "Gateway"** (UI copy only — the table/API/`value` field all stay "gate").
 
 ### Capture / response semantics (legacy parity)
 
@@ -64,7 +64,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 
 - **Backend:** `cd backend && .venv/bin/pytest`. ruff + mypy configured in `pyproject.toml` (migrations excluded from ruff). 40+ test modules under `backend/tests/`.
 - **Frontend:** `npm run lint` (eslint). **The real gate is `npm run build`** (runs `tsc`) — lint alone misses type errors and once broke a deploy. Run build before pushing to `main`.
-- **Migrations before restart:** `alembic upgrade head` runs before the service restart in every deploy. Head: `f6a2d9c4e1b7`.
+- **Migrations before restart:** `alembic upgrade head` runs before the service restart in every deploy. Head: `c4e2f7a1b903`.
 
 ### Development Workflow
 
@@ -74,7 +74,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 
 ### 🔒 Security & Gotchas
 
-- **Single shared Telegram account** — one `anon.session`; never run two `cc-core` instances (corrupts the MTProto auth key). Re-authenticating to a different account restarts the `message_id` sequence — wipe `send_log`/`responses` first or replies mis-attribute across tenants. Respect the interval, FloodWait, and watchdog; never remove rate-limiting.
+- **Single shared Telegram account** — one `anon.session`; never run two `cc-core` instances (corrupts the MTProto auth key). Re-authenticating to a different account restarts the `message_id` sequence — wipe `send_log`/`responses` first or replies mis-attribute across tenants. **`services/account_guard.py` enforces this fail-closed at boot:** if the connected account's id differs from `system_settings.telegram_account_id` AND attribution data exists, it latches the watchdog (`account_changed`) instead of silently leaking. Respect the interval, FloodWait, and watchdog; never remove rate-limiting.
 - **Captured CC data is sensitive** (lives in Postgres; exports carry `Cache-Control: no-store`). **Never read the legacy `respuestas/` contents** — hard rule; operate on structure/paths only.
 - **`.env` holds real credentials** — never commit, print, or hardcode.
 - **Watchdog never auto-resumes** — it latches a global pause (persisted to `watchdog_state`) on session loss / reply-rate collapse; the owner resumes via `/api/watchdog/resume`.
@@ -85,10 +85,12 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 - **Sending engine:** `core/{telegram,send_worker,scheduler,capture,attribution,cc_extract,reconciler}.py`, `services/batches.py`, `services/admission.py`, `services/pacing.py`.
 - **Gates & catalog:** `api/gates.py`, `api/public.py`, `api/admin.py`, `db/repos/{gates,gate_categories}.py`.
 - **Plans, credits, gift keys:** `api/admin.py`, `api/keys.py`, `services/{plans,gift_keys}.py`, `db/repos/{plans,gift_keys}.py`.
-- **Amazon cookie-mode:** `api/cookies.py`, `core/{cookie_verdict,display_transform,redact}.py`, `db/repos/gate_cookies.py`, the cookie-mode columns on `batches`/`batch_lines`.
+- **Amazon cookie-mode:** `api/cookies.py`, `core/{cookie_verdict,display_transform,redact}.py`, `db/repos/gate_cookies.py`, the cookie-mode columns on `batches`/`batch_lines`. `display_transform` renders the LIVE/DEAD branded card; `redact` strips secrets + decorative dot dividers.
+- **Amazon live-forward:** `services/live_forward.py` (forwards each fresh ✅ live verbatim to the owner's global channel; out-of-band, best-effort), `GET|PUT /api/admin/live-channel`, `system_settings.live_forward_channel`.
+- **Account-swap guard:** `services/account_guard.py` (boot fail-closed fence), wired in `app/main.py` lifespan, `system_settings.telegram_account_id`.
 - **Send targets (destinos):** `api/targets.py`, `services/targets.py`, `db/repos/targets.py`.
 - **Ops:** `core/{watchdog,alerts,broadcaster}.py`, `api/{watchdog,observability,health}.py`, `db/repos/{watchdog,system_settings,audit}.py`.
 
 ---
 
-Last Updated: 2026-06-20
+Last Updated: 2026-06-22
