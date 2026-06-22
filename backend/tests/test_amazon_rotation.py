@@ -1314,3 +1314,253 @@ async def test_manual_pause_during_await_clears_gate_drops_verdict_resends(
     batch = await _batch_row(batch_id)
     assert batch.awaiting_message_id is not None
     assert batch.awaiting_message_id != amz_id
+
+
+# =========================================================================
+# Audit regression (2026-06-22): three engine-safety fixes around the
+# ``_record_sent`` → ``_arm_await`` boundary + the account-swap latch.
+# =========================================================================
+#
+# M1 — fold the await-arm INTO the record txn (no standalone ``_arm_await``):
+#      a crash can no longer leave a cookie line 'sent' with an un-armed await
+#      (LINE_SENT is invisible to boot recovery → permanent 409 lockout).
+# H1 — stamp ``failed_cookie_id`` DURABLY at cookie-pick time: a boot-recovery
+#      re-arm (which never re-stamps) still lets a ``cookie_dead`` verdict purge
+#      the RIGHT cookie instead of skipping the delete and resending forever.
+# M2 — fence capture on ``REASON_ACCOUNT_CHANGED``: live/replayed replies on a
+#      swapped account are dropped (no cross-tenant mis-attribution), while a
+#      reply-rate / session-lost latch deliberately does NOT fence capture.
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_cookie_arm_folded_into_record_no_separate_arm_step(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """M1: the cookie await-arm is folded into ``_record_sent``'s SINGLE txn (the
+    standalone two-phase ``_arm_await`` is gone), so the 'sent' state, the
+    recorded ``message_id``, the armed await and the ``failed_cookie_id`` stamp
+    are one atomic outcome — no crash window can strand a 'sent' cookie line with
+    an un-armed await (which boot recovery, LINE_SENDING-only, never heals)."""
+    # The separate arm function must no longer exist (the fold is the fix).
+    assert not hasattr(send_worker, "_arm_await")
+
+    http, _ = client_user
+    only = await _add_cookie(http, cookie_gate["id"], f"ck-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+    assert await send_worker.step() is True
+
+    # One atomic outcome: line 'sent' + await armed + cookie stamped, together.
+    lines = await _lines_of(batch_id)
+    assert lines[0].state == "sent"
+    assert lines[0].failed_cookie_id == only
+    batch = await _batch_row(batch_id)
+    assert batch.awaiting_message_id == await _amz_message_id(batch_id)
+    assert batch.awaiting_verdict_until is not None
+
+    # A properly-armed cookie line is NOT a stuck LINE_SENDING line — boot
+    # recovery never sees it (so it is never re-queued/double-sent).
+    async with async_session_factory() as session:
+        stuck = await batches_repo.stuck_sending_lines(session)
+    assert all(s.batch_id != batch_id for s in stuck)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_boot_rearm_preserves_cookie_stamp_so_dead_verdict_purges_not_loops(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """H1: a crash AFTER the ``.amz`` delivered but BEFORE the record txn leaves
+    the line LINE_SENDING with ``failed_cookie_id`` ALREADY stamped (the durable
+    pick-time stamp). Boot recovery confirms the ``.amz`` and re-arms the await
+    WITHOUT re-stamping — but because the stamp survived, a later ``cookie_dead``
+    verdict PURGES the right cookie instead of skipping the delete and resending
+    the same dead cookie forever (the resend storm on the shared account)."""
+    http, _ = client_user
+    only = await _add_cookie(http, cookie_gate["id"], f"ck-only-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+
+    # Normal send → line 'sent', armed, failed_cookie_id stamped durably.
+    assert await send_worker.step() is True
+    amz_id = await _amz_message_id(batch_id)
+    amz_text = next(s for s in fake_gateway.sent if not s.startswith(".cookie "))
+    lines = await _lines_of(batch_id)
+    line_id = lines[0].id
+    assert await _line_failed_cookie_id(line_id) == only
+
+    # Rewind to the H1 crash window: line back to LINE_SENDING, the send_log
+    # message_id un-recorded, the await un-armed — but the pick-time stamp KEPT.
+    async with async_session_factory() as session:
+        line = await session.get(BatchLine, line_id)
+        line.state = "sending"
+        await session.execute(
+            update(SendLog).where(SendLog.batch_id == batch_id).values(message_id=None)
+        )
+        batch = await session.get(Batch, batch_id)
+        await batches_repo.clear_awaiting_verdict(session, batch)
+        await session.commit()
+    # The delivered .amz is visible to recent_outgoing so boot recovery confirms.
+    fake_gateway.outgoing = [(0, amz_id, amz_text)]
+
+    await send_worker._boot_recovery()
+
+    # Boot recovery confirmed the .amz and RE-ARMED the cookie await…
+    batch = await _batch_row(batch_id)
+    assert batch.awaiting_message_id == amz_id
+    assert batch.awaiting_verdict_until is not None
+    lines = await _lines_of(batch_id)
+    assert lines[0].state == "sent"
+    # …and the durable pick-time stamp SURVIVED the re-arm (re-arm never stamps).
+    assert await _line_failed_cookie_id(line_id) == only
+
+    # cookie_dead now PURGES the stamped cookie (no NULL-stamp skip → no loop).
+    await capture.process_incoming(_verdict_reply(12101, amz_id, _COOKIE_DEAD))
+    await send_worker._drain_verdicts()
+    assert await _cookies(cookie_gate["id"]) == []  # 🔒 dead cookie purged
+    batch = await _batch_row(batch_id)
+    assert batch.state == "paused"
+    assert batch.pause_reason == "cookies_exhausted"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_account_changed_latch_fences_capture_but_session_lost_does_not(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    fake_gateway: FakeGateway,
+) -> None:
+    """M2: while the global pause is latched for an ACCOUNT SWAP, capture drops
+    replies (a swapped account's restarted message-id sequence can mis-attribute
+    one tenant's ✅/CC into another's). A reply-rate / session-lost latch does NOT
+    fence capture — buffered replies must keep feeding the rate watchdog."""
+    from app.core.watchdog import (
+        REASON_ACCOUNT_CHANGED,
+        REASON_SESSION_LOST,
+        watchdog,
+    )
+
+    http, _ = client_user
+    await _add_cookie(http, cookie_gate["id"], f"ck-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+    csid = await _capture_session_id(batch_id)
+    assert await send_worker.step() is True
+    amz_id = await _amz_message_id(batch_id)
+
+    # (1) Account-swap latch: an otherwise-attributable verdict is DROPPED.
+    watchdog._paused = True
+    watchdog._reason = REASON_ACCOUNT_CHANGED
+    try:
+        before = capture.unmatched_total()
+        await capture.process_incoming(_verdict_reply(12201, amz_id, _APPROVED))
+        assert await _full_rows(csid) == []  # nothing persisted
+        assert await _cc_rows(csid) == []
+        assert capture.unmatched_total() == before  # no unmatched bump
+        batch = await _batch_row(batch_id)
+        assert batch.state == "sending"  # not consumed/advanced
+        assert batch.awaiting_verdict_until is not None  # gate still armed
+    finally:
+        watchdog.reset()
+
+    # (2) A session-lost latch must NOT fence capture: the SAME verdict now
+    # attributes, persists and consumes the line.
+    watchdog._paused = True
+    watchdog._reason = REASON_SESSION_LOST
+    try:
+        await capture.process_incoming(_verdict_reply(12201, amz_id, _APPROVED))
+        await send_worker._drain_verdicts()
+        assert [r.status for r in await _full_rows(csid)] == ["ok"]  # persisted
+        batch = await _batch_row(batch_id)
+        assert batch.state == "completed"  # consumed
+    finally:
+        watchdog.reset()
+
+
+# =========================================================================
+# Code-review regression (2026-06-22): two findings from the adversarial
+# review of the audit fixes above.
+# =========================================================================
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_pause_racing_between_amz_send_and_record_still_arms_await(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blind-Hunter regression: a manual pause can commit PAUSED between the
+    ``.amz`` send and ``_record_sent`` (the worker holds NO lock during the send).
+    At that moment the await is not yet armed, so ``pause_batch`` cannot re-queue
+    the in-flight line. ``_record_sent`` must STILL arm the await on the
+    now-paused batch — otherwise the 'sent' line is stranded (the timeout sweep
+    needs the await; a manual resume re-queues only a cookie-pause), a permanent
+    409 lockout and the exact M1 failure mode. The folded arm therefore arms on
+    SENDING *or* PAUSED (matching the old unconditional ``_arm_await``)."""
+    http, _ = client_user
+    only = await _add_cookie(http, cookie_gate["id"], f"ck-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+
+    # The instant the ``.amz`` goes out (BEFORE _record_sent runs), commit the
+    # batch to PAUSED — exactly the manual-pause-mid-send race.
+    class PauseOnAmzGateway(FakeGateway):
+        async def send(self, text: str) -> tuple[int, int]:
+            result = await super().send(text)
+            if not text.startswith(".cookie "):
+                async with async_session_factory() as s:
+                    b = await s.get(Batch, batch_id)
+                    assert b is not None
+                    b.state = "paused"
+                    await s.commit()
+            return result
+
+    monkeypatch.setattr(send_worker, "gateway", PauseOnAmzGateway())
+    assert await send_worker.step() is True  # the .amz went out
+
+    lines = await _lines_of(batch_id)
+    assert lines[0].state == "sent"
+    assert lines[0].failed_cookie_id == only
+    batch = await _batch_row(batch_id)
+    assert batch.state == "paused"
+    # 🔒 The await is armed despite the paused state → the in-flight line is
+    # recoverable (real verdict consumes it, or the timeout sweep resends).
+    assert batch.awaiting_message_id == await _amz_message_id(batch_id)
+    assert batch.awaiting_verdict_until is not None
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_pick_time_cookie_stamp_is_durable_before_record_phase(
+    client_user: tuple[AsyncClient, User],
+    cookie_gate: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H1 isolation (Edge-Case-Hunter): the cookie stamp is committed at PICK
+    time, BEFORE the sends — independent of ``_record_sent``'s re-stamp. A
+    FloodWait on the ``.amz`` aborts the pair (release + re-queue) so
+    ``_record_sent`` NEVER runs; the line must STILL carry ``failed_cookie_id``
+    from the pick-time commit. If the pick-time stamp were reverted the stamp
+    would be null here — the regression the end-to-end boot test cannot isolate
+    (that test runs a full step where ``_record_sent`` also stamps)."""
+    http, _ = client_user
+    only = await _add_cookie(http, cookie_gate["id"], f"ck-{uuid.uuid4().hex}")
+    batch_id = await _post_batch(http, "4111111111111111", cookie_gate["id"])
+
+    class AmzFloodGateway(FakeGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.amz_failed = False
+
+        async def send(self, text: str) -> tuple[int, int]:
+            if not text.startswith(".cookie ") and not self.amz_failed:
+                self.amz_failed = True
+                raise FloodWaitError(request=None, capture=7)
+            return await super().send(text)
+
+    monkeypatch.setattr(send_worker, "gateway", AmzFloodGateway())
+    assert await send_worker.step() is False  # pair aborted, nothing recorded
+
+    lines = await _lines_of(batch_id)
+    assert lines[0].state == "queued"  # released + re-queued
+    rows = await _send_log_rows(batch_id)
+    assert all(r.message_id is None for r in rows)  # _record_sent never ran
+    # 🔒 Stamped from the PICK-time commit, despite no record phase having run.
+    assert lines[0].failed_cookie_id == only

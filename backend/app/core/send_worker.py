@@ -450,6 +450,8 @@ async def _record_sent(
     message_id: int,
     *,
     complete_on_drain: bool = True,
+    arm_cookie_await: bool = False,
+    cookie_id: int | None = None,
 ) -> None:
     """Post-send record phase: 'sent' + ``(chat_id, message_id)`` on the intent
     (AC 2/5).
@@ -501,6 +503,38 @@ async def _record_sent(
                         # holds 'sending' until the verdict consumes the line.
                         # Still refresh progress so the ring advances on send.
                         progress = await batches_service.progress_data(session, batch)
+                    if arm_cookie_await and batch.state in (
+                        batches_repo.STATE_SENDING,
+                        batches_repo.STATE_PAUSED,
+                    ):
+                        # 🔒 Arm the cookie-mode serialize gate in the SAME txn as
+                        # the record phase (mark_sent + set_message_id): one atomic
+                        # commit, so no crash can leave the line 'sent' with the
+                        # await un-armed — a state boot recovery (LINE_SENDING only)
+                        # would never heal, permanently 409-locking the tenant.
+                        # Arm on PAUSED too, not just SENDING: a manual pause can
+                        # land between the ``.amz`` send and this record phase (the
+                        # worker holds no lock during the send), and at that pause
+                        # the await was not yet armed so ``pause_batch`` could not
+                        # re-queue the in-flight line. Leaving it un-armed would
+                        # strand the now-'sent' line (manual resume re-queues only a
+                        # cookie-pause, and the timeout sweep needs the await) — the
+                        # very 409 lockout the standalone ``_arm_await`` (which armed
+                        # unconditionally) avoided. A stop/cancel (state moved to a
+                        # terminal value above) is correctly skipped — the line is
+                        # honest 'sent' history and any verdict is dropped.
+                        # ``cookie_id`` is re-stamped (idempotent with the pick-time
+                        # stamp).
+                        await batches_repo.set_awaiting_verdict(
+                            session,
+                            batch,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            timeout_seconds=_VERDICT_TIMEOUT_SECONDS,
+                        )
+                        if recorded is not None:
+                            recorded.failed_cookie_id = cookie_id
+                            await session.flush()
                 await session.commit()
             break
         except asyncio.CancelledError:
@@ -598,56 +632,6 @@ async def _pause_cookie_batch(
         await broadcaster.emit(tenant_id, "batch.state", state_payload)
 
 
-async def _arm_await(
-    batch_id: int,
-    line_id: int,
-    chat_id: int,
-    message_id: int,
-    cookie_id: int | None,
-) -> None:
-    """Arm the serialize gate after a cookie-mode ``.amz`` send (retry-forever).
-
-    Stores the awaited ``.amz`` ``(chat_id, message_id)`` + ``func.now()+90s``
-    under the batch FOR UPDATE so ``active_senders`` excludes the tenant until a
-    matching verdict or the timeout. Idempotent (a bare UPDATE of the await
-    columns) — safe to re-run after a partially lost commit, same fail-stop as
-    ``_record_sent``.
-
-    🔒 Also stamps ``BatchLine.failed_cookie_id = cookie_id`` (the cookie ACTUALLY
-    sent for THIS attempt). A ``cookie_dead`` verdict reads it back to mark the
-    exact cookie dead — never re-derives "oldest active" across unlocked sessions
-    (which could burn a healthy cookie if the vault changed during the 90s await).
-    """
-    while True:
-        try:
-            async with async_session_factory() as session:
-                batch = await _locked_batch(session, batch_id)
-                if batch is None:
-                    return
-                await batches_repo.set_awaiting_verdict(
-                    session,
-                    batch,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    timeout_seconds=_VERDICT_TIMEOUT_SECONDS,
-                )
-                line = await session.get(BatchLine, line_id)
-                if line is not None:
-                    line.failed_cookie_id = cookie_id
-                    await session.flush()
-                await session.commit()
-            return
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "event=db_unreachable phase=cookie_arm batch=%s — retrying "
-                "until the DB returns (the serialize gate must be armed)",
-                batch_id,
-            )
-            await sleep_paced(_ERROR_RETRY_SECONDS)
-
-
 async def _send_cookie_pair(
     tenant_id: int,
     batch_id: int,
@@ -697,6 +681,20 @@ async def _send_cookie_pair(
         )
         cookie_value = cookie.value if cookie is not None else None
         cookie_id = cookie.id if cookie is not None else None
+        # 🔒 Stamp the picked cookie on the line DURABLY here — BEFORE either
+        # send — so a crash anywhere up to the record phase still leaves
+        # ``failed_cookie_id`` set. Boot recovery re-arms the await from the
+        # confirmed ``.amz`` alone (the ``.cookie`` is side-band, unrecorded), so
+        # without this durable stamp a post-restart ``cookie_dead`` verdict could
+        # not identify the dead cookie, would skip the delete, re-queue, and
+        # re-pick the SAME dead cookie forever — a resend storm on the shared
+        # account. Stamping at pick time makes the stamp crash-proof; a failed
+        # ``.cookie``/``.amz`` send just re-queues and the next pick re-stamps.
+        if cookie_id is not None:
+            line = await session.get(BatchLine, line_id)
+            if line is not None:
+                line.failed_cookie_id = cookie_id
+                await session.flush()
         # Hold the cookie row's lock only as long as needed to read the value;
         # the send happens with NO session held (a FloodWait may sleep minutes).
         await session.commit()
@@ -809,8 +807,10 @@ async def _send_cookie_pair(
     # Record the ``.amz`` delivery (the write-ahead fail-stop) — ``.cookie`` is
     # NOT recorded. ``complete_on_drain=False``: the batch must STAY 'sending'
     # to await the verdict (the verdict, not the send, completes a drained
-    # cookie-mode batch). Then ARM the serialize gate so the next ``step()``
-    # skips this tenant until the verdict (or the 90s timeout).
+    # cookie-mode batch). ``arm_cookie_await=True`` arms the serialize gate in
+    # the SAME atomic txn so the next ``step()`` skips this tenant until the
+    # verdict (or the 90s timeout) and no crash can strand a 'sent' line with an
+    # un-armed await.
     await _record_sent(
         tenant_id,
         batch_id,
@@ -820,8 +820,9 @@ async def _send_cookie_pair(
         chat_id,
         message_id,
         complete_on_drain=False,
+        arm_cookie_await=True,
+        cookie_id=cookie_id,
     )
-    await _arm_await(batch_id, line_id, chat_id, message_id, cookie_id)
     logger.info(
         "event=cookie_pair_sent tenant=%s gate=%s cookie=%s batch=%s line=%s "
         "chat_id=%s message_id=%s",
@@ -999,9 +1000,12 @@ async def _apply_verdict(verdict: CookieVerdict) -> None:
         # 🔒 cookie_dead — rotate ATOMICALLY in THIS one txn (still holding the
         # batch FOR UPDATE from the attempt-fence above). HARD-DELETE the cookie
         # that was ACTUALLY sent for this attempt (``BatchLine.failed_cookie_id``,
-        # stamped by ``_arm_await``) — NOT a re-derived "oldest active" across
-        # unlocked sessions, which could burn a healthy cookie if the vault
-        # changed during the 90s await. The owner chose to PURGE a dead cookie
+        # stamped DURABLY at cookie-pick time, before either send, and re-stamped
+        # in the record txn) — NOT a re-derived "oldest active" across unlocked
+        # sessions, which could burn a healthy cookie if the vault changed during
+        # the 90s await. The pick-time stamp survives a crash, so even a boot-
+        # recovery re-arm (which never re-stamps) deletes the right cookie here
+        # rather than looping on it. The owner chose to PURGE a dead cookie
         # from the vault (not soft-flag it); the ``ON DELETE SET NULL`` FK nulls
         # the reference on this (and any) line. ``count_active_for`` in the SAME
         # session sees the row gone, so the exhaustion decision is consistent.
@@ -1010,7 +1014,8 @@ async def _apply_verdict(verdict: CookieVerdict) -> None:
         if dead_cookie_id is not None:
             await gate_cookies_repo.delete_by_id(session, tenant_id, dead_cookie_id)
             # Mirror the DB SET NULL in the ORM so re-queueing the line below
-            # cannot emit a stale-id UPDATE; the next ``_arm_await`` re-stamps it.
+            # cannot emit a stale-id UPDATE; the next attempt's cookie-pick
+            # re-stamps it.
             line.failed_cookie_id = None
         remaining = (
             await gate_cookies_repo.count_active_for(session, tenant_id, gate_id)

@@ -294,6 +294,25 @@ async def process_incoming(reply: IncomingReply) -> None:
     """
     global _unmatched_total
 
+    # 🔒 Account-swap fence (cross-tenant mis-attribution guard). When the boot
+    # guard latched ``REASON_ACCOUNT_CHANGED`` (``anon.session`` was re-authed to
+    # a DIFFERENT Telegram account while historical ``send_log``/``responses``
+    # rows exist), the send side is halted but live/replayed replies could still
+    # attribute to a stale ``send_log`` row — the swapped account RESTARTED its
+    # per-chat message-id sequence, so a new ``reply_to_msg_id`` can collide with
+    # another tenant's old send and leak that tenant's ✅/CC. DROP such replies
+    # (unattributable BY DESIGN on a swapped account) instead of persisting a
+    # mis-attribution; the owner's runbook is wipe-state + re-auth, then resume.
+    if watchdog.is_account_changed_latch:
+        logger.warning(
+            "event=capture_account_changed_drop message_id=%s chat_id=%s — "
+            "account-swap latch active; dropping to avoid cross-tenant "
+            "mis-attribution",
+            reply.message_id,
+            reply.chat_id,
+        )
+        return
+
     # 🔒 Side-band ``.cookie`` confirmation drop (Amazon cookie-mode, Phase 2).
     # The ``.cookie`` half of the atomic pair is side-band — no ``send_log``/
     # ``batch_line`` row — so its ``…almacenó tu cookie correctamente. ✅``

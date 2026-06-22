@@ -91,6 +91,18 @@ class Watchdog:
         """The worker's per-step gate (memory — zero queries per step)."""
         return self._paused
 
+    @property
+    def is_account_changed_latch(self) -> bool:
+        """True iff the global pause is latched for a Telegram account swap.
+
+        The capture pipeline fences on THIS reason ONLY: on a swapped account
+        the per-chat message-id sequence restarts, so a live/replayed reply can
+        collide with a stale ``send_log`` row and mis-attribute one tenant's
+        ✅/CC into another's. The reply-rate / session-lost latches deliberately
+        do NOT fence capture — buffered replies must keep feeding the rate
+        watchdog (the send-side fail-stop already halted sending there)."""
+        return self._paused and self._reason == REASON_ACCOUNT_CHANGED
+
     def status(self) -> dict:
         """Snapshot/GET slice — the shape every tab rebuilds its banner from."""
         return {
