@@ -514,6 +514,16 @@ def key_not_found() -> AppError:
     )
 
 
+def credential_not_found() -> AppError:
+    # id desconocido / de otro tenant / oversized → 404 idéntico (value-free,
+    # no filtra existencia ni el id).
+    return AppError(
+        status_code=404,
+        code="credential_not_found",
+        message="Credencial no encontrada.",
+    )
+
+
 def key_already_claimed() -> AppError:
     return AppError(
         status_code=409,

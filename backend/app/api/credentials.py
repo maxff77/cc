@@ -13,23 +13,28 @@ its own email+password entries.
 The router owns the transaction; queries are inline (single small table).
 """
 
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.base import get_session
 from app.db.models import Credential, User
-from app.errors import invalid_credential
+from app.errors import credential_not_found, invalid_credential
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
 _EMAIL_MAX = 320
 _PASSWORD_MAX = 1024
 _LIST_LIMIT = 200
+_PG_INT_MAX = 2**31 - 1  # ids son int4; binds mayores desbordan asyncpg
+# Validación pragmática (no RFC): un @, sin espacios, dominio con punto. Se
+# valida in-handler como el resto, para no filtrar el valor en un 422.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class CreateCredentialRequest(BaseModel):
@@ -61,7 +66,13 @@ async def store_credential(
     """Store one email+password entry for the tenant."""
     email = body.email.strip()
     password = body.password.strip()
-    if not email or len(email) > _EMAIL_MAX or not password or len(password) > _PASSWORD_MAX:
+    if (
+        not email
+        or len(email) > _EMAIL_MAX
+        or not _EMAIL_RE.match(email)
+        or not password
+        or len(password) > _PASSWORD_MAX
+    ):
         raise invalid_credential()
     cred = Credential(tenant_id=user.tenant_id, email=email, password=password)
     session.add(cred)
@@ -87,3 +98,30 @@ async def list_credentials(
         )
     ).scalars().all()
     return [_to_out(c) for c in rows]
+
+
+@router.delete("/{credential_id}", status_code=204)
+async def delete_credential(
+    credential_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Borra una credencial del tenant.
+
+    id desconocido / de otro tenant / oversized → 404 IDÉNTICO (el predicado de
+    tenant hace que un id ajeno sea un no-op limpio): nunca se filtra existencia
+    ni se loguea el id.
+    """
+    # ponytail: borrado simple, sin manejo de IntegrityError; agregar solo si
+    # alguna tabla llega a referenciar credentials.id con FK.
+    if not 0 < credential_id <= _PG_INT_MAX:
+        raise credential_not_found()
+    result = await session.execute(
+        delete(Credential).where(
+            Credential.tenant_id == user.tenant_id,
+            Credential.id == credential_id,
+        )
+    )
+    if (getattr(result, "rowcount", 0) or 0) == 0:
+        raise credential_not_found()
+    await session.commit()
