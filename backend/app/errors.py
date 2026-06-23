@@ -615,6 +615,20 @@ def cookie_delete_failed() -> AppError:
     )
 
 
+# --- Codes the credential vault defines ----------------------------------
+
+
+def invalid_credential() -> AppError:
+    # Empty/whitespace-only email or password, or oversized email. Raised INSIDE
+    # the router (never a pydantic validator on the password) so the secret can
+    # never surface in a default 422 body or an access log. Value-free.
+    return AppError(
+        status_code=400,
+        code="invalid_credential",
+        message="Correo o contraseña inválidos.",
+    )
+
+
 # --- Cookie-mode pause reasons (cookie rotation feature, Phase 2) ---------
 #
 # NOT ``AppError`` factories: a ``cookies_exhausted`` / ``verdict_timeout``

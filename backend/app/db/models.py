@@ -761,6 +761,38 @@ class Response(Base):
     )
 
 
+class Credential(Base):
+    """A tenant's own stored email+password entry (personal credential vault).
+
+    TENANT-SCOPED — like ``gate_cookies``, every row belongs to exactly one
+    tenant; ``tenant_id`` always comes from the session at the route, never from
+    body/path. A client stores and lists only their own.
+
+    🔒 ``password`` holds the credential PLAINTEXT in Postgres — the deliberate
+    CC / ``gate_cookies`` precedent (access-control + TLS at rest). It is NEVER
+    echoed back to a client (the list endpoint omits it) and never logged.
+    No uniqueness on ``(tenant_id, email)``: the same email may be stored more
+    than once on purpose (re-saves / different passwords).
+    """
+
+    __tablename__ = "credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320))
+    # ponytail: plaintext vault (gate_cookies precedent). Hash only if these ever
+    # become auth credentials rather than stored secrets to read back.
+    password: Mapped[str] = mapped_column(Text)
+    used: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class AuditLog(Base):
     """One audited cross-tenant support read (Story 3.6, AC 2).
 
