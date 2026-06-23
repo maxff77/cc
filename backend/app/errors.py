@@ -488,10 +488,22 @@ def batch_line_limit(*, cap: int, attempted: int) -> AppError:
 
 
 def invalid_key_days() -> AppError:
+    # Days now allow 0 (a credits-only key); the bound is 0..KEY_DAYS_MAX
+    # (gift-key-credits feature).
     return AppError(
         status_code=400,
         code="invalid_key_days",
-        message="Indica los días de la key (mínimo 1).",
+        message="Indica los días de la key (0 o más).",
+    )
+
+
+def empty_gift_key() -> AppError:
+    # A key must grant SOMETHING (gift-key-credits feature): days==0 AND
+    # credits==0 is rejected — otherwise the mint produces a no-op key.
+    return AppError(
+        status_code=400,
+        code="empty_gift_key",
+        message="La key debe otorgar días o créditos (al menos uno).",
     )
 
 

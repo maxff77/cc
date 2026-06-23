@@ -44,11 +44,13 @@ async def create(
     days: int,
     plan_id: int,
     created_by_user_id: int,
+    credits: int = 0,
 ) -> GiftKey:
     """Insert and flush a fresh active key row."""
     key = GiftKey(
         code=code,
         days=days,
+        credits=credits,
         plan_id=plan_id,
         status="active",
         created_by_user_id=created_by_user_id,

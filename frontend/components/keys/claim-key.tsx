@@ -16,6 +16,7 @@ export interface ClaimResult {
   expires_at: string | null;
   plan_id: number | null;
   days_added: number;
+  credits_added: number;
 }
 
 export function ClaimKey({
@@ -49,7 +50,13 @@ export function ClaimKey({
       });
 
       setCode("");
-      setOk(`Key canjeada: +${result.days_added} días.`);
+      // Compose what the key granted — days, credits, or both.
+      const grants: string[] = [];
+
+      if (result.days_added > 0) grants.push(`+${result.days_added} días`);
+      if (result.credits_added > 0)
+        grants.push(`+${result.credits_added} créditos`);
+      setOk(`Key canjeada: ${grants.join(" y ") || "sin cambios"}.`);
       onClaimed?.(result);
     } catch (err) {
       setError(

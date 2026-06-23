@@ -20,10 +20,17 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_allow_expired, require_role
+from app.core.broadcaster import broadcaster
 from app.db.base import get_session
 from app.db.models import GiftKey, User
 from app.db.repos import gift_keys as gift_keys_repo
-from app.errors import forbidden, invalid_key_days, key_not_found
+from app.errors import (
+    empty_gift_key,
+    forbidden,
+    invalid_credits,
+    invalid_key_days,
+    key_not_found,
+)
 from app.services import gift_keys as gift_keys_service
 
 logger = logging.getLogger(__name__)
@@ -43,14 +50,17 @@ _PG_INT_MAX = 2**31 - 1  # gift_keys.id is int4
 
 
 class GenerateKeyRequest(BaseModel):
-    # The ONLY admin-chosen field — the tier is fixed to the default plan.
+    # The tier is fixed to the default plan; ``days`` and ``credits`` are the
+    # admin-chosen grants (gift-key-credits feature). At least one must be > 0.
     days: int
+    credits: int = 0
 
 
 class GiftKeyOut(BaseModel):
     id: int
     code: str
     days: int
+    credits: int
     plan_id: int
     plan_name: str
     status: str
@@ -71,10 +81,12 @@ class ClaimKeyRequest(BaseModel):
 class ClaimKeyResult(BaseModel):
     # The cockpit / expired page refresh /me off this; expires_at confirms the
     # extension and plan_id reflects a freshly-assigned basic tier (or the kept
-    # existing one).
+    # existing one). ``credits_added`` drives the success copy (gift-key-credits
+    # feature); the live balance arrives via the ``credits.updated`` WS event.
     expires_at: datetime | None
     plan_id: int | None
     days_added: int
+    credits_added: int
 
 
 def _key_to_out(
@@ -88,6 +100,7 @@ def _key_to_out(
         id=key.id,
         code=key.code,
         days=key.days,
+        credits=key.credits,
         plan_id=key.plan_id,
         plan_name=plan_name,
         status=key.status,
@@ -107,16 +120,24 @@ async def generate_key(
     actor: User = Depends(require_admin_or_owner),
     session: AsyncSession = Depends(get_session),
 ) -> GiftKeyOut:
-    """Mint a single-use key (days only; tier = the default plan).
+    """Mint a single-use key (days and/or credits; tier = the default plan).
 
-    Bad days → 400 ``invalid_key_days``; no active default plan configured →
-    409 ``no_default_plan``. The response carries the code so the admin can copy
-    it immediately.
+    Bad days → 400 ``invalid_key_days``; bad credits → 400 ``invalid_credits``;
+    both zero → 400 ``empty_gift_key``; no active default plan configured → 409
+    ``no_default_plan``. The response carries the code so the admin can copy it
+    immediately.
     """
-    if not 1 <= body.days <= KEY_DAYS_MAX:
+    if not 0 <= body.days <= KEY_DAYS_MAX:
         raise invalid_key_days()
+    if not 0 <= body.credits <= _PG_INT_MAX:
+        raise invalid_credits()
+    if body.days == 0 and body.credits == 0:
+        raise empty_gift_key()
     key, plan = await gift_keys_service.generate(
-        session, days=body.days, created_by_user_id=actor.id
+        session,
+        days=body.days,
+        credits=body.credits,
+        created_by_user_id=actor.id,
     )
     await session.commit()
     return _key_to_out(key, plan_name=plan.name, created_by_email=actor.email)
@@ -174,12 +195,21 @@ async def claim_key(
     """
     if user.role != "client":
         raise forbidden()
-    updated, days_added = await gift_keys_service.claim(
-        session, user_id=user.id, code=body.code.strip()
+    updated, days_added, credits_added, new_balance = (
+        await gift_keys_service.claim(
+            session, user_id=user.id, code=body.code.strip()
+        )
     )
     await session.commit()
+    # Live cockpit update when the key carried credits: push the new balance so
+    # a connected client sees it immediately (mirror admin.recharge_credits).
+    if credits_added > 0 and new_balance is not None:
+        await broadcaster.emit(
+            updated.tenant_id, "credits.updated", {"balance": new_balance}
+        )
     return ClaimKeyResult(
         expires_at=updated.expires_at,
         plan_id=updated.plan_id,
         days_added=days_added,
+        credits_added=credits_added,
     )

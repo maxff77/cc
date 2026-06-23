@@ -115,7 +115,9 @@ async def test_generate_key_snapshots_default_plan(ctx, plan_factory):
     assert all(len(p) == 4 for p in parts[1:])
 
 
-@pytest.mark.parametrize("days", [0, -5, 36501])
+# days==0 is now VALID (a credits-only key); only negative / over-max days are
+# invalid. The empty-key case (0 days + 0 credits) is its own error below.
+@pytest.mark.parametrize("days", [-5, 36501])
 async def test_generate_invalid_days(ctx, plan_factory, days):
     await plan_factory(default=True)
     admin: AsyncClient = ctx["admin_client"]
@@ -363,6 +365,131 @@ async def test_claim_tolerates_case_and_whitespace(ctx, plan_factory):
         messy = "  " + key["code"].lower().replace("-", "- ") + "  "
         res = await http.post("/api/keys/claim", json={"code": messy})
         assert res.status_code == 200, res.text
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+# --- Credits on keys (gift-key-credits feature) ---------------------------
+
+
+async def test_generate_credits_only_and_both(ctx, plan_factory):
+    pid = await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+
+    # Credits-only: days 0, credits 50 — still snapshots the default plan.
+    res = await admin.post("/api/admin/keys", json={"days": 0, "credits": 50})
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["days"] == 0 and body["credits"] == 50
+    assert body["plan_id"] == pid
+
+    # Days + credits together.
+    res = await admin.post("/api/admin/keys", json={"days": 30, "credits": 50})
+    assert res.status_code == 201, res.text
+    both = res.json()
+    assert both["days"] == 30 and both["credits"] == 50
+
+
+async def test_generate_empty_key_rejected(ctx, plan_factory):
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    res = await admin.post("/api/admin/keys", json={"days": 0, "credits": 0})
+    assert res.status_code == 400 and res.json()["code"] == "empty_gift_key"
+
+
+@pytest.mark.parametrize("credits", [-5, 2_147_483_648])
+async def test_generate_invalid_credits(ctx, plan_factory, credits):
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    res = await admin.post(
+        "/api/admin/keys", json={"days": 1, "credits": credits}
+    )
+    assert res.status_code == 400 and res.json()["code"] == "invalid_credits"
+
+
+async def test_claim_credits_only_active_client(ctx, plan_factory):
+    # Active client redeems a days-0 credits-50 key: plan + expiry untouched,
+    # balance rises by 50.
+    await plan_factory(default=True)
+    premium = await plan_factory()
+    admin: AsyncClient = ctx["admin_client"]
+    key = (
+        await admin.post("/api/admin/keys", json={"days": 0, "credits": 50})
+    ).json()
+
+    http, user = await _new_client(expires_in_days=5)
+    try:
+        async with async_session_factory() as s:
+            await s.execute(
+                update(User).where(User.id == user.id).values(plan_id=premium)
+            )
+            await s.execute(
+                update(Tenant)
+                .where(Tenant.id == user.tenant_id)
+                .values(credit_balance=10)
+            )
+            await s.commit()
+        before = user.expires_at
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["days_added"] == 0
+        assert body["credits_added"] == 50
+        assert body["plan_id"] == premium  # plan kept
+        # expiry NOT extended (no days added).
+        new_exp = datetime.fromisoformat(body["expires_at"])
+        assert new_exp < before + timedelta(hours=1)
+        assert await _balance(user.tenant_id) == 60  # 10 + 50
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_claim_days_and_credits_new_client(ctx, plan_factory):
+    # Plan-less client redeems a days-30 credits-50 key: gets the basic plan,
+    # +30d, AND +50 credits.
+    pid = await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    key = (
+        await admin.post("/api/admin/keys", json={"days": 30, "credits": 50})
+    ).json()
+
+    http, user = await _new_client(expires_in_days=1)  # plan_id NULL
+    try:
+        before = user.expires_at
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["plan_id"] == pid  # basic plan assigned
+        assert body["days_added"] == 30
+        assert body["credits_added"] == 50
+        new_exp = datetime.fromisoformat(body["expires_at"])
+        assert new_exp > before + timedelta(days=29)
+        assert await _balance(user.tenant_id) == 50
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_claim_credits_only_plan_less_no_access(ctx, plan_factory):
+    # Credits ≠ access: a credits-only key for a plan-less client adds credits
+    # but assigns NO plan and does NOT extend expiry.
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    key = (
+        await admin.post("/api/admin/keys", json={"days": 0, "credits": 25})
+    ).json()
+
+    http, user = await _new_client(expires_in_days=1)  # plan_id NULL
+    try:
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["plan_id"] is None  # NOT assigned
+        assert body["days_added"] == 0
+        assert body["credits_added"] == 25
+        assert await _balance(user.tenant_id) == 25
     finally:
         await http.aclose()
         await cleanup_users({user.email})

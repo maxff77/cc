@@ -972,6 +972,14 @@ class GiftKey(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     days: Mapped[int] = mapped_column()
+    # Credits the claimer's tenant gains on claim (gift-key-credits feature).
+    # Admin-chosen at mint (the deliberate relaxation of "admin never picks a
+    # value" — credits only). 0 ⇒ a days-only key. ``days==0 && credits>0`` is a
+    # credits-only key; a key must grant at least one of the two (validated at
+    # the route, not the DB). ADDED to ``tenants.credit_balance`` at claim.
+    credits: Mapped[int] = mapped_column(
+        server_default=text("0"), nullable=False
+    )
     plan_id: Mapped[int] = mapped_column(
         ForeignKey("plans.id", ondelete="RESTRICT"), index=True
     )

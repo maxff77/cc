@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import GiftKey, Plan, User
 from app.db.repos import gift_keys as gift_keys_repo
 from app.db.repos import plans as plans_repo
+from app.db.repos import tenants as tenants_repo
 from app.db.repos import users as users_repo
 from app.errors import (
     key_already_claimed,
@@ -36,13 +37,19 @@ _CODE_ATTEMPTS = 8
 
 
 async def generate(
-    session: AsyncSession, *, days: int, created_by_user_id: int
+    session: AsyncSession,
+    *,
+    days: int,
+    created_by_user_id: int,
+    credits: int = 0,
 ) -> tuple[GiftKey, Plan]:
     """Mint an active key snapshotting the default plan; returns ``(key, plan)``.
 
     The tier is the owner-designated default plan (``plans.is_default``), NOT an
-    admin choice. No ACTIVE default configured → ``no_default_plan``. ``days``
-    bounds are validated by the route before this runs.
+    admin choice. ``credits`` (admin-chosen, gift-key-credits feature) rides on
+    the key and is granted at claim. No ACTIVE default configured →
+    ``no_default_plan``. ``days``/``credits`` bounds are validated by the route
+    before this runs.
     """
     plan = await plans_repo.get_default(session)
     if plan is None or not plan.is_active:
@@ -62,6 +69,7 @@ async def generate(
                     session,
                     code=code,
                     days=days,
+                    credits=credits,
                     plan_id=plan.id,
                     created_by_user_id=created_by_user_id,
                 )
@@ -73,12 +81,15 @@ async def generate(
 
 async def claim(
     session: AsyncSession, *, user_id: int, code: str
-) -> tuple[User, int]:
-    """Redeem ``code`` for ``user_id``: +days, basic plan if plan-less, NO credits.
+) -> tuple[User, int, int, int | None]:
+    """Redeem ``code`` for ``user_id``: +days, basic plan if plan-less, +credits.
 
     Locks the user row AND the key row (``FOR UPDATE``) so concurrent claims of
     the same key serialize — exactly one wins; the rest see a non-active status.
-    Returns ``(user, days_added)``; caller commits.
+    Days/plan only apply when ``key.days > 0``; credits (gift-key-credits
+    feature) are added when ``key.credits > 0``. Returns
+    ``(user, days_added, credits_added, new_balance)`` (``new_balance`` is
+    ``None`` when no credits were granted); caller commits.
     """
     # Tolerate manual entry: drop ALL whitespace and match case-insensitively
     # (the copy button preserves case, but a typed code may lowercase or split).
@@ -97,16 +108,31 @@ async def claim(
         raise key_revoked()
     if key.status != "active":
         raise key_already_claimed()
+    # Days/plan only when the key grants days. A credits-only key (days==0)
+    # must never assign a plan (it would expire instantly) nor rewind expiry.
     # Assign the basic plan ONLY to a plan-less client; an existing client keeps
-    # their tier and only gains days. Never grant credits — keys are time-only.
-    if user.plan_id is None:
-        user.plan_id = key.plan_id
-    user.expires_at = plans_service.compute_renewed_expiry(
-        user.expires_at, key.days
-    )
+    # their tier and only gains days.
+    if key.days > 0:
+        if user.plan_id is None:
+            user.plan_id = key.plan_id
+        user.expires_at = plans_service.compute_renewed_expiry(
+            user.expires_at, key.days
+        )
+    # Credits ride the existing money path (row-locked add) inside this same
+    # claim transaction, so the single-use key lock grants them exactly once.
+    new_balance: int | None = None
+    credits_added = 0
+    if key.credits > 0:
+        new_balance = await tenants_repo.add_credits(
+            session, user.tenant_id, key.credits
+        )
+        # add_credits returns None only if the tenant row vanished (defensive);
+        # report what was ACTUALLY granted, not the key's nominal value.
+        if new_balance is not None:
+            credits_added = key.credits
     await gift_keys_repo.mark_claimed(session, key, claimed_by_user_id=user.id)
     await session.flush()
-    return user, key.days
+    return user, key.days, credits_added, new_balance
 
 
 async def revoke(

@@ -27,6 +27,7 @@ interface GiftKeyOut {
   id: number;
   code: string;
   days: number;
+  credits: number;
   plan_id: number;
   plan_name: string;
   status: string; // 'active' | 'claimed' | 'revoked'
@@ -47,6 +48,7 @@ interface Me {
 const KEYS_KEY = ["admin-keys"] as const;
 const ME_KEY = ["me"] as const;
 const KEY_DAYS_MAX = 36500;
+const CREDITS_MAX = 2_147_483_647; // int4 ceiling, mirrors the backend bound
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("es", {
@@ -54,6 +56,16 @@ function formatDate(iso: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+// What a key grants — days, credits, or both (gift-key-credits feature).
+function grantLabel(key: Pick<GiftKeyOut, "days" | "credits">): string {
+  const parts: string[] = [];
+
+  if (key.days > 0) parts.push(`${key.days} d`);
+  if (key.credits > 0) parts.push(`${key.credits} cr`);
+
+  return parts.join(" · ") || "0 d";
 }
 
 const STATUS_TONE: Record<string, "success" | "muted" | "danger"> = {
@@ -130,7 +142,7 @@ export default function AdminKeysPage() {
                         </StatePill>
                       </div>
                       <span className="font-mono text-[11px] text-muted tabular-nums">
-                        {key.days} d · {key.plan_name} · creó{" "}
+                        {grantLabel(key)} · {key.plan_name} · creó{" "}
                         {key.created_by_email ?? "—"}
                       </span>
                       <span className="font-mono text-[11px] text-[var(--faint)] tabular-nums">
@@ -157,18 +169,27 @@ export default function AdminKeysPage() {
 
 function GenerateKeyForm({ onCreated }: { onCreated: () => void }) {
   const [days, setDays] = useState("");
+  const [credits, setCredits] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [created, setCreated] = useState<GiftKeyOut | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Empty inputs mean 0 — a key may grant days, credits, or both.
+  const daysNum = days.trim() === "" ? 0 : Number(days);
+  const creditsNum = credits.trim() === "" ? 0 : Number(credits);
+
   const mutation = useMutation({
     mutationFn: () =>
-      api.post<GiftKeyOut>("/api/admin/keys", { days: Number(days) }),
+      api.post<GiftKeyOut>("/api/admin/keys", {
+        days: daysNum,
+        credits: creditsNum,
+      }),
     onSuccess: (key) => {
       setCreated(key);
       setCopied(false);
       setDays("");
+      setCredits("");
       onCreated();
     },
     onError: (err) => {
@@ -191,13 +212,25 @@ function GenerateKeyForm({ onCreated }: { onCreated: () => void }) {
     if (mutation.isPending) return;
     setBanner(null);
     setFieldError(null);
-    // Mirror the backend bound (1 .. KEY_DAYS_MAX) so a bad value is inline.
-    if (
-      !/^\d+$/.test(days.trim()) ||
-      Number(days) < 1 ||
-      Number(days) > KEY_DAYS_MAX
-    ) {
-      setFieldError("Indica los días (entero ≥ 1).");
+    // Mirror the backend bounds: days 0..KEY_DAYS_MAX, credits 0..CREDITS_MAX,
+    // and a key must grant at least one (days OR credits > 0).
+    if (days.trim() !== "" && !/^\d+$/.test(days.trim())) {
+      setFieldError("Días: entero ≥ 0.");
+
+      return;
+    }
+    if (credits.trim() !== "" && !/^\d+$/.test(credits.trim())) {
+      setFieldError("Créditos: entero ≥ 0.");
+
+      return;
+    }
+    if (daysNum > KEY_DAYS_MAX || creditsNum > CREDITS_MAX) {
+      setFieldError("Valor demasiado alto.");
+
+      return;
+    }
+    if (daysNum === 0 && creditsNum === 0) {
+      setFieldError("Indica días o créditos (al menos uno).");
 
       return;
     }
@@ -225,7 +258,7 @@ function GenerateKeyForm({ onCreated }: { onCreated: () => void }) {
           <Notice status="success">
             <div className="flex flex-col gap-2">
               <span>
-                Key generada · +{created.days} días · plan {created.plan_name}
+                Key generada · {grantLabel(created)} · plan {created.plan_name}
               </span>
               <div className="flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded-[var(--radius-sm)] bg-surface-tertiary px-2 py-1 font-mono text-sm">
@@ -241,7 +274,6 @@ function GenerateKeyForm({ onCreated }: { onCreated: () => void }) {
 
         <form className="flex flex-col gap-3" onSubmit={onSubmit}>
           <Field
-            required
             error={fieldError}
             label="Días"
             name="days"
@@ -253,9 +285,20 @@ function GenerateKeyForm({ onCreated }: { onCreated: () => void }) {
               if (fieldError) setFieldError(null);
             }}
           />
+          <Field
+            label="Créditos"
+            name="credits"
+            placeholder="0"
+            type="number"
+            value={credits}
+            onChange={(v) => {
+              setCredits(v);
+              if (fieldError) setFieldError(null);
+            }}
+          />
           <p className="text-[11px] text-muted">
-            El plan (tier) lo fija el owner en Planes. Las keys solo dan días,
-            sin créditos.
+            El plan (tier) lo fija el owner en Planes. Indica días, créditos o
+            ambos (al menos uno). Días 0 con créditos = key solo de créditos.
           </p>
           <Btn
             full

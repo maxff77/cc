@@ -68,10 +68,16 @@ export default function ExpiredPage() {
       <ContactPanel message={MESSAGE} />
       {/* Self-activation: redeem a gift key right here. The claim endpoint
           bypasses the expiry gate, so a just-registered / lapsed client CAN
-          claim despite being locked out — on success we send them into the
-          app (the plan is now active). */}
+          claim despite being locked out. Only a key that grants DAYS restores
+          access — send them into the app then. A credits-only key (days_added
+          == 0) adds balance but NOT access, so we stay put and let ClaimKey's
+          own success notice show; redirecting would just bounce back here. */}
       <div className="mt-5 border-t border-border pt-5">
-        <ClaimKey onClaimed={() => window.location.replace("/app")} />
+        <ClaimKey
+          onClaimed={(r) => {
+            if (r.days_added > 0) window.location.replace("/app");
+          }}
+        />
       </div>
       <Btn
         className="mt-4"
