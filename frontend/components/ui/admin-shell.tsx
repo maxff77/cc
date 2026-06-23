@@ -27,6 +27,7 @@ const ITEMS = [
   { href: "/admin/plans", label: "Planes", ownerOnly: true },
   { href: "/admin/gates", label: "Gateways", ownerOnly: true },
   { href: "/admin/destinos", label: "Destinos", ownerOnly: true },
+  { href: "/admin/monitor", label: "Monitoreo", ownerOnly: true },
 ] as const;
 
 export function AdminShell({

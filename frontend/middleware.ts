@@ -175,6 +175,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/admin/users", request.url));
   }
 
+  // /admin/monitor is owner-only (observability panel exposes cross-tenant
+  // volumes): same gate as the catalogs above. Admins → /admin/users.
+  const isMonitorPath =
+    request.nextUrl.pathname === "/admin/monitor" ||
+    request.nextUrl.pathname.startsWith("/admin/monitor/");
+
+  if (isMonitorPath && me.role !== "owner") {
+    return NextResponse.redirect(new URL("/admin/users", request.url));
+  }
+
   return NextResponse.next();
 }
 

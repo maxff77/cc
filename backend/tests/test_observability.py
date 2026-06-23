@@ -308,10 +308,21 @@ async def test_observability_reports_every_slice(
     assert res.status_code == 200
     body = res.json()
 
-    # Per-tenant sends: the FRESH tenant has exactly its one delivery
-    # (the global counter is process-lifetime — never asserted exactly).
-    assert body["sent_by_tenant"][str(user.tenant_id)] == 1
+    # Per-tenant sends: the FRESH tenant has exactly its one delivery, live AND
+    # durable (the live global counter is process-lifetime — never asserted
+    # exactly; the durable totals span the shared DB so use >=).
+    row = next(t for t in body["tenants"] if t["tenant_id"] == user.tenant_id)
+    assert row["sent_live"] == 1
+    assert row["sent_today"] == 1
+    assert row["sent_24h"] == 1
+    assert row["name"]  # human label always present (falls back to "Tenant <id>")
     assert body["sent_total"] >= 1
+    assert body["sent_today_total"] >= 1
+    assert body["sent_24h_total"] >= 1
+
+    # Telegram connection slice (estado del bot, beyond the watchdog latch).
+    assert set(body["telegram"]) == {"authorized", "ready", "targets_resolved"}
+    assert isinstance(body["telegram"]["targets_resolved"], int)
 
     assert body["flood"]["events_total"] == 2
     assert body["flood"]["governor_raises"] == 2
@@ -326,6 +337,28 @@ async def test_observability_reports_every_slice(
     assert body["watchdog"]["paused"] is True
     assert body["watchdog"]["reason"] == REASON_SESSION_LOST
     assert body["watchdog"]["paused_at"] is not None
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_observability_live_only_tenant_appears(
+    ctx: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tenant in the live process counter but with NO send_log rows in the
+    window (e.g. sent this session, nothing delivered to DB in 24h) still shows
+    up — live count present, durable counts 0, label falls back to ``Tenant N``."""
+    ghost_id = 99_000_000  # no such tenant row → no DB rows, no label
+    monkeypatch.setattr(send_worker, "sent_by_tenant", lambda: {ghost_id: 7})
+
+    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
+    res = await owner_client.get("/api/observability")
+    assert res.status_code == 200
+    row = next(t for t in res.json()["tenants"] if t["tenant_id"] == ghost_id)
+    assert row["sent_live"] == 7
+    assert row["sent_today"] == 0
+    assert row["sent_24h"] == 0
+    assert row["name"] == f"Tenant {ghost_id}"
+    assert row["email"] is None
 
 
 # --- Admission queue depth (AC 2) -------------------------------------------------

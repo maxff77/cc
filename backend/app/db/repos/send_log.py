@@ -227,6 +227,32 @@ async def sent_count_for_session(
     return (await session.execute(stmt)).scalar_one()
 
 
+async def sent_counts_by_window(
+    session: AsyncSession, *, today_start: datetime, day_ago: datetime
+) -> dict[int, tuple[int, int]]:
+    """Per-tenant DELIVERED send counts (``message_id`` filled) for the owner
+    monitoring panel: ``{tenant_id: (sent_today, sent_24h)}``.
+
+    Two windows in one grouped pass — since local midnight (``today_start``) and
+    the rolling 24h (``day_ago``). Bounds the scan on ``day_ago`` (the wider of
+    the two, since ``day_ago <= today_start`` always), so only tenants active in
+    the last 24h appear; the today count is a FILTERed subset. DELIVERED only
+    (``message_id IS NOT NULL``) to mirror the live counter, which increments
+    post-send. Survives restarts (the process counter does not).
+    """
+    stmt = (
+        select(
+            SendLog.tenant_id,
+            func.count().filter(SendLog.created_at >= today_start),
+            func.count(),
+        )
+        .where(SendLog.message_id.is_not(None), SendLog.created_at >= day_ago)
+        .group_by(SendLog.tenant_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {tid: (today, h24) for tid, today, h24 in rows}
+
+
 async def awaiting_count_for_session(
     session: AsyncSession, capture_session_id: int, *, within: datetime
 ) -> int:

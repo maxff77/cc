@@ -14,7 +14,40 @@ Pure ORM, flush not commit — callers own the transaction.
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Tenant
+from app.db.models import Tenant, User
+
+
+async def labels(
+    session: AsyncSession, tenant_ids: list[int]
+) -> dict[int, tuple[str, str | None]]:
+    """Map ``tenant_id → (name, client_email)`` for the owner monitoring panel.
+
+    ``name`` is the tenant's display name; ``client_email`` is any user with
+    ``role='client'`` on that tenant (the human behind the volume), the lowest
+    user id wins, or ``None`` when the tenant has no client user. Two queries
+    (names, then emails). Missing ids are simply absent from the map.
+    """
+    if not tenant_ids:
+        return {}
+    names = {
+        tid: name
+        for tid, name in (
+            await session.execute(
+                select(Tenant.id, Tenant.name).where(Tenant.id.in_(tenant_ids))
+            )
+        ).all()
+    }
+    emails: dict[int, str] = {}
+    rows = (
+        await session.execute(
+            select(User.tenant_id, User.email)
+            .where(User.tenant_id.in_(tenant_ids), User.role == "client")
+            .order_by(User.id)
+        )
+    ).all()
+    for tid, email in rows:
+        emails.setdefault(tid, email)  # first (lowest-id) client per tenant
+    return {tid: (name, emails.get(tid)) for tid, name in names.items()}
 
 
 async def get_credit_balance(session: AsyncSession, tenant_id: int) -> int:
