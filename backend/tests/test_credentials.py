@@ -53,11 +53,11 @@ async def client_b() -> AsyncIterator[AsyncClient]:
     await cleanup_users({user.email})
 
 
-# --- Store → list (password never returned) ---------------------------------
+# --- Store → list (password IS returned, by owner request) ------------------
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_store_then_list_omits_password(client_a: AsyncClient) -> None:
+async def test_store_then_list_returns_password(client_a: AsyncClient) -> None:
     res = await client_a.post(
         "/api/credentials",
         json={"email": "saved@example.com", "password": "secreto123"},
@@ -66,13 +66,13 @@ async def test_store_then_list_omits_password(client_a: AsyncClient) -> None:
     body = res.json()
     assert body["email"] == "saved@example.com"
     assert body["used"] is False
-    assert "password" not in body
+    assert body["password"] == "secreto123"
 
     listed = await client_a.get("/api/credentials")
     assert listed.status_code == 200, listed.text
-    rows = listed.json()
-    assert any(r["id"] == body["id"] for r in rows)
-    assert all("password" not in r for r in rows)
+    assert listed.headers["cache-control"] == "no-store"
+    row = next(r for r in listed.json() if r["id"] == body["id"])
+    assert row["password"] == "secreto123"
 
 
 # --- Email validation -------------------------------------------------------

@@ -3,9 +3,10 @@ its own email+password entries.
 
 🔒 Security contract (mirrors the cookie-vault precedent):
 - ``tenant_id`` comes ONLY from the session — never from body/path.
-- ``password`` is stored PLAINTEXT (CC / gate_cookies precedent) but NEVER
-  echoed to a client (``CredentialOut`` has no ``password`` field) and never
-  logged.
+- ``password`` is stored PLAINTEXT (CC / gate_cookies precedent) and, by owner
+  request, IS now echoed back in ``CredentialOut`` (POST 201 + GET list) so the
+  tenant can retrieve its saved passwords. GET stays ``no-store``. (It was
+  previously omitted; deliberately reversed.)
 - Validation is raised as ``invalid_credential`` (400) INSIDE the handler, not
   via a pydantic validator on the password, so the secret can't surface in a
   default 422 body or an access log.
@@ -45,16 +46,19 @@ class CreateCredentialRequest(BaseModel):
 
 
 class CredentialOut(BaseModel):
-    """Client-visible entry — deliberately WITHOUT ``password``."""
+    """Client-visible entry — includes ``password`` (plaintext, by owner request)."""
 
     id: int
     email: str
+    password: str
     used: bool
     created_at: datetime
 
 
 def _to_out(c: Credential) -> CredentialOut:
-    return CredentialOut(id=c.id, email=c.email, used=c.used, created_at=c.created_at)
+    return CredentialOut(
+        id=c.id, email=c.email, password=c.password, used=c.used, created_at=c.created_at
+    )
 
 
 @router.post("", response_model=CredentialOut, status_code=201)
@@ -87,7 +91,7 @@ async def list_credentials(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[CredentialOut]:
-    """List the tenant's own entries, newest first (passwords omitted)."""
+    """List the tenant's own entries, newest first (includes passwords; no-store)."""
     response.headers["Cache-Control"] = "no-store"
     rows = (
         await session.execute(
