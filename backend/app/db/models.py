@@ -762,25 +762,24 @@ class Response(Base):
 
 
 class Credential(Base):
-    """A tenant's own stored email+password entry (personal credential vault).
+    """A stored email+password entry (personal credential vault).
 
-    TENANT-SCOPED — like ``gate_cookies``, every row belongs to exactly one
-    tenant; ``tenant_id`` always comes from the session at the route, never from
-    body/path. A client stores and lists only their own.
+    GLOBAL — one flat table, NO tenant scoping (owner decision 2026-06-23): a
+    single operator owns the whole vault behind the shared ``X-Api-Key``. It was
+    tenant-scoped at first; ``tenant_id`` was dropped in migration
+    ``b3f1a7c9d2e4``, which also re-exposed the pre-refactor rows once stranded
+    under the caller's real tenant.
 
     🔒 ``password`` holds the credential PLAINTEXT in Postgres — the deliberate
-    CC / ``gate_cookies`` precedent (access-control + TLS at rest). It is NEVER
-    echoed back to a client (the list endpoint omits it) and never logged.
-    No uniqueness on ``(tenant_id, email)``: the same email may be stored more
-    than once on purpose (re-saves / different passwords).
+    CC / ``gate_cookies`` precedent (access-control + TLS at rest). It is echoed
+    back ONLY to the key holder and never logged. No uniqueness on ``email``: the
+    same email may be stored more than once on purpose (re-saves / different
+    passwords).
     """
 
     __tablename__ = "credentials"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(
-        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
-    )
     email: Mapped[str] = mapped_column(String(320))
     # ponytail: plaintext vault (gate_cookies precedent). Hash only if these ever
     # become auth credentials rather than stored secrets to read back.

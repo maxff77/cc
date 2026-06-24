@@ -1,7 +1,7 @@
 """Integration tests for the credential vault (``/api/credentials``).
 
-Auth is the single shared API key (``X-Api-Key``); there is no session here. All
-rows live under one dedicated vault tenant, so these tests share state — the
+Auth is the single shared API key (``X-Api-Key``); there is no session here. The
+vault is ONE global table (no tenant scoping), so these tests share state — the
 ``vault`` fixture wipes the vault before AND after each test to stay isolated.
 
 Locks the invariants:

@@ -1,10 +1,15 @@
-"""Credentials router (personal credential vault): store, list, pick-random and
+"""Credentials router (personal credential vault): store, list, pick-oldest and
 delete email+password entries.
+
+GLOBAL single vault (owner decision 2026-06-23): there is NO tenant scoping —
+every row lives in one flat ``credentials`` table, because a single operator owns
+the whole vault behind the shared key. (It was tenant-scoped at first; the column
+was dropped in migration ``b3f1a7c9d2e4``, which also re-exposed the pre-refactor
+rows once stranded under the caller's real tenant.)
 
 Auth is a SINGLE shared API key (owner choice): every endpoint requires the
 header ``X-Api-Key`` matching ``settings.credentials_api_key``. There is no
-session/login here. All rows live under one dedicated "vault" tenant resolved by
-``_vault_tenant_id`` — this vault is single-user by design.
+session/login here.
 
 🔒 Security contract:
 - The key is compared in constant time; a missing/wrong key is a generic 401
@@ -28,8 +33,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.base import async_session_factory, get_session
-from app.db.models import Credential, Tenant
+from app.db.base import get_session
+from app.db.models import Credential
 from app.errors import (
     api_key_not_configured,
     credential_not_found,
@@ -47,41 +52,10 @@ _PG_INT_MAX = 2**31 - 1  # ids son int4; binds mayores desbordan asyncpg
 # valida in-handler como el resto, para no filtrar el valor en un 422.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# El vault es de una sola "cuenta" lógica (key global) — todas las filas cuelgan
-# de este tenant dedicado, creado on-demand la primera vez.
-_VAULT_TENANT_NAME = "api-key-vault"
-_vault_tenant_id_cache: int | None = None
 
-
-async def _vault_tenant_id() -> int:
-    """Resuelve (get-or-create) el tenant del vault y cachea su id.
-
-    ponytail: get-or-create simple en su propia transacción; si dos requests
-    cruzan la primera creación podrían nacer dos tenants "api-key-vault" — vault
-    de un solo usuario, riesgo nulo en la práctica. Añadir UNIQUE(name) si algún
-    día importa.
-    """
-    global _vault_tenant_id_cache
-    if _vault_tenant_id_cache is not None:
-        return _vault_tenant_id_cache
-    async with async_session_factory() as db:
-        tid = (
-            await db.execute(
-                select(Tenant.id).where(Tenant.name == _VAULT_TENANT_NAME)
-            )
-        ).scalar_one_or_none()
-        if tid is None:
-            tenant = Tenant(name=_VAULT_TENANT_NAME)
-            db.add(tenant)
-            await db.flush()
-            tid = tenant.id
-            await db.commit()
-    _vault_tenant_id_cache = tid
-    return tid
-
-
-async def require_api_key(request: Request) -> int:
-    """Dependency: validate ``X-Api-Key`` and return the vault tenant id.
+async def require_api_key(request: Request) -> None:
+    """Dependency: validate ``X-Api-Key``. Pure gate — the vault is global, so it
+    returns nothing.
 
     No key configured → 503; missing/wrong key → 401 (constant-time compare).
     """
@@ -91,7 +65,6 @@ async def require_api_key(request: Request) -> int:
     provided = request.headers.get("X-Api-Key")
     if not provided or not secrets.compare_digest(provided, expected):
         raise invalid_api_key()
-    return await _vault_tenant_id()
 
 
 class CreateCredentialRequest(BaseModel):
@@ -120,7 +93,7 @@ def _to_out(c: Credential) -> CredentialOut:
 @router.post("", response_model=CredentialOut, status_code=201)
 async def store_credential(
     body: CreateCredentialRequest,
-    tenant_id: int = Depends(require_api_key),
+    _: None = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> CredentialOut:
     """Store one email+password entry."""
@@ -134,7 +107,7 @@ async def store_credential(
         or len(password) > _PASSWORD_MAX
     ):
         raise invalid_credential()
-    cred = Credential(tenant_id=tenant_id, email=email, password=password)
+    cred = Credential(email=email, password=password)
     session.add(cred)
     await session.flush()
     await session.commit()
@@ -144,17 +117,14 @@ async def store_credential(
 @router.get("", response_model=list[CredentialOut])
 async def list_credentials(
     response: Response,
-    tenant_id: int = Depends(require_api_key),
+    _: None = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> list[CredentialOut]:
     """List every entry, OLDEST first (includes passwords; no-store)."""
     response.headers["Cache-Control"] = "no-store"
     rows = (
         await session.execute(
-            select(Credential)
-            .where(Credential.tenant_id == tenant_id)
-            .order_by(Credential.id.asc())
-            .limit(_LIST_LIMIT)
+            select(Credential).order_by(Credential.id.asc()).limit(_LIST_LIMIT)
         )
     ).scalars().all()
     return [_to_out(c) for c in rows]
@@ -163,22 +133,19 @@ async def list_credentials(
 @router.get("/oldest", response_model=CredentialOut)
 async def oldest_credential(
     response: Response,
-    tenant_id: int = Depends(require_api_key),
+    _: None = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> CredentialOut:
     """Return the OLDEST entry (id, email, password) — FIFO. Empty vault → 404.
 
-    ``id`` is the monotonic serial PK, so ``id ASC`` is creation order (the same
-    tie-immune ordering the Limpiar cutoff relies on). The holder can delete it
-    by its id afterward and the next call returns the following one.
+    ``id`` is the monotonic serial PK, so ``id ASC`` is creation order. The
+    holder can delete it by its id afterward and the next call returns the
+    following one.
     """
     response.headers["Cache-Control"] = "no-store"
     cred = (
         await session.execute(
-            select(Credential)
-            .where(Credential.tenant_id == tenant_id)
-            .order_by(Credential.id.asc())
-            .limit(1)
+            select(Credential).order_by(Credential.id.asc()).limit(1)
         )
     ).scalar_one_or_none()
     if cred is None:
@@ -189,7 +156,7 @@ async def oldest_credential(
 @router.delete("/by-email", status_code=204)
 async def delete_by_email(
     email: str,
-    tenant_id: int = Depends(require_api_key),
+    _: None = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete every entry whose email matches ``email`` (query param).
@@ -197,10 +164,7 @@ async def delete_by_email(
     No match (incl. empty/garbage email) → 404 ``credential_not_found``.
     """
     result = await session.execute(
-        delete(Credential).where(
-            Credential.tenant_id == tenant_id,
-            Credential.email == email.strip(),
-        )
+        delete(Credential).where(Credential.email == email.strip())
     )
     if (getattr(result, "rowcount", 0) or 0) == 0:
         raise credential_not_found()
@@ -210,17 +174,14 @@ async def delete_by_email(
 @router.delete("/{credential_id}", status_code=204)
 async def delete_credential(
     credential_id: int,
-    tenant_id: int = Depends(require_api_key),
+    _: None = Depends(require_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete one entry by id. Unknown / oversized id → 404 (no existence leak)."""
     if not 0 < credential_id <= _PG_INT_MAX:
         raise credential_not_found()
     result = await session.execute(
-        delete(Credential).where(
-            Credential.tenant_id == tenant_id,
-            Credential.id == credential_id,
-        )
+        delete(Credential).where(Credential.id == credential_id)
     )
     if (getattr(result, "rowcount", 0) or 0) == 0:
         raise credential_not_found()
