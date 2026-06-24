@@ -526,6 +526,25 @@ def key_not_found() -> AppError:
     )
 
 
+def api_key_not_configured() -> AppError:
+    # The server has no CREDENTIALS_API_KEY set, so the vault is closed. 503 —
+    # it's a server-config gap, not a client error.
+    return AppError(
+        status_code=503,
+        code="api_key_not_configured",
+        message="El acceso por API key no está configurado en el servidor.",
+    )
+
+
+def invalid_api_key() -> AppError:
+    # Missing or wrong X-Api-Key header. Generic 401 — never says which.
+    return AppError(
+        status_code=401,
+        code="invalid_api_key",
+        message="API key inválida o ausente.",
+    )
+
+
 def credential_not_found() -> AppError:
     # id desconocido / de otro tenant / oversized → 404 idéntico (value-free,
     # no filtra existencia ni el id).

@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     # SEND_INTERVAL_SECONDS in a VPS .env is harmless (extra="ignore").
     scheduler_g_min_seconds: float = 4.0
 
+    # --- Credential vault API key ----------------------------------------
+    # Single shared key for the /api/credentials endpoints (header X-Api-Key).
+    # When unset (default) those endpoints answer 503 api_key_not_configured —
+    # the vault is closed until an operator puts a strong key in the prod .env
+    # (CREDENTIALS_API_KEY=...) and restarts cc-core. Never committed.
+    credentials_api_key: str | None = None
+
     @property
     def session_ttl_seconds(self) -> int:
         """Session TTL expressed in seconds (cookie max-age)."""
