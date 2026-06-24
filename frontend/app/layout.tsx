@@ -4,6 +4,8 @@ import clsx from "clsx";
 
 import { Providers } from "./providers";
 
+import { VersionBadge } from "@/components/ui/version-badge";
+
 import { siteConfig } from "@/config/site";
 import { fontDisplay, fontMono, fontSans } from "@/config/fonts";
 
@@ -53,6 +55,7 @@ export default function RootLayout({
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>
           {children}
+          <VersionBadge />
         </Providers>
       </body>
     </html>
