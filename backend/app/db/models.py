@@ -309,8 +309,10 @@ class GateCookie(Base):
     # dedup key. Computed by the router (the repo stays dumb), so the same bytes
     # the validator saw key the index.
     value_hash: Mapped[str] = mapped_column(String(64))
-    # Optional client-authored label shown next to the masked value.
-    label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Optional client-authored label shown next to the masked value. Unbounded
+    # (Text): no length cap — it is display-only, never indexed (the dedup btree
+    # keys on ``value_hash``, not this), so a long label costs nothing.
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Reserved for Phase-2 rotation — ``'active'`` on every row, no reader yet.
     status: Mapped[str] = mapped_column(
         String(10), server_default=text("'active'"), nullable=False
