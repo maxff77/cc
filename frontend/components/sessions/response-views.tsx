@@ -361,10 +361,12 @@ interface ResponseViewsProps {
   exportPathFiltradaCompleta?: string;
   exportPathFiltrada?: string;
   // Cockpit-only (PR-1 "Limpiar literal"): present ⇒ render the "Limpiar"
-  // button in the Completa footer, which opens a confirm that clears ALL THREE
-  // live panels at once via a non-destructive per-session view cutoff in the
-  // backend (zero `responses` rows deleted). `clearDisabled` greys it out when
-  // ALL panels are already empty. Absent in Historial/admin ⇒ no button.
+  // button — in the Completa footer on desktop (ResponseColumns), above the tab
+  // strip on mobile (ResponseTabs) so it stays reachable from every tab. Opens a
+  // confirm that clears ALL THREE live panels at once via a non-destructive
+  // per-session view cutoff in the backend (zero `responses` rows deleted).
+  // `clearDisabled` greys it out when ALL panels are already empty. Absent in
+  // Historial/admin ⇒ no button.
   onClear?: () => void;
   clearDisabled?: boolean;
   className?: string;
@@ -477,6 +479,14 @@ export function ResponseTabs({
 
   return (
     <div className={className}>
+      {/* Limpiar lives ABOVE the tabs so it is always reachable — it clears all
+          three panels at once, so burying it inside the Completa tab hid it from
+          operators watching Aprobadas/Datos CC. */}
+      {onClear && (
+        <div className="mb-2 flex justify-end">
+          <ClearButton disabled={clearDisabled ?? false} onClick={onClear} />
+        </div>
+      )}
       <div className="flex gap-1 rounded-[var(--radius-field)] border border-border bg-surface-secondary p-1">
         {TABS.map((t) => (
           <button
@@ -499,13 +509,11 @@ export function ResponseTabs({
       <div className="mt-3">
         {tab === "completa" && (
           <CompletaPanel
-            clearDisabled={clearDisabled}
             exportPath={exportPathCompleta}
             header={false}
             listClassName={TAB_LIST}
             responses={responses}
             total={responsesTotal}
-            onClear={onClear}
           />
         )}
         {tab === "con-response" && (
