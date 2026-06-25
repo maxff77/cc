@@ -35,7 +35,6 @@ async def create(
     gate_id: int,
     value: str,
     value_hash: str,
-    label: str | None,
 ) -> GateCookie:
     """Insert and flush a fresh cookie (store-first dedup).
 
@@ -50,7 +49,6 @@ async def create(
         gate_id=gate_id,
         value=value,
         value_hash=value_hash,
-        label=label,
     )
     session.add(cookie)
     await session.flush()

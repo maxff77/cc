@@ -91,7 +91,6 @@ class CreateCookieRequest(BaseModel):
     # into a default 422 body.
     gate_id: int
     value: str
-    label: str | None = None
 
 
 class CookieOut(BaseModel):
@@ -102,7 +101,6 @@ class CookieOut(BaseModel):
     """
 
     id: int
-    label: str | None
     masked_value: str
     status: str
     created_at: datetime
@@ -133,7 +131,6 @@ def _cookie_to_out(cookie: GateCookie) -> CookieOut:
     serialized as-is — the single mapper guarantees no endpoint leaks it."""
     return CookieOut(
         id=cookie.id,
-        label=cookie.label,
         masked_value=_mask(cookie.value),
         status=cookie.status,
         created_at=cookie.created_at,
@@ -220,7 +217,6 @@ async def store_cookie(
             gate_id=body.gate_id,
             value=canonical,
             value_hash=value_hash,
-            label=body.label,
         )
         # Cap AFTER the store-first insert: the flushed row is counted, so the
         # cap gates only a genuinely-new DISTINCT value. An idempotent re-POST

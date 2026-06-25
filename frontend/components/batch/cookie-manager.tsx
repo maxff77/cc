@@ -35,7 +35,6 @@ export function CookieManager({ gateId }: { gateId: number }) {
   const add = useAddCookie(gateId);
 
   const [value, setValue] = useState("");
-  const [label, setLabel] = useState("");
   const [valueError, setValueError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -77,13 +76,12 @@ export function CookieManager({ gateId }: { gateId: number }) {
     }
 
     add.mutate(
-      { value, label: label.trim() || null },
+      { value },
       {
         onSuccess: () => {
           // Clear the secret from the field the moment it lands; the masked row
           // is the only thing that comes back.
           setValue("");
-          setLabel("");
           // Confirm the store (also covers the idempotent re-POST, which the
           // backend dedups to the same row). Clears on the next submit.
           setOkMsg("Cookie guardada correctamente.");
@@ -154,14 +152,6 @@ export function CookieManager({ gateId }: { gateId: number }) {
             }}
           />
         </div>
-
-        <Field
-          label="Etiqueta (opcional)"
-          name="cookie-label"
-          placeholder="p. ej. cuenta principal"
-          value={label}
-          onChange={setLabel}
-        />
 
         <Btn
           full
@@ -251,9 +241,6 @@ function CookieRow({
   return (
     <li className="flex flex-wrap items-center gap-3 py-2.5">
       <div className="flex min-w-0 flex-[1_1_9rem] flex-col gap-1">
-        {cookie.label && (
-          <span className="truncate text-sm font-semibold">{cookie.label}</span>
-        )}
         {/* Only ever the masked value — the raw credential never reaches here. */}
         <MonoChip className="self-start text-foreground">
           {cookie.masked_value}

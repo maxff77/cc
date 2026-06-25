@@ -142,14 +142,14 @@ async def test_store_then_list_masks_value_and_never_returns_raw(
     raw = "session-token-abcdef0123456789"
     res = await client_a.post(
         "/api/cookies",
-        json={"gate_id": cookie_gate["id"], "value": raw, "label": "main"},
+        json={"gate_id": cookie_gate["id"], "value": raw},
     )
     assert res.status_code == 201, res.text
     out = res.json()
     # The store response is the masked CookieOut — no raw value, no value_hash.
     assert "value" not in out
     assert "value_hash" not in out
-    assert out["label"] == "main"
+    assert "label" not in out
     assert out["status"] == "active"
     assert out["id"] > 0
     # Length-safe mask: first two + fixed dots + last two; never the whole secret.

@@ -45,11 +45,10 @@ export function useAddCookie(gateId: number) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: { value: string; label?: string | null }) =>
+    mutationFn: (payload: { value: string }) =>
       api.post<CookieOut>("/api/cookies", {
         gate_id: gateId,
         value: payload.value,
-        label: payload.label ?? null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: cookiesKey(gateId) });

@@ -49,7 +49,6 @@ export interface PublicPlansResponse {
 // `CookieOut`.
 export interface CookieOut {
     id: number;
-    label: string | null;
     masked_value: string;
     status: string;
     created_at: string;
