@@ -1,11 +1,11 @@
 ---
 project_name: 'Ranger-X Check'
 user_name: 'Richard'
-date: '2026-06-22'
+date: '2026-06-24'
 sections_completed:
   ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']
 status: 'complete'
-rule_count: 40
+rule_count: 42
 optimized_for_llm: true
 ---
 
@@ -51,7 +51,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 ### Capture / response semantics (legacy parity)
 
 - One `responses` table, discriminated by `kind`: `'full'` → Completa (every revision; `status` from the ✅/❌ glyph; latest per `(chat_id, message_id)` is durable state), `'cc'` → Filtrada (extracted CC value).
-- Only ✅/❌ persist (a pure ⏳ writes nothing). CC dedup is **per capture-session and DB-enforced** by the partial unique index `uq_responses_session_cc` — don't move it into code.
+- Only ✅/❌ persist (a pure ⏳ writes nothing). CC dedup is **PER-MESSAGE and DB-enforced** by `uq_responses_session_msg_cc(capture_session_id, chat_id, message_id, text)` (migration `d1f4a8e2c5b6`, 2026-06-22) — so **Datos CC mirrors Aprobadas** one-row-per-approved-reply (same value on two distinct messages lands twice; only a retry/edit-replay of the SAME message is idempotent). Don't move it into code or collapse it back to the old tenant-lifetime `uq_responses_session_cc`.
 - `message_id` is **per-chat, not account-global** — attribution keys on the `(chat_id, message_id)` PAIR, never `message_id` alone.
 - `cc_extract.py` truncates each CC value at the literal substring `Status` — intentional, don't "fix" it.
 
@@ -64,7 +64,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 
 - **Backend:** `cd backend && .venv/bin/pytest`. ruff + mypy configured in `pyproject.toml` (migrations excluded from ruff). 40+ test modules under `backend/tests/`.
 - **Frontend:** `npm run lint` (eslint). **The real gate is `npm run build`** (runs `tsc`) — lint alone misses type errors and once broke a deploy. Run build before pushing to `main`.
-- **Migrations before restart:** `alembic upgrade head` runs before the service restart in every deploy. Head: `c4e2f7a1b903`.
+- **Migrations before restart:** `alembic upgrade head` runs before the service restart in every deploy. Head: `b3f1a7c9d2e4`.
 
 ### Development Workflow
 
@@ -76,6 +76,7 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 
 - **Single shared Telegram account** — one `anon.session`; never run two `cc-core` instances (corrupts the MTProto auth key). Re-authenticating to a different account restarts the `message_id` sequence — wipe `send_log`/`responses` first or replies mis-attribute across tenants. **`services/account_guard.py` enforces this fail-closed at boot:** if the connected account's id differs from `system_settings.telegram_account_id` AND attribution data exists, it latches the watchdog (`account_changed`) instead of silently leaking. Respect the interval, FloodWait, and watchdog; never remove rate-limiting.
 - **Captured CC data is sensitive** (lives in Postgres; exports carry `Cache-Control: no-store`). **Never read the legacy `respuestas/` contents** — hard rule; operate on structure/paths only.
+- **Credential vault is off-session, GLOBAL, plaintext, and echoes passwords.** `api/credentials.py` auths on a shared `X-Api-Key` (`settings.credentials_api_key`, constant-time; NOT the session cookie), has NO tenant scoping (`tenant_id` dropped in `b3f1a7c9d2e4`), stores `password` plaintext and returns it in POST/GET responses (owner request). Reads set `Cache-Control: no-store`; value validation is in-handler so a rejected secret never reaches a 422 body or access log. Unset `CREDENTIALS_API_KEY` ⇒ vault closed (503). Same plaintext-credential precedent as `gate_cookies`.
 - **`.env` holds real credentials** — never commit, print, or hardcode.
 - **Watchdog never auto-resumes** — it latches a global pause (persisted to `watchdog_state`) on session loss / reply-rate collapse; the owner resumes via `/api/watchdog/resume`.
 
@@ -84,7 +85,9 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 - **Auth & roles:** `api/auth.py`, `api/deps.py`, `services/auth.py`, `services/users.py`.
 - **Sending engine:** `core/{telegram,send_worker,scheduler,capture,attribution,cc_extract,reconciler}.py`, `services/batches.py`, `services/admission.py`, `services/pacing.py`.
 - **Gates & catalog:** `api/gates.py`, `api/public.py`, `api/admin.py`, `db/repos/{gates,gate_categories}.py`.
-- **Plans, credits, gift keys:** `api/admin.py`, `api/keys.py`, `services/{plans,gift_keys}.py`, `db/repos/{plans,gift_keys}.py`.
+- **Plans, credits, gift keys:** `api/admin.py`, `api/keys.py`, `services/{plans,gift_keys}.py`, `db/repos/{plans,gift_keys}.py`. Gift keys now mint admin-chosen `credits` too (days and/or credits; credits-only allowed).
+- **Credential vault:** `api/credentials.py` (standalone, `X-Api-Key`, global `credentials` table). No service/repo layer — inline queries.
+- **Owner monitoring panel:** `api/observability.py` (`GET /api/observability`) backs `/admin/monitor` (`frontend/app/admin/monitor/page.tsx`) — per-tenant send activity, Telegram/flood/unmatched/watchdog/admission slices. Owner-only.
 - **Amazon cookie-mode:** `api/cookies.py`, `core/{cookie_verdict,display_transform,redact}.py`, `db/repos/gate_cookies.py`, the cookie-mode columns on `batches`/`batch_lines`. `display_transform` renders the LIVE/DEAD branded card; `redact` strips secrets + decorative dot dividers.
 - **Amazon live-forward:** `services/live_forward.py` (forwards each fresh ✅ live verbatim to the owner's global channel; out-of-band, best-effort), `GET|PUT /api/admin/live-channel`, `system_settings.live_forward_channel`.
 - **Account-swap guard:** `services/account_guard.py` (boot fail-closed fence), wired in `app/main.py` lifespan, `system_settings.telegram_account_id`.
@@ -93,4 +96,4 @@ If a request mentions "the app", "the UI", "Completa/Filtrada", "sessions", "gat
 
 ---
 
-Last Updated: 2026-06-22
+Last Updated: 2026-06-24

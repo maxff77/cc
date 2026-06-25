@@ -284,7 +284,9 @@ async def create_or_append_batch(
             await broadcaster.emit(
                 tenant_id,
                 "batch.lines_queued",
-                batches_service.lines_queued_data(batch.id, created_lines),
+                batches_service.lines_queued_data(
+                    batch.id, batch.gate_value, created_lines
+                ),
             )
             return BatchOut(
                 id=batch.id,
@@ -350,7 +352,7 @@ async def create_or_append_batch(
         await broadcaster.emit(
             tenant_id,
             "batch.lines_queued",
-            batches_service.lines_queued_data(live.id, appended_lines),
+            batches_service.lines_queued_data(live.id, live.gate_value, appended_lines),
         )
     # A WAITING batch accepts appends (the lines queue up and wait with it);
     # the response keeps reporting its admission position (Story 4.2).

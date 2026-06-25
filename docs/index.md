@@ -1,17 +1,17 @@
 # Project Documentation Index — Ranger-X Check
 
-> Generated: 2026-06-22 · Mode: full rescan (lean) · Primary entry point for AI-assisted development.
+> Generated: 2026-06-24 · Mode: full rescan (lean) · Primary entry point for AI-assisted development.
 
 ## Project Overview
 
 - **Type:** Multi-part monorepo (Python backend + TypeScript frontend) — multi-tenant SaaS.
-- **Product:** Ranger-X Check — a multi-tenant Telegram message forwarder. Clients paste lines; the platform sends them through **one shared Telegram user account** (Telethon/MTProto) to a checker bot, paced and round-robined fairly across tenants, then captures the ✅/❌ replies and attributes each back to its originating line and tenant.
+- **Product:** Ranger-X Check — a multi-tenant Telegram message forwarder. Clients paste lines of text; the platform relays them through **one shared Telegram user account** (Telethon/MTProto) to a **configurable target chat**, paced and round-robined fairly across tenants, then captures the target's ✅/❌ replies and attributes each back to its originating line and tenant. The platform transports text and records replies; it does not interpret line content.
 - **Live:** https://ranger-x.lohari.com.mx (VPS `37.27.12.92`).
 - **Primary language:** Python 3.12 (backend), TypeScript/React 19 (frontend).
 
 ### Two derived views of captured replies
 - **Completa** — every captured reply revision (✅ and ❌), latest revision per message = durable state.
-- **Filtrada** — deduplicated `CC:` data extracted from replies (tenant-lifetime dedup over the one perpetual capture session, DB-enforced).
+- **Filtrada** — `CC:` data extracted from replies, deduplicated **per-message** (DB-enforced via `uq_responses_session_msg_cc`), so Datos CC mirrors Aprobadas one-row-per-approved-reply.
 
 The cockpit is sessionless — three live panels (Completa, Aprobadas ✅, Datos CC) with one non-destructive **Limpiar** view-cutoff — while a separate read-only **Historial** lists approved-✅ responses grouped by gate.
 
@@ -27,8 +27,8 @@ Backend ↔ frontend integration: REST under `/api/*` (commands) + a **server→
 ## Generated Documentation
 
 - [Architecture](./architecture.md) — both parts, the send/capture engine, integration, deploy topology.
-- [Data Models](./data-models.md) — all 17 PostgreSQL tables, keys, partial unique indexes, snapshot/denormalization rules.
-- [API Contracts](./api-contracts.md) — every REST route by router + the WebSocket event envelope.
+- [Data Models](./data-models.md) — all 18 PostgreSQL tables (incl. the global `credentials` vault), keys, partial unique indexes, snapshot/denormalization rules. Alembic head `b3f1a7c9d2e4`.
+- [API Contracts](./api-contracts.md) — every REST route by router (incl. the `X-Api-Key` `/api/credentials` vault and the owner `/admin/monitor` observability panel) + the WebSocket event envelope.
 
 ## Existing Documentation (authoritative, hand-maintained)
 

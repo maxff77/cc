@@ -1,14 +1,14 @@
 # Architecture — Ranger-X Check
 
-> Generated: 2026-06-22. Multi-part monorepo: `backend/` (FastAPI engine) + `frontend/` (Next.js SPA). For invariants and the legacy/production split, see [CLAUDE.md](../CLAUDE.md).
+> Generated: 2026-06-24. Multi-part monorepo: `backend/` (FastAPI engine) + `frontend/` (Next.js SPA). For invariants and the legacy/production split, see [CLAUDE.md](../CLAUDE.md).
 
 ## Executive Summary
 
-Ranger-X Check is a multi-tenant Telegram forwarder. Many tenants submit batches of lines; a single async backend sends them through **one shared Telegram user account** (Telethon/MTProto — a user account, not a bot) to a checker bot, paced and round-robined fairly across tenants. The bot's ✅/❌ replies are captured, attributed back to the originating line/tenant via the send log, and persisted as two derived views (Completa / Filtrada). A watchdog protects the shared account from bans.
+Ranger-X Check is a multi-tenant Telegram forwarder. Many tenants submit batches of text lines; a single async backend relays them through **one shared Telegram user account** (Telethon/MTProto — a user account, not a bot) to a **configurable target chat**, paced and round-robined fairly across tenants. The target's ✅/❌ replies are captured, attributed back to the originating line/tenant via the send log, and persisted as two derived views (Completa / Filtrada). The backend transports text and records replies; it does not interpret line content. A watchdog protects the shared account from rate-limit bans.
 
 ```
 Tenants ─┐
-         ├─▶ FastAPI (backend/) ── send worker ──▶ Telethon ──▶ checker bot / CC groups
+         ├─▶ FastAPI (backend/) ── send worker ──▶ Telethon ──▶ target chat(s)
 Frontend ┘        │  scheduler (round-robin + pacing)              │
    (cockpit)      │  send_log (write-ahead intent)                 │ ✅/❌ replies
    (admin)        ▼                                                ▼
@@ -36,6 +36,7 @@ backend/app/
 │   ├── deps.py        # get_current_user (session cookie → identity), require_role
 │   ├── auth.py batches.py sessions.py gates.py public.py cookies.py
 │   ├── admin.py targets.py keys.py watchdog.py observability.py history.py
+│   ├── credentials.py # personal email+password vault (X-Api-Key, global, no session)
 │   ├── ws.py          # the WebSocket (server→client only)
 │   └── health.py
 ├── core/              # the engine
@@ -57,7 +58,7 @@ backend/app/
 ├── services/          # orchestration (auth, batches, admission, plans, users,
 │                      #   exports, targets, gift_keys, pacing,
 │                      #   account_guard, live_forward)
-├── migrations/        # Alembic (head: c4e2f7a1b903)
+├── migrations/        # Alembic (head: b3f1a7c9d2e4)
 ├── scripts/           # bootstrap_owner, seed_user, telegram_auth, load tests
 └── tests/             # pytest (40+ test modules)
 ```
@@ -77,12 +78,16 @@ backend/app/
 
 One `responses` table, discriminated by `kind` — see [data-models.md](./data-models.md#responses).
 - `kind='full'` → **Completa**: one row per captured message revision; `status` (`ok`/`rejected`) from the ✅/❌ glyph. Latest revision per `(chat_id, message_id)` is the durable per-message state.
-- `kind='cc'` → **Filtrada**: extracted `CC:` data, deduplicated **tenant-lifetime** by the partial unique index `uq_responses_session_cc` (one perpetual capture-session per tenant, so the per-session dedup spans the tenant's whole history).
+- `kind='cc'` → **Filtrada**: extracted `CC:` data, deduplicated **per-message** by the partial unique index `uq_responses_session_msg_cc(capture_session_id, chat_id, message_id, text)` (migration `d1f4a8e2c5b6`). So **Datos CC mirrors Aprobadas** one-row-per-approved-reply — the same value on two distinct messages lands twice; only a retry/edit-replay of the SAME message is idempotent. (Superseded the old tenant-lifetime `uq_responses_session_cc`, the "Datos CC < Aprobadas" bug.)
 - **Limpiar** is a non-destructive view-cutoff: an id high-water-mark stored in `capture_sessions.cleared_response_id`, applied only to the cockpit display reads and cockpit export (`Response.id > cutoff`). It deletes nothing — integrity, attribution, reconciliation, dedup, credits, and awaiting-reply all ignore it. The separate **Historial** (PR-2) is the one DESTRUCTIVE path: it deletes `responses` rows (only `responses` — never `batches`/`send_log`/`batch_lines`).
 
 ### Roles & admission
 
 Roles `owner` / `admin` / `client` (in `users.role`, app-enforced). `deps.py` is the only source of request identity: validates the HttpOnly session cookie and applies gates in order (blocked → plan-expired → must-change-password). **`tenant_id` always comes from the session, never from body/path.** Plans (owner-managed catalog) drive expiry, per-tenant antispam interval, line caps, and credit grants. Admission control caps concurrent active senders (`system_settings.max_active_senders`) with a FIFO waiting queue.
+
+### Credential vault (standalone, off the session path)
+
+`api/credentials.py` is a small self-contained email+password vault that **does not use the session/role machinery** — it authenticates on a single shared `X-Api-Key` (`settings.credentials_api_key`, constant-time compared; unset ⇒ 503, vault closed). It is **GLOBAL, no tenant scoping** (a single operator owns the whole vault; `tenant_id` was dropped in migration `b3f1a7c9d2e4` after a tenant-scoped first cut). 🔒 `password` is stored plaintext (the deliberate CC / `gate_cookies` precedent) and, by owner request, IS echoed back so the holder can read saved passwords — every read sets `Cache-Control: no-store` and validation errors are raised in-handler so a rejected secret never lands in a 422 body or access log. The router owns its transaction; queries are inline (one small table). See [api-contracts.md › Credentials](./api-contracts.md) and [data-models.md › credentials](./data-models.md).
 
 ---
 
@@ -115,7 +120,7 @@ frontend/
 
 - **Cockpit** (`app/app/page.tsx`) — **sessionless**: send form (paste + category→gate selectors), progress ring, failed/pending lines, flood/watchdog/plan notices, the cookie manager (Amazon cookie-mode gates), and the three live panels — **Completa** (one row per message — the latest revision, deduped client-side by `(chat_id, message_id)` / `Response.id`, not every edit), **Aprobadas** (only ✅ messages, full text; its count is **server-authoritative**), and **Datos CC** (extracted CC). A single non-destructive **Limpiar** button clears all three panels via the view-cutoff (it never deletes). Live state comes from the WebSocket store (`lib/ws.ts`, a reducer over `snapshot`/`batch.*`/`response.captured`/`session.active`/`flood`/`watchdog`/`credits.updated`); the gate catalog comes from a REST query. **Client-visible label is "Gateway"** (the internal table/API/`value` stay "gate").
 - **History** (`app/app/historial/`) — read-only list of approved-✅ responses (latest `kind='full'` revision is `status='ok'`) grouped by the batch's client-visible gate, fed by `GET /api/history` **independently of the Limpiar cutoff** (it reads `responses` directly). Adds three DESTRUCTIVE deletes — one message (`DELETE /api/history/response/{id}`), one gate (`DELETE /api/history/gate?name=`), or all (`DELETE /api/history`) — which remove only `responses` rows.
-- **Admin** (`app/admin/`) — `users` (CRUD, plan renew/block, password reset, credits, admission cap, interval), `gates` (catalog + categories), `plans`, `keys` (gift keys), `destinos` (send targets), `tenants/[id]` (audited read-only cross-tenant browser).
+- **Admin** (`app/admin/`) — `users` (CRUD, plan renew/block, password reset, credits, admission cap, interval), `gates` (catalog + categories), `plans`, `keys` (gift keys — now mint days and/or admin-chosen credits), `destinos` (send targets), `monitor` (owner-only live monitoring panel over `GET /api/observability`), `tenants/[id]` (audited read-only cross-tenant browser). A discreet **version badge** (`components/ui/version-badge.tsx`, fed from `package.json` via `next.config.mjs`) shows the app version in the shell.
 
 ---
 

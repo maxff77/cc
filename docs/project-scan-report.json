@@ -1,9 +1,9 @@
 {
   "workflow_version": "1.2.0",
   "timestamps": {
-    "started": "2026-06-22T00:00:00Z",
-    "last_updated": "2026-06-22T00:00:00Z",
-    "completed": "2026-06-22T00:00:00Z"
+    "started": "2026-06-24T00:00:00Z",
+    "last_updated": "2026-06-24T00:00:00Z",
+    "completed": "2026-06-24T00:00:00Z"
   },
   "mode": "full_rescan",
   "scan_level": "deep",
@@ -29,11 +29,11 @@
   "completed_steps": [
     {"step": "step_1", "status": "completed", "summary": "Re-confirmed multi-part (backend + frontend); classification unchanged"},
     {"step": "step_3", "status": "completed", "summary": "Tech stack unchanged: FastAPI/PostgreSQL backend, Next.js frontend"},
-    {"step": "step_4", "status": "completed", "summary": "Deep delta scan of commits since 2026-06-20: new services/live_forward.py + services/account_guard.py, send_log.reply_purged_at, display LIVE/DEAD card, Gate->Gateway label"},
-    {"step": "step_8", "status": "completed", "summary": "architecture.md refreshed: account-guard in lifespan, live_forward + account_guard subsystems, Completa one-row-per-message + server-authoritative Aprobadas"},
-    {"step": "step_9", "status": "completed", "summary": "data-models.md (send_log.reply_purged_at, watchdog account_changed reason, system_settings keys) + api-contracts.md (GET/PUT /api/admin/live-channel) refreshed"},
-    {"step": "step_10", "status": "completed", "summary": "index.md + project-context.md refreshed; head migration bumped to c4e2f7a1b903"},
-    {"step": "step_12", "status": "completed", "summary": "Full rescan complete; all 5 lean docs + project-context refreshed to 2026-06-22"}
+    {"step": "step_4", "status": "completed", "summary": "Deep delta scan of commits since ead5eff (2026-06-22 doc refresh): new credentials vault (api/credentials.py + table, migrations e7d2c9a4b1f8 then b3f1a7c9d2e4 dropping tenant_id), gift-key credits (f4b9c2e7a1d3 + GiftKey.credits), per-message CC dedup (d1f4a8e2c5b6: uq_responses_session_msg_cc), owner monitoring panel /admin/monitor (observability.py), version badge"},
+    {"step": "step_8", "status": "completed", "summary": "architecture.md refreshed: credentials.py router + standalone vault subsystem note, per-message CC dedup fix, admin monitor panel + version badge, head bumped"},
+    {"step": "step_9", "status": "completed", "summary": "data-models.md (new credentials table, GiftKey.credits, FIXED responses CC dedup to per-message uq_responses_session_msg_cc, 18 tables, head b3f1a7c9d2e4, credentials added to GLOBAL list) + api-contracts.md (new /api/credentials X-Api-Key router, expanded observability/monitor, gift-key credits) refreshed"},
+    {"step": "step_10", "status": "completed", "summary": "index.md + project-context.md refreshed; per-message dedup wording corrected (was stale: ead5eff predated d1f4a8e2c5b6), head c4e2f7a1b903 -> b3f1a7c9d2e4, credential-vault security rule added"},
+    {"step": "step_12", "status": "completed", "summary": "Full delta rescan complete; all 5 lean docs + project-context refreshed to 2026-06-24"}
   ],
   "current_step": "completed",
   "outputs_generated": [
@@ -44,6 +44,6 @@
     "docs/project-scan-report.json",
     "_bmad-output/project-context.md"
   ],
-  "notes": "Full rescan (deep) on 2026-06-22 refreshing the 2026-06-20 lean suite. Deltas since: services/live_forward.py (forward Amazon lives to a global owner channel, out-of-band/best-effort), services/account_guard.py (boot fail-closed account-swap fence -> watchdog account_changed latch), send_log.reply_purged_at tombstone (migration c4e2f7a1b903, stops reconciler resurrecting deleted Historial), display_transform LIVE/DEAD branded card + dot-divider strip, Completa one-row-per-message + server-authoritative Aprobadas count, Gate->Gateway client label. Alembic head now c4e2f7a1b903. Legacy root app remains dead code, excluded.",
+  "notes": "Full rescan (deep delta) on 2026-06-24 over the 2026-06-22 lean suite. Deltas since the ead5eff doc refresh: (1) NEW credential vault — api/credentials.py, a GLOBAL `credentials` table (email + PLAINTEXT password, X-Api-Key auth not session, password echoed by owner request, no-store reads), created tenant-scoped (e7d2c9a4b1f8) then de-scoped to one global table (b3f1a7c9d2e4) recovering stranded rows; CREDENTIALS_API_KEY config var added. (2) Gift-key credits — GiftKey.credits admin-chosen at mint (f4b9c2e7a1d3); days and/or credits, credits-only allowed. (3) Per-message CC dedup — uq_responses_session_msg_cc(capture_session_id, chat_id, message_id, text) (d1f4a8e2c5b6) so Datos CC mirrors Aprobadas; this corrected stale 'tenant-lifetime uq_responses_session_cc' wording in data-models.md/index.md/project-context.md (ead5eff was authored just before the d1f4a8e2c5b6 fix). (4) Owner monitoring panel at /admin/monitor backed by GET /api/observability (per-tenant send activity + telegram/flood/unmatched/watchdog/admission slices). (5) Discreet version badge from package.json. Alembic head now b3f1a7c9d2e4 (34 migrations, 18 tables). Untracked root amazon_login.py and dsbuild/ are scratch/design-sync tooling, NOT production backend/frontend — excluded. Legacy root app remains dead code, excluded.",
   "resume_instructions": "Workflow complete. Re-run /bmad-document-project and choose Re-scan to refresh."
 }

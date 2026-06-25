@@ -44,3 +44,15 @@ skills-lock.json
 
 # Otros
 logs/
+.ds-sync/
+ds-bundle/
+# design-sync synthetic DS package: keep sources, drop regenerable build output
+dsbuild/node_modules/
+dsbuild/dist/index.js
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+
+amazon_addresses.png
+amazon_cookies.txt
+amazon_profile/

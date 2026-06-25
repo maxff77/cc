@@ -1,0 +1,49 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2026-06-22T00:00:00Z",
+    "last_updated": "2026-06-22T00:00:00Z",
+    "completed": "2026-06-22T00:00:00Z"
+  },
+  "mode": "full_rescan",
+  "scan_level": "deep",
+  "project_root": "/Users/pedro/Documents/git/Prueba/cc",
+  "project_knowledge": "/Users/pedro/Documents/git/Prueba/cc/docs",
+  "repository_type": "multi-part",
+  "project_parts": [
+    {
+      "part_id": "backend",
+      "project_type_id": "backend",
+      "display_name": "FastAPI backend + send/capture engine",
+      "root_path": "backend/",
+      "primary_tech": "Python 3.12 / FastAPI / async SQLAlchemy / PostgreSQL / Telethon"
+    },
+    {
+      "part_id": "frontend",
+      "project_type_id": "web",
+      "display_name": "Next.js cockpit + admin SPA",
+      "root_path": "frontend/",
+      "primary_tech": "Next.js 16 / React 19 / HeroUI 3 / TanStack Query"
+    }
+  ],
+  "completed_steps": [
+    {"step": "step_1", "status": "completed", "summary": "Re-confirmed multi-part (backend + frontend); classification unchanged"},
+    {"step": "step_3", "status": "completed", "summary": "Tech stack unchanged: FastAPI/PostgreSQL backend, Next.js frontend"},
+    {"step": "step_4", "status": "completed", "summary": "Deep delta scan of commits since 2026-06-20: new services/live_forward.py + services/account_guard.py, send_log.reply_purged_at, display LIVE/DEAD card, Gate->Gateway label"},
+    {"step": "step_8", "status": "completed", "summary": "architecture.md refreshed: account-guard in lifespan, live_forward + account_guard subsystems, Completa one-row-per-message + server-authoritative Aprobadas"},
+    {"step": "step_9", "status": "completed", "summary": "data-models.md (send_log.reply_purged_at, watchdog account_changed reason, system_settings keys) + api-contracts.md (GET/PUT /api/admin/live-channel) refreshed"},
+    {"step": "step_10", "status": "completed", "summary": "index.md + project-context.md refreshed; head migration bumped to c4e2f7a1b903"},
+    {"step": "step_12", "status": "completed", "summary": "Full rescan complete; all 5 lean docs + project-context refreshed to 2026-06-22"}
+  ],
+  "current_step": "completed",
+  "outputs_generated": [
+    "docs/index.md",
+    "docs/architecture.md",
+    "docs/data-models.md",
+    "docs/api-contracts.md",
+    "docs/project-scan-report.json",
+    "_bmad-output/project-context.md"
+  ],
+  "notes": "Full rescan (deep) on 2026-06-22 refreshing the 2026-06-20 lean suite. Deltas since: services/live_forward.py (forward Amazon lives to a global owner channel, out-of-band/best-effort), services/account_guard.py (boot fail-closed account-swap fence -> watchdog account_changed latch), send_log.reply_purged_at tombstone (migration c4e2f7a1b903, stops reconciler resurrecting deleted Historial), display_transform LIVE/DEAD branded card + dot-divider strip, Completa one-row-per-message + server-authoritative Aprobadas count, Gate->Gateway client label. Alembic head now c4e2f7a1b903. Legacy root app remains dead code, excluded.",
+  "resume_instructions": "Workflow complete. Re-run /bmad-document-project and choose Re-scan to refresh."
+}

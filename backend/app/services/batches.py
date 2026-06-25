@@ -44,6 +44,21 @@ def apply_gate(text: str, gate_value: str) -> list[str]:
     return result
 
 
+def strip_gate(text: str, gate_value: str) -> str:
+    """Inverse of ``apply_gate``'s prefix, for CLIENT-facing payloads ONLY.
+
+    ``batch_lines.text`` stores the full assembled command (``gate_value`` +
+    the typed line) because the worker sends it to Telegram verbatim. The real
+    ``gate_value`` is OWNER-ONLY (CLAUDE.md), so every WS frame that echoes a
+    line back to the client (Pendientes, Fallidas, line_sent/line_failed) must
+    show ONLY what the client typed. Strips the leading ``gate_value + " "``.
+    """
+    if not gate_value:
+        return text
+    prefix = gate_value + " "
+    return text[len(prefix):] if text.startswith(prefix) else text
+
+
 def eta_seconds(queued: int, n_eff: int) -> float:
     """Honest ETA derived from ``G×n`` (UX-DR14), recomputed per emission.
 
@@ -141,7 +156,7 @@ def state_data(
     }
 
 
-def lines_queued_data(batch_id: int, lines: list[BatchLine]) -> dict:
+def lines_queued_data(batch_id: int, gate_value: str, lines: list[BatchLine]) -> dict:
     """``batch.lines_queued`` event payload — the lines just added to the queue.
 
     Fires on create AND append (``api.batches``) so the cockpit's "Pendientes"
@@ -154,7 +169,7 @@ def lines_queued_data(batch_id: int, lines: list[BatchLine]) -> dict:
     return {
         "batch_id": batch_id,
         "lines": [
-            {"position": line.position, "text": line.text}
+            {"position": line.position, "text": strip_gate(line.text, gate_value)}
             for line in lines[:_SNAPSHOT_ROWS]
         ],
     }
@@ -336,14 +351,18 @@ async def snapshot(session: AsyncSession, tenant_id: int) -> dict:
         # A tab reconnecting mid-batch rebuilds the failed panel from the
         # snapshot alone (snapshot-first, 2.2 pattern).
         "failed_lines": [
-            {"position": line.position, "text": line.text, "code": line.fail_code or ""}
+            {
+                "position": line.position,
+                "text": strip_gate(line.text, batch.gate_value),
+                "code": line.fail_code or "",
+            }
             for line in await batches_repo.failed_lines(session, batch.id)
         ],
         # Still-queued line texts so a reconnecting tab rebuilds the
         # "Pendientes" list from the snapshot alone (survives a page reload;
         # same precedent as failed_lines). Capped — the badge uses `queued`.
         "pending_lines": [
-            {"position": line.position, "text": line.text}
+            {"position": line.position, "text": strip_gate(line.text, batch.gate_value)}
             for line in await batches_repo.queued_lines(
                 session, batch.id, _SNAPSHOT_ROWS
             )

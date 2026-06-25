@@ -244,13 +244,15 @@ async def test_line_fails_at_cap_with_event_and_queue_continues(
     failed_events = [
         (tenant, data) for tenant, e, data in events if e == "batch.line_failed"
     ]
+    # The frame carries ONLY the client's line — the owner-only gate prefix is
+    # stripped before it reaches the client (CLAUDE.md: never echo the command).
     assert failed_events == [
         (
             user.tenant_id,
             {
                 "batch_id": batch_id,
                 "position": 0,
-                "text": f"{value} uno",
+                "text": "uno",
                 "code": "runtime_error",
             },
         )

@@ -1,0 +1,28 @@
+{
+  "pkg": "rangerx",
+  "globalName": "RangerX",
+  "projectId": "2cebdc8c-82c0-48ca-95c2-de888afddaa8",
+  "shape": "package",
+  "cssEntry": "theme.css",
+  "buildCmd": "node build-dist.mjs",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "Logo": { "cardMode": "column" },
+    "Mark": { "cardMode": "column" },
+    "Icon": { "cardMode": "column" },
+    "Btn": { "cardMode": "column" },
+    "LabelCaps": { "cardMode": "column" },
+    "MonoChip": { "cardMode": "column" },
+    "StatePill": { "cardMode": "column" },
+    "CountBadge": { "cardMode": "column" },
+    "SectionCard": { "cardMode": "column" },
+    "Field": { "cardMode": "column" },
+    "Area": { "cardMode": "column" },
+    "Select": { "cardMode": "column" },
+    "Checkbox": { "cardMode": "column" },
+    "ProgressRing": { "cardMode": "column" },
+    "Metric": { "cardMode": "column" },
+    "DataRow": { "cardMode": "column" },
+    "ResultPanel": { "cardMode": "column" }
+  }
+}

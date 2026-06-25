@@ -1,6 +1,6 @@
 # API Contracts — Ranger-X Check
 
-> Generated: 2026-06-22. Source: `backend/app/api/*.py` + `backend/app/main.py`. All routers mount under `/api`. Live OpenAPI at `/openapi.json` (the frontend regenerates `types/api.ts` from it via `npm run generate:api`).
+> Generated: 2026-06-24. Source: `backend/app/api/*.py` + `backend/app/main.py`. All routers mount under `/api`. Live OpenAPI at `/openapi.json` (the frontend regenerates `types/api.ts` from it via `npm run generate:api`).
 
 ## Conventions
 
@@ -95,7 +95,19 @@ Client-owned history of approved (✅) captures, grouped by gate. **Cutoff-agnos
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/observability` | Owner dashboard snapshot (system health, senders, guardrail). |
+| GET | `/api/observability` | Owner dashboard snapshot backing the **monitoring panel** at `/admin/monitor`: per-tenant send activity (live-since-restart + today/24h from `send_log`), Telegram connection (`authorized`/`ready`/targets resolved), the FloodWait governor (`g_min`, raises, window), the unmatched-replies bucket, the watchdog latch, and admission queue depth. Strictly read. |
+
+## Credentials — `/api/credentials` (X-Api-Key, NOT session-auth)
+
+A personal email+password vault. **Not** session/cookie-auth: every endpoint requires the `X-Api-Key` header matching `settings.credentials_api_key` (constant-time compare). Unset key ⇒ `503 api_key_not_configured`; missing/wrong ⇒ `401 invalid_api_key`. **GLOBAL — no tenant scoping** (single-operator vault). `password` is stored plaintext and, by owner request, IS echoed in responses; every read carries `Cache-Control: no-store`. Value validation is raised inside the handler (never a pydantic 422) so a rejected secret can't surface in a body/access log.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/credentials` | Store one `{email, password}` entry → `CredentialOut` incl. password (201). Validates: one `@`, has-dot domain, no spaces; `invalid_credential` on fail. |
+| GET | `/api/credentials` | List every entry, OLDEST first (incl. passwords), capped at 200. |
+| GET | `/api/credentials/oldest` | The single OLDEST entry (FIFO by `id ASC`). Empty vault ⇒ `404 credential_not_found`. |
+| DELETE | `/api/credentials/by-email?email=` | Delete every entry matching `email`. No match ⇒ 404. |
+| DELETE | `/api/credentials/{id}` | Delete one by id (204). Unknown / oversized id ⇒ 404 (no existence leak). |
 
 ---
 
@@ -111,7 +123,7 @@ Client-owned history of approved (✅) captures, grouped by gate. **Cutoff-agnos
 `GET /api/admin/plans` · `GET /api/admin/plans/active` · `POST /api/admin/plans` (201) · `PATCH|DELETE /api/admin/plans/{id}` · `POST /api/admin/plans/{id}/default` (flag the gift-key default tier).
 
 ### Gift keys (admin) — `/api/admin/keys`
-`POST /api/admin/keys` (mint, 201) · `GET /api/admin/keys` (list = audit trail) · `POST /api/admin/keys/{id}/revoke` (204).
+`POST /api/admin/keys` (mint, 201 — carries `days` + **admin-chosen `credits`**; either may be 0 but not both, so a credits-only key is allowed) · `GET /api/admin/keys` (list = audit trail) · `POST /api/admin/keys/{id}/revoke` (204).
 
 ### Send targets (destinos) — `/api/admin/targets`
 `GET /api/admin/targets` · `GET /api/admin/targets/discover` (resolvable chats from the live gateway) · `POST /api/admin/targets` (201) · `PATCH|DELETE /api/admin/targets/{id}`.

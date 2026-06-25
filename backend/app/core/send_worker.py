@@ -469,6 +469,9 @@ async def _record_sent(
     still finalizes 'stopped' in both modes (the line did go out)."""
     state_payload: dict | None = None
     progress: dict | None = None
+    # Owner-only gate prefix to strip from the line_sent frame (CLAUDE.md: the
+    # client never sees the real command). Captured off the locked batch below.
+    gate_value = ""
     while True:
         state_payload = None
         progress = None
@@ -483,6 +486,7 @@ async def _record_sent(
                 )
                 batch = await _locked_batch(session, batch_id)
                 if batch is not None:
+                    gate_value = batch.gate_value
                     if batch.state == batches_repo.STATE_STOPPING:
                         # The stop landed while gateway.send was in flight and
                         # the line DID go out: record it honestly ('sent') and
@@ -571,7 +575,11 @@ async def _record_sent(
     await broadcaster.emit(
         tenant_id,
         "batch.line_sent",
-        {"batch_id": batch_id, "position": position, "text": text},
+        {
+            "batch_id": batch_id,
+            "position": position,
+            "text": batches_service.strip_gate(text, gate_value),
+        },
     )
     if progress is not None:
         await broadcaster.emit(tenant_id, "batch.progress", progress)
@@ -1155,6 +1163,9 @@ async def _record_failed(
     """
     state_payload: dict | None = None
     progress: dict | None = None
+    # Owner-only gate prefix to strip from the line_failed frame (CLAUDE.md: the
+    # client never sees the real command). Captured off the locked batch below.
+    gate_value = ""
     while True:
         state_payload = None
         progress = None
@@ -1166,6 +1177,7 @@ async def _record_failed(
                 await batches_repo.mark_failed(session, recorded, code)
                 batch = await _locked_batch(session, batch_id)
                 if batch is not None:
+                    gate_value = batch.gate_value
                     if batch.state == batches_repo.STATE_STOPPING:
                         batch.state = batches_repo.STATE_STOPPED
                         state_payload = batches_service.state_data(batch, "idle")
@@ -1198,7 +1210,12 @@ async def _record_failed(
     await broadcaster.emit(
         tenant_id,
         "batch.line_failed",
-        {"batch_id": batch_id, "position": position, "text": text, "code": code},
+        {
+            "batch_id": batch_id,
+            "position": position,
+            "text": batches_service.strip_gate(text, gate_value),
+            "code": code,
+        },
     )
     if progress is not None:
         await broadcaster.emit(tenant_id, "batch.progress", progress)

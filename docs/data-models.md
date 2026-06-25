@@ -1,11 +1,11 @@
 # Data Models — Ranger-X Check
 
-> Generated: 2026-06-22. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `c4e2f7a1b903`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 17 tables.
+> Generated: 2026-06-24. Source of truth: `backend/app/db/models.py` + Alembic migrations (head `b3f1a7c9d2e4`). PostgreSQL via async SQLAlchemy 2 / asyncpg. 18 tables.
 
 ## Conventions (read first)
 
 - **`tenant_id` always comes from the session**, never from request body/path. Tenant-scoped tables CASCADE on tenant delete.
-- **GLOBAL tables** (no `tenant_id` — a deliberate, documented exception): `gates`, `gate_categories`, `send_targets`, `plans`, `gift_keys`, `watchdog_state`, `system_settings`.
+- **GLOBAL tables** (no `tenant_id` — a deliberate, documented exception): `gates`, `gate_categories`, `send_targets`, `plans`, `gift_keys`, `watchdog_state`, `system_settings`, `credentials`.
 - **Snapshot / denormalize on purpose:** `batches` copy the gate string/name/`display_value`/`credit_cost`/mode flags verbatim at creation. `capture_sessions` now holds ONE perpetual row per tenant whose gate snapshot is **refreshed in place per batch** (not per-creation), so history that must survive a gate change is keyed off `batches`/`responses.batch_id`, NOT the session snapshot. No FK to `gates` from either — retiring or renaming a gate must never rewrite history.
 - **Enums are plain `String`, not DB enums** (a deliberate decision) — `state`, `kind`, `status`, `reason` etc. widen without `ALTER TYPE`.
 - **Repos use flush-not-commit** (the request owns the transaction) and `SELECT … FOR UPDATE` on read-modify-write paths.
@@ -37,7 +37,7 @@ Owner-managed grouping. `name` (unique). `special_mode` (bool) — gates here ca
 - **Partial unique:** `uq_gates_value_active(value) WHERE deleted_at IS NULL` — uniqueness among active entries only; a retired value can be recreated.
 
 ### `send_targets`
-The chats the shared account sends to (the checker bot directly + the CC groups it lives in). `chat_id` (BigInteger, unique — the marked peer id, account-global, doubles as the capture filter), `label`, `enabled`. The worker round-robins over enabled + currently-resolvable targets. Resolution state is NOT stored (derived from the live gateway). Hard-deletable. Seeded on a fresh DB from `TELEGRAM_TARGET`.
+The configurable target chats the shared account sends to (any chat the account can message). `chat_id` (BigInteger, unique — the marked peer id, account-global, doubles as the capture filter), `label`, `enabled`. The worker round-robins over enabled + currently-resolvable targets. Resolution state is NOT stored (derived from the live gateway). Hard-deletable. Seeded on a fresh DB from `TELEGRAM_TARGET`.
 
 ### `gate_cookies` (TENANT-SCOPED)
 One stored per-account cookie for a tenant on a cookie-mode gate. `tenant_id` (CASCADE), `gate_id` (FK to `gates`, NO `ondelete`/relationship — gates soft-delete, the vault outlives an active gate), `value` (🔒 **PLAINTEXT** credential, Text — the deliberate CC precedent; never echoed to a client, never logged), `value_hash` (sha256 hex of `value.strip()` — the dedup key), `label`, `status` (`active`; Phase-2 rotation reserved).
@@ -77,7 +77,7 @@ One table, both row types, discriminated by `kind`:
 - `kind='full'` (**Completa**) — `text` = whole reply, `status` = `ok` (✅) / `rejected` (❌). Latest `full` row per `(chat_id, message_id)` IS the durable per-message state (replaces the legacy in-memory dict; survives restarts and `catch_up`).
 - `kind='cc'` (**Filtrada**) — `text` = the extracted CC VALUE, `status` NULL.
 - Columns: `tenant_id` (CASCADE), `capture_session_id` (CASCADE), `batch_id`/`line_id` (SET NULL — capture outlives batch cleanup), `chat_id` (BigInteger, namespaces `message_id`), `message_id` (BigInteger), `hidden_at` (RETAINED but now an INERT no-op — the old clear-declined soft-hide is superseded by the `capture_sessions.cleared_response_id` view-cutoff in PR-1; kept for forward-compat).
-- **Partial unique:** `uq_responses_session_cc(capture_session_id, text) WHERE kind='cc'` — DB-enforced CC dedup. With ONE perpetual session per tenant, this now dedups CC values **tenant-lifetime**; the Limpiar cutoff does NOT touch the dedup SELECT. **Indexes:** `ix_responses_message_id`, `ix_responses_chat_message(chat_id, message_id)`.
+- **Partial unique:** `uq_responses_session_msg_cc(capture_session_id, chat_id, message_id, text) WHERE kind='cc'` — DB-enforced CC dedup, scoped **PER-MESSAGE** (migration `d1f4a8e2c5b6`, 2026-06-22). The same CC value approved on two distinct messages lands twice, so **Datos CC mirrors Aprobadas one-row-per-approved-reply**; only a capture retry / reconciler edit-replay of the SAME `(chat_id, message_id)` stays idempotent. `text` is truncated to ≤600 chars for the btree row limit. (Superseded the pre-2026-06-22 `uq_responses_session_cc(capture_session_id, text)`, which collapsed duplicates across messages — the "Datos CC < Aprobadas" complaint.) The Limpiar cutoff does NOT touch the dedup SELECT. **Indexes:** `ix_responses_message_id`, `ix_responses_chat_message(chat_id, message_id)`.
 - **PR-2 Historial DESTRUCTIVELY deletes `responses` rows** (one message / one gate / all, via `/api/history`) — removing ONLY `responses` (children), never `batches`/`send_log`/`batch_lines`. Group-by-gate keys on `responses.batch_id → batches.gate_*`, so keep `batch_id`/`line_id` populated and the join alive.
 
 ---
@@ -89,9 +89,15 @@ Owner-managed pricing tiers. `name` (unique), `price_usd` (Numeric 10,2), `durat
 - **Partial unique:** `uq_plans_one_default(is_default) WHERE is_default` — at most one default plan. Flag a new default → clear the prior one FIRST to dodge the index. Ships EMPTY (nothing seeded).
 
 ### `gift_keys` (GLOBAL)
-Single-use redeemable key. `code` (unique), `days`, `plan_id` (FK RESTRICT — snapshot of the default plan; a later default change never re-prices an outstanding key). `status` (`active`/`claimed`/`revoked`). The table IS its own audit log: `created_by_user_id` / `claimed_by_user_id` / `revoked_by_user_id` (all FK SET NULL) + timestamps. Single-use enforced at claim under `SELECT … FOR UPDATE` (only `active` → `claimed`). Claiming adds days only, never credits.
+Single-use redeemable key. `code` (unique), `days`, `credits` (int default 0 — **admin-chosen at mint**, migration `f4b9c2e7a1d3`; the deliberate relaxation of "admin never picks a value", credits only; ADDED to `tenants.credit_balance` on claim), `plan_id` (FK RESTRICT — snapshot of the default plan; a later default change never re-prices an outstanding key). A key must grant at least one of `days`/`credits` (validated at the route, not the DB): `days==0 && credits>0` is a credits-only key. `status` (`active`/`claimed`/`revoked`). The table IS its own audit log: `created_by_user_id` / `claimed_by_user_id` / `revoked_by_user_id` (all FK SET NULL) + timestamps. Single-use enforced at claim under `SELECT … FOR UPDATE` (only `active` → `claimed`).
 
 ---
+
+## Credential vault (GLOBAL)
+
+### `credentials`
+A personal email+password vault, **single global table — NO tenant scoping** (owner decision 2026-06-23). Created tenant-scoped in migration `e7d2c9a4b1f8`; `tenant_id` was dropped in `b3f1a7c9d2e4` (which also re-exposed pre-refactor rows once stranded under the caller's real tenant — the owner's data-recovery, no rows moved). `email` (String 320, **NOT unique** — re-saves / different passwords are intentional), `password` (🔒 **PLAINTEXT** Text — the deliberate CC / `gate_cookies` precedent; by owner request it IS echoed back on POST + GET so the holder can read saved passwords, and never logged), `used` (bool default false), `created_at` (the FIFO order — `id ASC` = creation order, drives `GET /oldest`).
+- No FKs, no unique constraints, no dedup. Auth is NOT the session cookie: every endpoint requires a single shared `X-Api-Key` (`settings.credentials_api_key`) compared in constant time; unset key ⇒ vault closed (503). Reads carry `Cache-Control: no-store`. See [api-contracts.md › Credentials](./api-contracts.md).
 
 ## System / ops (GLOBAL)
 

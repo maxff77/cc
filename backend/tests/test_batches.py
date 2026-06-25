@@ -473,11 +473,10 @@ async def test_snapshot_live_shape_and_eta_math(
     # order so a reconnecting tab restores the panel (survives reload).
     pending = snap["pending_lines"]
     assert [p["position"] for p in pending] == [0, 1, 2]
-    assert [p["text"] for p in pending] == [
-        f"{gate['value']} uno",
-        f"{gate['value']} dos",
-        f"{gate['value']} tres",
-    ]
+    # The owner-only gate prefix is stripped from the client snapshot: the
+    # cockpit shows ONLY what the client typed (CLAUDE.md: never echo the
+    # real command). Stored line.text keeps the prefix; the WS payload does not.
+    assert [p["text"] for p in pending] == ["uno", "dos", "tres"]
     # Honest ETA (UX-DR14): queued × n × G with a single active sender and a
     # constant interval → 3 × 1 × 4.0.
     assert snap["eta_seconds"] == 12.0
