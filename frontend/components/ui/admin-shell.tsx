@@ -10,25 +10,12 @@ import { usePathname } from "next/navigation";
 import clsx from "clsx";
 
 import { api } from "@/lib/api";
+import { navLinks, type NavLink } from "@/config/nav";
 import { PageHeader } from "@/components/ui/page-header";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
-
-// AdminShell only ever renders for admin/owner (middleware gates /admin/*),
-// so Envío is always shown — staff's path BACK to the sender (owner/admins
-// send too: 3-tier priority owner > admin > client).
-const ITEMS = [
-  { href: "/app", label: "Envío", ownerOnly: false },
-  { href: "/admin/users", label: "Usuarios", ownerOnly: false },
-  // Gift keys: admins + owner mint here (the tier is owner-fixed in Planes).
-  { href: "/admin/keys", label: "Keys", ownerOnly: false },
-  { href: "/admin/plans", label: "Planes", ownerOnly: true },
-  { href: "/admin/gates", label: "Gateways", ownerOnly: true },
-  { href: "/admin/destinos", label: "Destinos", ownerOnly: true },
-  { href: "/admin/monitor", label: "Monitoreo", ownerOnly: true },
-] as const;
 
 export function AdminShell({
   title,
@@ -52,13 +39,17 @@ export function AdminShell({
     }
   }
 
-  const navItems = ITEMS.filter((item) => !item.ownerOnly || gatesVisible);
+  // Shared source of truth with ClientNav so the two navbars never drift.
+  // AdminShell only ever renders for admin/owner (middleware gates /admin/*),
+  // and `gatesVisible` is exactly "viewer is owner" (owner-only pages pass it
+  // true; keys/users pass `isOwner`), so role collapses to owner|admin here.
+  const navItems = navLinks(gatesVisible ? "owner" : "admin");
 
   // One renderer for both nav strips. The gradient underline is desktop-only:
   // on the mobile scroll strip overflow-x clips anything below the item, so
   // active state there leans on the surface-tertiary fill instead.
   const renderNavItem = (
-    item: (typeof ITEMS)[number],
+    item: NavLink,
     { underline, className }: { underline: boolean; className?: string },
   ) => {
     // The cockpit root (/app) matches exactly only — a prefix match would light

@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { siteConfig, telegramHref } from "@/config/site";
+import { navLinks } from "@/config/nav";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { Btn } from "@/components/ui/btn";
@@ -29,22 +30,6 @@ interface Me {
   role: string;
   expires_at: string | null;
 }
-
-type NavLink = { href: string; label: string };
-
-const ITEMS: readonly NavLink[] = [
-  { href: "/app", label: "Envío" },
-  { href: "/app/historial", label: "Historial" },
-];
-
-// Cross-links to admin, shown ONLY to staff. Gates/Destinos are owner-only.
-const ADMIN_ITEMS: readonly NavLink[] = [
-  { href: "/admin/users", label: "Usuarios" },
-];
-const OWNER_ITEMS: readonly NavLink[] = [
-  { href: "/admin/gates", label: "Gateways" },
-  { href: "/admin/destinos", label: "Destinos" },
-];
 
 // Verbatim copy per state (EXPERIENCE.md microcopy — tuteo, exact).
 const PILL_COPY: Record<Exclude<BatchSurfaceState, "idle">, string> = {
@@ -135,12 +120,8 @@ export function ClientNav() {
   }, [menuOpen]);
 
   const role = me.data?.role;
-  const navItems: readonly NavLink[] =
-    role === "owner"
-      ? [...ITEMS, ...ADMIN_ITEMS, ...OWNER_ITEMS]
-      : role === "admin"
-        ? [...ITEMS, ...ADMIN_ITEMS]
-        : ITEMS;
+  // Shared source of truth with AdminShell — same role, same links everywhere.
+  const navItems = navLinks(role);
   // The support contact is for clients to reach the seller/support; staff ARE
   // the seller, so the link is hidden for them (also keeps the mobile bottom
   // nav at 3 items for clients — staff's 5 cross-links + Soporte would wrap).
@@ -291,9 +272,17 @@ export function ClientNav() {
 
       {/* Mobile: fixed bottom nav (the cockpit never scrolls away). Clients get a
           Key entry that opens the claim modal (Soporte now lives in the header ⋯
-          menu); staff keep their cross-links and no Key. */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-around border-t border-border bg-background pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden">
-        {items("flex-1 text-center")}
+          menu) and their 2 links spread evenly. Staff now share the cockpit's
+          full link set with AdminShell — too many for an even split — so their
+          bar scrolls horizontally instead of crushing the labels (no Key: staff
+          don't claim keys). */}
+      <nav
+        className={clsx(
+          "fixed inset-x-0 bottom-0 z-10 flex items-center border-t border-border bg-background pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden",
+          isStaff ? "gap-1 overflow-x-auto rx-scroll px-2" : "justify-around",
+        )}
+      >
+        {items(isStaff ? "shrink-0 whitespace-nowrap" : "flex-1 text-center")}
         {!isStaff && (
           <button
             className="tap-44 rx-focus relative flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
