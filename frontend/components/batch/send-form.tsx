@@ -237,6 +237,30 @@ export function SendForm({
     },
   });
 
+  // Resume a send stalled on `cookies_exhausted` after the client tops up the
+  // vault (cookie-paste-autosave-resume). Fire-and-forget: the resulting
+  // `batch.state` WS event clears the pause (UX-DR12 — no optimistic clear).
+  const resume = useMutation({
+    mutationFn: (batchId: number) =>
+      api.post<void>(`/api/batches/${batchId}/resume`),
+  });
+
+  // A cookie just landed from the modal: close it, and if the live batch is
+  // parked waiting for cookies, resume it — the single-cookie paste finishes the
+  // whole top-up-and-continue flow with no extra clicks. Any other pause reason
+  // (manual / verdict_timeout) is left alone (spec: cookies_exhausted only).
+  function handleCookieSaved() {
+    setCookieModalGateId(null);
+    if (
+      live.state === "paused" &&
+      live.pauseReason === "cookies_exhausted" &&
+      live.batchId != null &&
+      !resume.isPending
+    ) {
+      resume.mutate(live.batchId);
+    }
+  }
+
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     // Enter can re-submit while a POST is in flight (2.1 review lesson).
@@ -481,6 +505,7 @@ export function SendForm({
           open
           gateId={cookieModalGateId}
           onClose={() => setCookieModalGateId(null)}
+          onSaved={handleCookieSaved}
         />
       )}
     </div>

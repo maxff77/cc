@@ -30,7 +30,15 @@ import { SectionCard } from "@/components/ui/section-card";
 // form and shows the count once the vault is full.
 const COOKIE_CAP = 50;
 
-export function CookieManager({ gateId }: { gateId: number }) {
+export function CookieManager({
+  gateId,
+  onSaved,
+}: {
+  gateId: number;
+  // Called after a successful store (201 fresh or 200 idempotent). The host uses
+  // it to close the modal / resume a stalled send (cookie-paste-autosave-resume).
+  onSaved?: () => void;
+}) {
   const list = useListCookies(gateId);
   const add = useAddCookie(gateId);
 
@@ -52,24 +60,29 @@ export function CookieManager({ gateId }: { gateId: number }) {
 
       if (clip) {
         setValue(clip);
-        setValueError(null);
+        saveValue(clip, true);
       }
     } catch {
       /* clipboard unavailable / denied — manual paste still works */
     }
   }
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    // Enter can re-submit while a POST is in flight (cockpit lesson).
+  // `fromPaste` marks the single-cookie paste flow (native paste or "Pegar"):
+  // only that path fires `onSaved` (close the modal / resume a stalled send). A
+  // typed value + "Guardar cookie" (fromPaste=false) saves but leaves the modal
+  // open, so a manual multi-cookie add still works (frozen Intent).
+  function saveValue(raw: string, fromPaste = false) {
+    // Enter / paste can re-fire while a POST is in flight (cockpit lesson).
     if (add.isPending) return;
     setValueError(null);
     setBanner(null);
     setOkMsg(null);
 
-    // Local guard mirrors the backend `invalid_cookie` (empty/whitespace-only)
-    // — the backend stays authoritative and re-validates the canonical value.
-    if (!value.trim()) {
+    // Canonicalize like the backend (value.strip()) so every save path stores
+    // the same value and the empty-guard matches what the server validates.
+    const value = raw.trim();
+
+    if (!value) {
       setValueError("Pega el valor de la cookie.");
 
       return;
@@ -79,12 +92,15 @@ export function CookieManager({ gateId }: { gateId: number }) {
       { value },
       {
         onSuccess: () => {
-          // Clear the secret from the field the moment it lands; the masked row
-          // is the only thing that comes back.
-          setValue("");
+          // Clear the field only if it still holds what we just saved — a second
+          // paste landing while this POST was in flight must not be wiped.
+          setValue((cur) => (cur === raw ? "" : cur));
           // Confirm the store (also covers the idempotent re-POST, which the
-          // backend dedups to the same row). Clears on the next submit.
+          // backend dedups to the same row).
           setOkMsg("Cookie guardada correctamente.");
+          // Single-cookie paste flow only: let the host close the modal / resume
+          // a stalled send. Fires on 200 (idempotent) and 201 (fresh) alike.
+          if (fromPaste) onSaved?.();
         },
         onError: (err) => {
           if (err instanceof ApiError) {
@@ -106,6 +122,23 @@ export function CookieManager({ gateId }: { gateId: number }) {
         },
       },
     );
+  }
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    saveValue(value);
+  }
+
+  // A paste IS the action — clients paste one cookie at a time, so save it
+  // straight away instead of making them also click "Guardar". Typing never
+  // triggers this; an empty clipboard falls through to the native paste.
+  function onPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData("text").trim();
+
+    if (!pasted) return;
+    e.preventDefault();
+    setValue(pasted);
+    saveValue(pasted, true);
   }
 
   return (
@@ -150,6 +183,7 @@ export function CookieManager({ gateId }: { gateId: number }) {
               setValue(v);
               if (valueError) setValueError(null);
             }}
+            onPaste={onPaste}
           />
         </div>
 

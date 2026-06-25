@@ -22,6 +22,9 @@ export interface FieldProps {
   placeholder?: string;
   // Numeric-keyboard passthrough (e.g. inputMode="numeric" + type="number").
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  // Native paste passthrough — lets a field treat a paste as its own action
+  // (e.g. the cookie vault auto-saves a pasted cookie).
+  onPaste?: React.ClipboardEventHandler<HTMLInputElement>;
   rightSlot?: React.ReactNode;
   mono?: boolean;
   error?: string | null;
@@ -40,6 +43,7 @@ export function Field({
   type = "text",
   value,
   onChange,
+  onPaste,
   placeholder,
   rightSlot,
   mono,
@@ -104,6 +108,7 @@ export function Field({
           onBlur={() => setFocus(false)}
           onChange={(e) => onChange?.(e.target.value)}
           onFocus={() => setFocus(true)}
+          onPaste={onPaste}
         />
         {rightSlot}
       </div>

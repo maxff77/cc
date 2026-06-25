@@ -19,10 +19,14 @@ export function CookieModal({
   gateId,
   open,
   onClose,
+  onSaved,
 }: {
   gateId: number;
   open: boolean;
   onClose: () => void;
+  // Fired after a cookie is stored — the host closes this modal and resumes a
+  // stalled send (cookie-paste-autosave-resume).
+  onSaved?: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -74,7 +78,7 @@ export function CookieModal({
         </button>
 
         <div className="max-h-[85vh] overflow-y-auto">
-          <CookieManager gateId={gateId} />
+          <CookieManager gateId={gateId} onSaved={onSaved} />
         </div>
       </div>
     </div>

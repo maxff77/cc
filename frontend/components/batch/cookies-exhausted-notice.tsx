@@ -72,7 +72,16 @@ export function CookiesExhaustedNotice() {
       {/* Inline vault: top up the cookies for the live gate without leaving the
           cockpit. Mounts only once the live gate id is resolved from the
           catalog (a transient catalog load shows nothing here). */}
-      {gateId !== null && <CookieManager gateId={gateId} />}
+      {gateId !== null && (
+        <CookieManager
+          gateId={gateId}
+          onSaved={() => {
+            // Mirror the Reanudar button's guards (batchId set, not already
+            // resuming) — onSaved fires from the paste flow without them.
+            if (live.batchId !== null && !resume.isPending) resume.mutate();
+          }}
+        />
+      )}
 
       <div className="flex flex-col gap-1">
         <Btn
