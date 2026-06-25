@@ -1,6 +1,7 @@
 import { LinkBtn } from "./link-btn";
 
 import { Mark } from "@/components/ui/logo";
+import { VersionPill } from "@/components/ui/version-badge";
 
 // Public top bar. Minimal, non-sticky: brand mark + wordmark text on the left,
 // the two conversion CTAs on the right. The wordmark is set in Saira (the
@@ -13,6 +14,7 @@ export function LandingNav() {
         <span className="font-display text-[15px] font-extrabold uppercase tracking-[0.18em] text-foreground">
           Ranger-X<span className="text-muted"> Check</span>
         </span>
+        <VersionPill />
       </div>
       <nav className="flex items-center gap-2.5">
         <LinkBtn

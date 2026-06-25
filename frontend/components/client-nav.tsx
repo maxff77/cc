@@ -19,6 +19,7 @@ import { siteConfig, telegramHref } from "@/config/site";
 import { navLinks } from "@/config/nav";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
+import { VersionPill } from "@/components/ui/version-badge";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -171,6 +172,7 @@ export function ClientNav() {
           >
             <Mark size={28} />
             <Wordmark height={22} />
+            <VersionPill />
           </Link>
           {/* Desktop: inline nav tabs. */}
           <nav className="hidden items-center gap-1 lg:flex">{items()}</nav>

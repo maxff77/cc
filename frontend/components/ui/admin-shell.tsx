@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { navLinks, type NavLink } from "@/config/nav";
 import { PageHeader } from "@/components/ui/page-header";
 import { Mark, Wordmark } from "@/components/ui/logo";
+import { VersionPill } from "@/components/ui/version-badge";
 import { Btn } from "@/components/ui/btn";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
@@ -94,6 +95,7 @@ export function AdminShell({
             >
               <Mark size={28} />
               <Wordmark height={22} />
+              <VersionPill />
             </Link>
             {/* Desktop: inline tabs with the gradient active-underline. */}
             <nav className="hidden items-center gap-1 lg:flex">

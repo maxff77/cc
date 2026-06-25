@@ -1,16 +1,15 @@
-// Discreet, non-interactive version stamp pinned to the bottom-right corner.
-// Reads the build-time version injected from package.json (next.config.mjs).
-// Single source of truth: bump package.json `version` to change what shows.
-export function VersionBadge() {
+// Brand version stamp. Reads the build-time version injected from package.json
+// (next.config.mjs) — single source of truth: bump package.json `version`.
+// Rendered inline in the navbar as a brand-gradient pill (`.btn-fill` is the
+// AA-safe gradient for white text). Non-interactive, decorative.
+export function VersionPill() {
   const version = process.env.NEXT_PUBLIC_APP_VERSION;
   if (!version) return null;
 
-  // z-30 stays below z-50 modal overlays; bottom-16 clears the lg:hidden mobile
-  // cockpit nav, lg:bottom-2 hugs the corner on desktop where there is none.
   return (
     <span
-      aria-hidden
-      className="pointer-events-none fixed bottom-16 right-2 z-30 select-none font-mono text-[10px] leading-none text-foreground/25 lg:bottom-2"
+      aria-label={`Versión ${version}`}
+      className="btn-fill glow-soft inline-flex shrink-0 select-none items-center rounded-full px-2.5 py-1 font-mono text-[11px] font-bold uppercase leading-none tracking-wide text-white shadow-sm ring-1 ring-white/20"
     >
       v{version}
     </span>

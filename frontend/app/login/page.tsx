@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { siteConfig, telegramHref } from "@/config/site";
 import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
+import { VersionPill } from "@/components/ui/version-badge";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { Field } from "@/components/ui/field";
@@ -196,6 +197,7 @@ export default function LoginPage() {
           <span className="font-mono text-[11px] tracking-[0.1em] text-muted">
             RANGER-X CHECK © 2026
           </span>
+          <VersionPill />
         </div>
       </div>
     </main>
