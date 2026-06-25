@@ -27,6 +27,7 @@ export interface FieldProps {
   error?: string | null;
   name?: string;
   autoComplete?: string;
+  spellCheck?: boolean;
   required?: boolean;
   disabled?: boolean;
   className?: string;
@@ -45,6 +46,7 @@ export function Field({
   error,
   name,
   autoComplete,
+  spellCheck,
   required,
   disabled,
   inputMode,
@@ -96,6 +98,7 @@ export function Field({
           name={name}
           placeholder={placeholder}
           required={required}
+          spellCheck={spellCheck}
           type={type}
           value={value}
           onBlur={() => setFocus(false)}

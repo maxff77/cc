@@ -12,7 +12,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { seedFromBatch } from "@/lib/ws";
 import { usePersisted } from "@/lib/use-persisted";
-import { CookieManager } from "@/components/batch/cookie-manager";
+import { useListCookies } from "@/lib/cookies";
+import { CookieModal } from "@/components/batch/cookie-modal";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
 import { SectionCard } from "@/components/ui/section-card";
@@ -143,15 +144,6 @@ export function SendForm({
     [gates, categoryKey],
   );
 
-  // The gate currently PICKED in the idle selector (null while live or until a
-  // gate is chosen). Drives the cookie-vault manager: it shows ONLY for a
-  // cookie-mode gate while the surface is idle (cookie-vault Phase 1) — appending
-  // to a live lote locks the selector, so there is no gate to manage then.
-  const pickedGate = useMemo(
-    () => gatesInCategory.find((g) => String(g.id) === gateKey) ?? null,
-    [gatesInCategory, gateKey],
-  );
-
   // On append the backend validates the id but applies the LIVE gate's value
   // regardless — submit the live gate's id (any valid id works as fallback).
   const liveGateId = useMemo(() => {
@@ -175,6 +167,27 @@ export function SendForm({
     return gatesInCategory.find((g) => String(g.id) === gateKey) ?? null;
   }, [isLive, gates, live.gateDisplayValue, gatesInCategory, gateKey]);
   const gateCost = effectiveGate?.credit_cost ?? 0;
+
+  // Cookie vault (cookie-vault-modal): the manager moved out of the inline
+  // column into a modal reachable from a "Cookies (N)" button. `effectiveGate`
+  // is already live-aware (the live gate when sending/paused, the picked gate
+  // otherwise) — so the same button drives idle AND mid-send top-ups, dropping
+  // the old idle-only restriction with no extra live-state plumbing.
+  const cookieGate = effectiveGate?.cookie_mode ? effectiveGate : null;
+  // The gate id the modal was opened for, CAPTURED on open (null = closed). The
+  // modal renders off this snapshot, NOT the volatile live-derived `cookieGate`
+  // — so a live batch ending (`cookieGate` → null), or the live gate switching
+  // mid-batch, can't yank the modal out from under an in-progress paste,
+  // re-target "Guardar" at a different gate, or leave a stale open-flag that
+  // pops the modal open later with no click.
+  const [cookieModalGateId, setCookieModalGateId] = useState<number | null>(
+    null,
+  );
+  // Count for the button badge — shares the ["cookies", id] query the modal
+  // uses, so this is a free read (TanStack dedups).
+  const cookieList = useListCookies(cookieGate?.id ?? null);
+  const cookieCount =
+    cookieList.data?.total ?? cookieList.data?.items.length ?? 0;
   // Only non-staff tenants are metered — mirrors the backend's priority>0
   // exemption (_PRIORITY_BY_ROLE in batches.py: owner/admin are exempt, every
   // other role meters). Exempt by an explicit staff list (not `=== "client"`)
@@ -401,6 +414,20 @@ export function SendForm({
               )}
             </div>
           )}
+          {/* Cookie vault trigger (cookie-vault-modal): shown whenever the
+              active gate is cookie-mode — idle-picked OR live — so cookies can
+              be topped up mid-send. Opens the CookieModal. */}
+          {cookieGate && (
+            <Btn
+              full
+              icon="key"
+              type="button"
+              variant="secondary"
+              onClick={() => setCookieModalGateId(cookieGate.id)}
+            >
+              Cookies ({cookieList.isPending ? "…" : cookieCount})
+            </Btn>
+          )}
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <LabelCaps>Líneas</LabelCaps>
@@ -446,11 +473,15 @@ export function SendForm({
         </form>
       </SectionCard>
 
-      {/* Cookie vault (cookie-vault Phase 1): the manager mounts ONLY for a
-          cookie-mode gate while the surface is idle — a live lote locks the
-          selector, so there's no picked gate to manage. */}
-      {!isLive && pickedGate?.cookie_mode && (
-        <CookieManager gateId={pickedGate.id} />
+      {/* Cookie vault modal (cookie-vault-modal): mounts the manager only while
+          open, off the gate id CAPTURED at open time — reachable idle AND
+          mid-send via the "Cookies (N)" button. */}
+      {cookieModalGateId != null && (
+        <CookieModal
+          open
+          gateId={cookieModalGateId}
+          onClose={() => setCookieModalGateId(null)}
+        />
       )}
     </div>
   );

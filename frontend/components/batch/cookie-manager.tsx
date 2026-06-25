@@ -18,6 +18,7 @@ import { useAddCookie, useDeleteCookie, useListCookies } from "@/lib/cookies";
 import { Btn } from "@/components/ui/btn";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/field";
+import { Icon } from "@/components/ui/icon";
 import { LabelCaps } from "@/components/ui/label-caps";
 import { MonoChip } from "@/components/ui/mono-chip";
 import { Notice } from "@/components/ui/notice";
@@ -42,6 +43,22 @@ export function CookieManager({ gateId }: { gateId: number }) {
   const cookies = list.data?.items ?? [];
   const count = list.data?.total ?? cookies.length;
   const atCap = count >= COOKIE_CAP;
+
+  // "Pegar" shortcut — fill the field from the clipboard (mirrors send-form's
+  // líneas paste). Best-effort: an absent/denied Clipboard API is a no-op, the
+  // native paste still works.
+  async function pasteCookie() {
+    try {
+      const clip = await navigator.clipboard?.readText();
+
+      if (clip) {
+        setValue(clip);
+        setValueError(null);
+      }
+    } catch {
+      /* clipboard unavailable / denied — manual paste still works */
+    }
+  }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -103,20 +120,40 @@ export function CookieManager({ gateId }: { gateId: number }) {
       {banner && <Notice status="danger">{banner}</Notice>}
 
       <form className="flex flex-col gap-3" onSubmit={onSubmit}>
-        {/* type="password" shields the typed secret; the stored value is never
-            echoed back (only masked rows below). */}
-        <Field
-          error={valueError}
-          label="Cookie"
-          name="cookie-value"
-          placeholder="Pega la cookie"
-          type="password"
-          value={value}
-          onChange={(v) => {
-            setValue(v);
-            if (valueError) setValueError(null);
-          }}
-        />
+        {/* The stored value is a SENSITIVE credential, but the client is typing
+            THEIR OWN cookie into THEIR OWN session — show it as plain text
+            (owner request) so a paste is verifiable. The saved rows below stay
+            masked (only `masked_value` ever crosses the wire). */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <LabelCaps>Cookie</LabelCaps>
+            <button
+              className="rx-focus inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-accent transition-colors hover:text-foreground"
+              type="button"
+              onClick={pasteCookie}
+            >
+              <Icon name="copy" size={13} />
+              Pegar
+            </button>
+          </div>
+          {/* Visible plain text (owner request), but the value is still a
+              credential: autoComplete off + spellCheck off keep the browser's
+              form history / autofill and remote spellcheck services from
+              retaining or shipping it — the protections type="password" gave
+              implicitly. */}
+          <Field
+            autoComplete="off"
+            error={valueError}
+            name="cookie-value"
+            placeholder="Pega la cookie"
+            spellCheck={false}
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              if (valueError) setValueError(null);
+            }}
+          />
+        </div>
 
         <Field
           label="Etiqueta (opcional)"
