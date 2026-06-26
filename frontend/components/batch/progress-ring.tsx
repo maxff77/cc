@@ -1,22 +1,56 @@
 "use client";
 
-// Progress ring + flank metrics (UX-DR3 / Ranger-X handoff `ProgressRing`):
-// a native SVG ring with a cyan→accent→magenta gradient stroke + a neon glow
-// reserved for the SENDING arc (scales with --glow; paused/stopping is calm),
-// accent while sending / solid warning while
-// paused or stopping (AC 2 — "vivo pero no enviando" wears warning; 'stopping'
-// has no DESIGN token, recorded decision). Center % + fraction; flank shows
-// EXACTLY three metrics — enviadas · en cola / ETA / CC nuevas (UX-DR21).
+// Progress ring + flank metrics (UX-DR3 / Ranger-X handoff `ProgressRing`),
+// re-housed in the "Cliente Redesign" STATUS CARD (Cliente Redesign.dc.html):
+// a bordered surface plate that holds the ring + the stat row. Space-optimized
+// like the canvas — HORIZONTAL on phone/tablet (ring left · stats grid right)
+// and VERTICAL in the lg cockpit column (ring on top · stats row centered). The
+// METRICS stay ours (real WS data, UX-DR21): enviadas·en-cola, honest ETA, CC
+// nuevas — only the layout adopts the canvas. SVG ring keeps the
+// cyan→accent→magenta gradient stroke + a neon glow reserved for the SENDING arc
+// (scales with --glow; paused/stopping is calm warning).
 import type { LiveBatchState } from "@/lib/ws";
 
 import { useId } from "react";
 import clsx from "clsx";
 
-import { Metric, formatEta } from "@/components/batch/metric";
+import { formatEta } from "@/components/batch/metric";
 
-const SIZE = 144;
-const R = 58;
+const SIZE = 128;
+const R = 54;
 const C = 2 * Math.PI * R;
+const CENTER = SIZE / 2;
+
+// Shared status-card chrome (canvas `statusCardStyle`): flat surface plate.
+const CARD = "rounded-[var(--radius)] border border-border bg-surface";
+
+// One flank stat (canvas metric chip): mono value over a caps label. Left-
+// aligned beside the ring on phone/tablet, centered under it in the lg column.
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "success";
+}) {
+  return (
+    <div className="flex flex-col items-start gap-1 lg:items-center">
+      <span
+        className={clsx(
+          "font-mono text-lg font-extrabold leading-none tabular-nums",
+          tone === "success" ? "text-success" : "text-foreground",
+        )}
+      >
+        {value}
+      </span>
+      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">
+        {label}
+      </span>
+    </div>
+  );
+}
 
 // The bare ring SVG, shared by every ring state. `idle` paints only the muted
 // track + an em-dash; otherwise the gradient (or warning) arc fills to percent.
@@ -54,8 +88,8 @@ function Ring({
           </linearGradient>
         </defs>
         <circle
-          cx="72"
-          cy="72"
+          cx={CENTER}
+          cy={CENTER}
           fill="none"
           r={R}
           stroke="var(--surface-tertiary)"
@@ -63,8 +97,8 @@ function Ring({
         />
         {!idle && (
           <circle
-            cx="72"
-            cy="72"
+            cx={CENTER}
+            cy={CENTER}
             fill="none"
             r={R}
             stroke={stroke}
@@ -87,14 +121,14 @@ function Ring({
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
         <span
           className={clsx(
-            "font-mono text-[28px] font-extrabold leading-none tracking-[-0.03em] tabular-nums",
+            "font-mono text-[26px] font-extrabold leading-none tracking-[-0.03em] tabular-nums",
             idle ? "text-muted" : "text-foreground",
           )}
         >
           {idle ? "—" : `${percent}%`}
         </span>
         {!idle && total !== undefined && (
-          <span className="mt-1.5 font-mono text-xs text-muted tabular-nums">
+          <span className="mt-1 font-mono text-[11px] text-muted tabular-nums">
             {sent} / {total}
           </span>
         )}
@@ -108,23 +142,28 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
     live.total > 0 ? Math.round((live.sent / live.total) * 100) : 0;
 
   return (
-    <section className="flex items-center justify-between gap-4 py-2">
+    <section
+      className={clsx(
+        CARD,
+        "flex items-center gap-4 p-4 lg:flex-col lg:gap-4 lg:p-5",
+      )}
+    >
       <Ring
         percent={percent}
         sent={live.sent}
         tone={live.state === "sending" ? "accent" : "warning"}
         total={live.total}
       />
-      <div className="flex flex-col gap-3">
-        <Metric
+      <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-3 lg:flex lg:w-full lg:flex-wrap lg:justify-center lg:gap-5">
+        <Stat
           label="Enviadas · En cola"
           value={`${live.sent} · ${live.queued}`}
         />
-        <Metric
+        <Stat
           label={live.state === "paused" ? "ETA al reanudar" : "ETA"}
           value={formatEta(live.etaSeconds, live.queued)}
         />
-        <Metric label="CC nuevas" tone="success" value={String(live.ccNew)} />
+        <Stat label="CC nuevas" tone="success" value={String(live.ccNew)} />
       </div>
     </section>
   );
@@ -132,9 +171,9 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
 
 // Completion moment (P2): the ONE sanctioned success-pulse — shown for a few
 // seconds on the active→idle transition before the ring reverts to the idle
-// em-dash. Control-room calm: a single gradient ring + the run totals. The
-// gradient lives on the RING (a clipped shape, never on letters);
-// prefers-reduced-motion drops the pulse (motion-safe).
+// em-dash. Control-room calm: a single gradient ring + the run totals, in the
+// same status-card plate. The gradient lives on the RING (a clipped shape,
+// never on letters); prefers-reduced-motion drops the pulse (motion-safe).
 export interface RunSummary {
   sent: number;
   ccCaptured: number;
@@ -151,18 +190,16 @@ function formatDuration(seconds: number): string {
 
 export function CompletionRing({ summary }: { summary: RunSummary }) {
   return (
-    <section className="flex flex-col items-center gap-3 py-2">
-      <div className="relative">
-        <div className="p-[3px]" style={{ width: SIZE, height: SIZE }}>
-          <div className="gradient-moment size-full rounded-full motion-safe:animate-pulse">
-            <div className="flex size-full items-center justify-center rounded-full bg-surface">
-              <span
-                aria-hidden
-                className="text-[28px] font-extrabold leading-none tracking-[-0.03em] text-success"
-              >
-                ✓
-              </span>
-            </div>
+    <section className={clsx(CARD, "flex flex-col items-center gap-3 p-5")}>
+      <div className="p-[3px]" style={{ width: SIZE, height: SIZE }}>
+        <div className="gradient-moment size-full rounded-full motion-safe:animate-pulse">
+          <div className="flex size-full items-center justify-center rounded-full bg-surface">
+            <span
+              aria-hidden
+              className="text-[26px] font-extrabold leading-none tracking-[-0.03em] text-success"
+            >
+              ✓
+            </span>
           </div>
         </div>
       </div>
@@ -182,11 +219,11 @@ export function CompletionRing({ summary }: { summary: RunSummary }) {
 }
 
 // Idle placeholder (ui-polish-spec §4.2): the ring renders at 0 with the muted
-// track + a mono em-dash center — same footprint as the live ring, zero layout
-// jump when the lote starts. The invitation sentence sits below.
+// track + a mono em-dash center — same status-card footprint as the live ring,
+// zero layout jump when the lote starts. The invitation sentence sits below.
 export function IdleRing() {
   return (
-    <section className="flex flex-col items-center gap-3 py-2">
+    <section className={clsx(CARD, "flex flex-col items-center gap-3 p-5")}>
       <Ring idle percent={0} />
       <p className="text-center text-sm text-muted">
         Pega tus líneas y elige un gateway.

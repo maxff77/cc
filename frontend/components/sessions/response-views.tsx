@@ -152,6 +152,34 @@ function ExportLink({ path }: { path: string }) {
   );
 }
 
+// Footer "Copiar" (Cliente Redesign — Datos CC only): copy the panel's CC values
+// (one per line, the raw extracted text, no index) to the clipboard. ponytail:
+// best-effort — on an insecure context / denied permission the Clipboard API is
+// absent and the click no-ops; the ↓ .txt export is always there as a fallback.
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      className="rx-focus inline-flex items-center gap-1.5 font-mono text-[11.5px] text-muted transition-colors hover:text-foreground disabled:opacity-40"
+      disabled={text.length === 0}
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard?.writeText(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* clipboard unavailable / denied — the .txt export still works */
+        }
+      }}
+    >
+      <Icon name="copy" size={13} />
+      {copied ? "Copiado" : "Copiar"}
+    </button>
+  );
+}
+
 // Footer "Limpiar" (PR-1 literal) — cockpit-only: opens a confirm that clears
 // ALL THREE live panels at once (Completa, Aprobadas-✅, Datos-CC) via a
 // non-destructive per-session view cutoff in the backend (no `responses` rows
@@ -201,6 +229,7 @@ function ResponsePanel({
   emptyText,
   rows,
   exportPath,
+  copyText,
   onClear,
   clearDisabled,
   listClassName,
@@ -212,6 +241,10 @@ function ResponsePanel({
   emptyText: string;
   rows: RowData[];
   exportPath?: string;
+  // Present ⇒ render a "Copiar" button at the footer-left (Datos CC only),
+  // copying these values to the clipboard. Mutually exclusive with `onClear`
+  // (a panel is either the Completa-Limpiar one or the Datos-CC-Copiar one).
+  copyText?: string;
   // Present ⇒ render a "Limpiar" button in the footer (Completa, cockpit only).
   // It clears all three live panels at once (the cutoff lives server-side).
   onClear?: () => void;
@@ -235,21 +268,24 @@ function ResponsePanel({
         </div>
       )}
       <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
-      {(exportPath || onClear) && (
-        // `onClear` (Completa) splits the row: Limpiar left, ↓ .txt right. The
-        // other panels keep the export left-aligned exactly as before.
+      {(exportPath || onClear || copyText !== undefined) && (
+        // A footer-left action (Limpiar on Completa, Copiar on Datos CC) splits
+        // the row: action left, ↓ .txt right. Panels with only an export keep it
+        // left-aligned exactly as before.
         <div
           className={clsx(
             "flex items-center gap-2 border-t border-border px-3 py-2",
-            onClear && "justify-between",
+            (onClear || copyText !== undefined) && "justify-between",
           )}
         >
-          {onClear && (
+          {onClear ? (
             <ClearButton
               disabled={clearDisabled ?? rows.length === 0}
               onClick={onClear}
             />
-          )}
+          ) : copyText !== undefined ? (
+            <CopyButton text={copyText} />
+          ) : null}
           {exportPath && <ExportLink path={exportPath} />}
         </div>
       )}
@@ -340,6 +376,7 @@ export function FiltradaPanel({
   return (
     <ResponsePanel
       className={className}
+      copyText={cc.map((row) => row.text).join("\n")}
       count={total}
       countTone="success"
       emptyText={EMPTY_FILTRADA}
