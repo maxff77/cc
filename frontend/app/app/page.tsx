@@ -15,7 +15,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { clearCockpit, useLiveBatch } from "@/lib/ws";
-import { AwaitingReply } from "@/components/batch/awaiting-reply";
 import { BatchControls } from "@/components/batch/batch-controls";
 import { CookiesExhaustedNotice } from "@/components/batch/cookies-exhausted-notice";
 import { FailedLines } from "@/components/batch/failed-lines";
@@ -183,7 +182,6 @@ export default function EnvioPage() {
         <FloodNotice />
         <FailedLines live={live} />
         <PendingLines live={live} />
-        <AwaitingReply live={live} />
 
         {gates.isLoading && (
           <SectionCard legend="Nuevo lote" padding="none">

@@ -45,7 +45,7 @@ function Stat({
       >
         {value}
       </span>
-      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">
+      <span className="text-[10px] font-semibold uppercase leading-tight tracking-[0.1em] text-muted lg:text-center">
         {label}
       </span>
     </div>
@@ -154,7 +154,11 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
         tone={live.state === "sending" ? "accent" : "warning"}
         total={live.total}
       />
-      <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-3 lg:flex lg:w-full lg:flex-wrap lg:justify-center lg:gap-5">
+      {/* Four live stats in a 2×2 grid (Cliente Redesign): enviadas·cola, ETA,
+          CC nuevas + "Esperando respuesta" (delivered lines without a ✅/❌
+          reply yet) — the latter folded in here so it no longer needs its own
+          standalone box in the cockpit column. */}
+      <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-3 lg:w-full lg:gap-y-3.5">
         <Stat
           label="Enviadas · En cola"
           value={`${live.sent} · ${live.queued}`}
@@ -164,6 +168,10 @@ export function ProgressRing({ live }: { live: LiveBatchState }) {
           value={formatEta(live.etaSeconds, live.queued)}
         />
         <Stat label="CC nuevas" tone="success" value={String(live.ccNew)} />
+        <Stat
+          label="Esperando respuesta"
+          value={String(live.awaitingReply)}
+        />
       </div>
     </section>
   );
