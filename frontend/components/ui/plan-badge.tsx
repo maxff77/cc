@@ -8,34 +8,61 @@
 //
 // Day-scale math on the local clock, mirroring the app-clock exception in
 // services/plans.py — seconds of skew cannot move a day-grained deadline.
-import { StatePill, type PillTone } from "@/components/ui/state-pill";
+type PlanTone = "success" | "warning" | "danger";
 
 const DAY_MS = 86_400_000;
 const SOON_DAYS = 3;
 
-function describe(expiresAt: string): { label: string; tone: PillTone } {
+// Dot color tracks urgency (success healthy → warning soon → danger expired).
+const DOT_COLOR: Record<PlanTone, string> = {
+  success: "var(--success)",
+  warning: "var(--warning)",
+  danger: "var(--danger)",
+};
+
+function describe(expiresAt: string): {
+  days: number | null;
+  label: string;
+  tone: PlanTone;
+} {
   const ms = new Date(expiresAt).getTime() - Date.now();
-  if (ms <= 0) return { label: "Vencido", tone: "danger" };
+  if (ms <= 0) return { days: null, label: "Vencido", tone: "danger" };
   // Under 24h left is the "last day" — ceil() would read this as "1 día", so
   // catch it before the day math (I/O matrix "Last day → Vence hoy").
-  if (ms < DAY_MS) return { label: "Vence hoy", tone: "warning" };
+  if (ms < DAY_MS) return { days: null, label: "Vence hoy", tone: "warning" };
   const days = Math.ceil(ms / DAY_MS);
   const label = days === 1 ? "1 día" : `${days} días`;
-  return { label, tone: days <= SOON_DAYS ? "warning" : "success" };
+  return { days, label, tone: days <= SOON_DAYS ? "warning" : "success" };
 }
 
 export function PlanBadge({ expiresAt }: { expiresAt: string | null }) {
   // No badge while /me is loading or for staff (null) — avoids layout shift.
   if (!expiresAt) return null;
-  const { label, tone } = describe(expiresAt);
+  const { days, label, tone } = describe(expiresAt);
   const aria = tone === "danger" ? "Plan vencido" : `Plan: quedan ${label}`;
-  // role="img" + aria-label so screen readers announce the full "Plan: …"
-  // phrase instead of the bare "12 días"; StatePill stays reused as-is.
+  // Canvas plan pill: 34px surface-secondary plate, leading 7px tone dot, mono
+  // bold days + " días" (or the plain text label for the no-number states).
   return (
-    <span aria-label={aria} className="inline-flex" role="img">
-      <StatePill dot="static" tone={tone}>
-        {label}
-      </StatePill>
+    <span
+      aria-label={aria}
+      className="inline-flex h-[34px] shrink-0 items-center gap-[7px] rounded-[9px] border border-border bg-surface-secondary px-3 text-[12.5px] text-muted"
+      role="img"
+    >
+      <span
+        aria-hidden
+        className="size-[7px] rounded-full"
+        style={{ background: DOT_COLOR[tone] }}
+      />
+      {days !== null ? (
+        <>
+          <span className="font-mono font-semibold text-foreground">
+            {days}
+          </span>{" "}
+          {days === 1 ? "día" : "días"}
+        </>
+      ) : (
+        <span className="font-mono font-semibold text-foreground">{label}</span>
+      )}
     </span>
   );
 }

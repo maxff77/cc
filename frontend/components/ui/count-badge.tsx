@@ -14,8 +14,10 @@ export function CountBadge({
   return (
     <span
       className={clsx(
-        "rounded bg-surface-secondary px-1.5 font-mono text-[11px] leading-5 tabular-nums",
-        tone === "success" && "text-success",
+        "inline-flex items-center rounded-full px-[7px] py-px font-mono text-[11px] tabular-nums",
+        tone === "success"
+          ? "bg-[color-mix(in_oklch,var(--success)_22%,transparent)] text-success"
+          : "bg-surface-tertiary text-muted",
       )}
     >
       {value}

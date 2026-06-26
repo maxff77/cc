@@ -6,10 +6,17 @@ export function VersionPill() {
   const version = process.env.NEXT_PUBLIC_APP_VERSION;
   if (!version) return null;
 
+  // Canvas version pill: mono brand-gradient stamp, 22px tall, r7, white text
+  // with a soft brand glow. Hidden on mobile (desktop chrome only).
   return (
     <span
       aria-label={`Versión ${version}`}
-      className="btn-fill glow-soft inline-flex shrink-0 select-none items-center rounded-full px-2.5 py-1 font-mono text-[11px] font-bold uppercase leading-none tracking-wide text-white shadow-sm ring-1 ring-white/20"
+      className="brand-fill hidden h-[22px] shrink-0 select-none items-center rounded-[7px] px-[9px] font-mono text-[10.5px] font-semibold uppercase leading-none text-white sm:inline-flex"
+      style={{
+        letterSpacing: ".06em",
+        boxShadow: "0 2px 10px oklch(64% 0.21 295 / 0.30)",
+      }}
+      title="Versión del sistema"
     >
       v{version}
     </span>

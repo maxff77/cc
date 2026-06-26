@@ -5,18 +5,24 @@ import clsx from "clsx";
 export function MonoChip({
   children,
   className,
+  dot = false,
 }: {
   children: React.ReactNode;
   className?: string;
+  // Optional 6px accent dot (e.g. the "Gateway activo" live chip).
+  dot?: boolean;
 }) {
   return (
     <span
       className={clsx(
-        "rounded border border-border bg-surface-secondary px-1.5 py-0.5 font-mono text-[11px] tabular-nums",
+        "inline-flex max-w-full items-center gap-2 rounded border border-border bg-surface-secondary px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-foreground",
         className,
       )}
     >
-      {children}
+      {dot && (
+        <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+      )}
+      <span className="overflow-hidden text-ellipsis">{children}</span>
     </span>
   );
 }

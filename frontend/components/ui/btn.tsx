@@ -21,16 +21,19 @@ export type BtnVariant =
   | "warning";
 export type BtnSize = "sm" | "md" | "lg";
 
+// Heights match the canvas idioms: secondary/utility chips run ~40px, the
+// commit/primary action runs 44px (overridden per-variant below).
 const SIZE_CLASS: Record<BtnSize, string> = {
-  sm: "px-3 py-1.5 text-[13px]",
-  md: "px-4 py-[9px] text-sm",
-  lg: "px-[22px] py-[13px] text-[15px]",
+  sm: "h-9 px-3 text-[12.5px]",
+  md: "h-10 px-[18px] text-[13px]",
+  lg: "h-11 px-[22px] text-[15px]",
 };
 
 // Variant surfaces. color-mix borders mirror the handoff's danger/warning
-// outline buttons; primary's gradient + glow ride inline style below.
+// outline buttons; primary's gradient + glow ride inline style below. Primary
+// is the brand-gradient commit button: taller (44), rounder (11px), Saira 700.
 const VARIANT_CLASS: Record<BtnVariant, string> = {
-  primary: "text-white border-none btn-fill",
+  primary: "h-11 text-white border-none btn-fill font-bold",
   secondary: "bg-surface-secondary text-foreground border-border",
   ghost: "bg-transparent text-muted border-transparent hover:text-foreground",
   danger:
@@ -74,6 +77,7 @@ export function Btn({
       style={{
         ...(variant === "primary"
           ? {
+              borderRadius: "11px",
               boxShadow:
                 "0 6px 22px oklch(64% 0.21 295 / calc(0.35 * var(--glow)))",
             }

@@ -7,17 +7,31 @@
 // Visible set follows the state machine verbatim: sending → Pausar+Detener ·
 // paused → Reanudar+Detener · stopping → frozen, disabled · waiting → Detener
 // only (Story 4.2) · idle → nothing.
+import type { CSSProperties } from "react";
 import type { LiveBatchState } from "@/lib/ws";
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
-import { SectionCard } from "@/components/ui/section-card";
-import { Btn } from "@/components/ui/btn";
 import { Notice } from "@/components/ui/notice";
 
 type ControlAction = "pause" | "resume" | "stop";
+
+const baseBtn: CSSProperties = {
+  flex: 1,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "7px",
+  height: "40px",
+  borderRadius: "10px",
+  border: "1px solid",
+  cursor: "pointer",
+  fontSize: "13px",
+  fontWeight: 600,
+  fontFamily: "'Saira',sans-serif",
+};
 
 export function BatchControls({ live }: { live: LiveBatchState }) {
   const [error, setError] = useState<string | null>(null);
@@ -41,55 +55,60 @@ export function BatchControls({ live }: { live: LiveBatchState }) {
 
   // Re-submit guard (2.1 lesson) + everything frozen while 'stopping'.
   const isDisabled = mutation.isPending || live.state === "stopping";
+  const disabledStyle: CSSProperties = isDisabled
+    ? { opacity: 0.5, cursor: "not-allowed" }
+    : {};
+
+  const isPaused = live.state === "paused";
+  // Pause/Resume tint: success-tinted while paused (▶ Reanudar), warning-tinted
+  // while running (⏸ Pausar) — canvas pauseBtnStyle.
+  const pauseStyle: CSSProperties = {
+    ...baseBtn,
+    background: isPaused
+      ? "color-mix(in oklch, var(--success) 16%, transparent)"
+      : "color-mix(in oklch, var(--warning) 16%, transparent)",
+    borderColor: isPaused
+      ? "color-mix(in oklch, var(--success) 40%, transparent)"
+      : "color-mix(in oklch, var(--warning) 40%, transparent)",
+    color: isPaused ? "var(--success)" : "var(--warning)",
+    ...disabledStyle,
+  };
+
+  const stopStyle: CSSProperties = {
+    ...baseBtn,
+    background: "var(--surface-secondary)",
+    borderColor: "var(--border)",
+    color: "var(--muted)",
+    ...disabledStyle,
+  };
 
   return (
-    <SectionCard
-      className="flex flex-col gap-2.5"
-      legend="Controles"
-      rail={
-        live.state === "sending"
-          ? "accent"
-          : live.state === "paused"
-            ? "warning"
-            : "none"
-      }
-    >
-      <div className="flex gap-2.5">
-        {live.state === "paused" ? (
-          // Reanudar — the ONLY solid control (DESIGN.md control-button).
-          // flex-1 (basis-0), NOT `full` (w-full): two w-full buttons + Btn's
-          // base shrink-0 each claim 100% and refuse to shrink → overflow.
-          <Btn
-            className="flex-1"
+    <div className="flex flex-col gap-2.5">
+      <div style={{ display: "flex", gap: "8px" }}>
+        {/* waiting (4.2): Detener only — no pause/resume button. */}
+        {live.state !== "waiting" && (
+          <button
             disabled={isDisabled}
-            icon="play"
-            variant="success"
-            onClick={() => mutation.mutate("resume")}
+            style={pauseStyle}
+            type="button"
+            onClick={() => mutation.mutate(isPaused ? "resume" : "pause")}
           >
-            Reanudar
-          </Btn>
-        ) : live.state === "waiting" ? null : ( // waiting: Detener only (4.2)
-          <Btn
-            className="flex-1"
-            disabled={isDisabled}
-            icon="pause"
-            variant="warning"
-            onClick={() => mutation.mutate("pause")}
-          >
-            Pausar
-          </Btn>
+            {isPaused ? "▶ Reanudar" : "⏸ Pausar"}
+          </button>
         )}
-        <Btn
-          className="flex-1"
+        <button
           disabled={isDisabled}
-          icon="stop"
-          variant="danger"
+          style={stopStyle}
+          type="button"
           onClick={() => mutation.mutate("stop")}
         >
+          <svg fill="currentColor" height="14" viewBox="0 0 24 24" width="14">
+            <rect height="12" rx="2" width="12" x="6" y="6" />
+          </svg>
           Detener
-        </Btn>
+        </button>
       </div>
       {error && <Notice status="danger">{error}</Notice>}
-    </SectionCard>
+    </div>
   );
 }

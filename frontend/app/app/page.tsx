@@ -167,8 +167,8 @@ export default function EnvioPage() {
           <IdleRing />
         )}
 
-        <PlanExpiryNotice />
         <BatchControls live={live} />
+        <PlanExpiryNotice />
         <WatchdogNotice />
         {/* Cookies-exhausted prompt (Phase 2): only when the live batch paused
             for that reason — add cookies + Reanudar without leaving the cockpit. */}

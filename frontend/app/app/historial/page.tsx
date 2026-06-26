@@ -19,11 +19,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
-import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { Notice } from "@/components/ui/notice";
-import { SectionCard } from "@/components/ui/section-card";
-import { CountBadge } from "@/components/ui/count-badge";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -73,18 +70,29 @@ function HistoryRow({
   pending: boolean;
 }) {
   return (
-    <div className="flex items-start gap-2 border-b border-separator px-3 py-1.5 font-mono text-[11px] leading-[1.4] last:border-b-0">
-      <span className="shrink-0 text-muted tabular-nums">
+    <div
+      className="flex items-start gap-[11px] border-b border-separator px-4 py-[11px] last:border-b-0"
+    >
+      <span
+        className="shrink-0 pt-0.5 font-mono text-[10.5px] tabular-nums"
+        style={{ color: "var(--faint)" }}
+      >
         {formatTime(item.captured_at)}
       </span>
-      <div className="min-w-0 flex-1">
-        <span className="block break-words">{item.text}</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-[7px]">
+        <span className="break-words font-mono text-[11.5px] leading-[1.5] text-foreground [overflow-wrap:anywhere]">
+          {item.text}
+        </span>
         {item.cc.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-[5px]">
             {item.cc.map((cc, i) => (
               <span
                 key={`${cc}-${i}`}
-                className="rounded bg-success/15 px-1.5 py-0.5 text-[10px] leading-none text-success"
+                className="rounded-md px-2 py-0.5 font-mono text-[11px] text-success"
+                style={{
+                  background:
+                    "color-mix(in oklch, var(--success) 15%, transparent)",
+                }}
               >
                 {cc}
               </span>
@@ -92,13 +100,11 @@ function HistoryRow({
           </div>
         )}
       </div>
-      <span aria-hidden className="shrink-0 text-success">
-        ✅
-      </span>
       <button
         aria-label="Eliminar esta respuesta"
-        className="rx-focus shrink-0 text-muted transition-colors hover:text-danger disabled:opacity-40"
+        className="rx-focus flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] transition-colors hover:text-danger disabled:opacity-40"
         disabled={pending}
+        style={{ color: "var(--faint)" }}
         type="button"
         onClick={onDelete}
       >
@@ -176,20 +182,26 @@ export default function HistorialPage() {
   const hasHistory = gates.length > 0;
 
   return (
-    <div className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto rx-scroll lg:pr-1">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="font-display text-lg font-bold text-foreground">
+    <div className="rx-scroll mx-auto flex w-full max-w-[880px] flex-col gap-[18px] lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-[3px]">
+          <h1 className="font-display text-[22px] font-bold text-foreground">
             Historial
           </h1>
-          <p className="mt-0.5 text-sm text-muted">
-            Tus respuestas aprobadas (✅), agrupadas por gateway.
-          </p>
+          <span className="text-[13px] text-muted">
+            Tus respuestas aprobadas, agrupadas por gateway.
+          </span>
         </div>
         {hasHistory && (
-          <Btn
-            size="sm"
-            variant="danger"
+          <button
+            className="rx-focus inline-flex h-9 shrink-0 items-center gap-[7px] rounded-[9px] px-[14px] font-display text-[13px] font-semibold text-danger"
+            style={{
+              background:
+                "color-mix(in oklch, var(--danger) 14%, transparent)",
+              border:
+                "1px solid color-mix(in oklch, var(--danger) 38%, transparent)",
+            }}
+            type="button"
             onClick={() => {
               setActionError(null);
               setConfirm({ kind: "all" });
@@ -197,16 +209,19 @@ export default function HistorialPage() {
           >
             <Icon name="trash" size={15} />
             Borrar todo
-          </Btn>
+          </button>
         )}
       </div>
 
       {actionError && <Notice status="danger">{actionError}</Notice>}
 
       {history.isLoading && (
-        <SectionCard padding="none">
+        <div
+          className="overflow-hidden rounded-[var(--radius)] bg-surface"
+          style={{ border: "1px solid var(--border)" }}
+        >
           <PanelSkeleton rows={4} />
-        </SectionCard>
+        </div>
       )}
 
       {history.isError && (
@@ -216,30 +231,62 @@ export default function HistorialPage() {
       )}
 
       {history.data && !hasHistory && (
-        <SectionCard>
-          <p className="px-1 py-6 text-center text-sm text-muted">
-            Aún no hay historial.
-          </p>
-        </SectionCard>
+        <div
+          className="flex flex-col items-center gap-2 rounded-[var(--radius)] bg-surface px-5 py-[54px]"
+          style={{ border: "1px solid var(--border)" }}
+        >
+          <svg
+            fill="none"
+            height="28"
+            stroke="var(--faint)"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.5"
+            viewBox="0 0 24 24"
+            width="28"
+          >
+            <path d="M3 3v5h5M3.05 13A9 9 0 106 5.3L3 8" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span className="text-[13.5px] text-muted">Aún no hay historial.</span>
+        </div>
       )}
 
       {gates.map((gate) => (
-        <SectionCard
+        <div
           key={gate.name ?? "__null__"}
-          legend={gate.name ?? gate.display_value}
-          legendAs="h2"
-          legendRight={<CountBadge tone="success" value={gate.count} />}
-          padding="none"
+          className="overflow-hidden rounded-[var(--radius)] bg-surface"
+          style={{ border: "1px solid var(--border)" }}
         >
-          {/* Gate NAME is the engraved legend; the "Comando visible"
-              (display_value) rides below as a muted subtitle. "Sin gate"
-              (name null) is self-describing, so it carries no subtitle. */}
-          {gate.name !== null && (
-            <div className="border-b border-separator px-3 py-1.5 font-mono text-[11px] text-muted">
-              {gate.display_value}
+          {/* Gate header — NAME (display) + optional "Comando visible"
+              (display_value) sub-pill, with a success count pill on the right.
+              "Sin gate" (name null) is self-describing, so it carries no
+              sub-pill and no per-gate delete. */}
+          <div
+            className="flex items-center justify-between gap-[10px] px-4 py-[13px]"
+            style={{ borderBottom: "1px solid var(--separator)" }}
+          >
+            <div className="flex min-w-0 items-center gap-[10px]">
+              <span className="truncate whitespace-nowrap font-display text-[14.5px] font-bold text-foreground">
+                {gate.name ?? gate.display_value}
+              </span>
+              {gate.name !== null && (
+                <span className="shrink-0 rounded-[7px] bg-surface-tertiary px-2 py-0.5 font-mono text-[11px] text-muted">
+                  {gate.display_value}
+                </span>
+              )}
             </div>
-          )}
-          <div className="rx-scroll max-h-[60vh] overflow-y-auto">
+            <span
+              className="inline-flex h-6 shrink-0 items-center gap-[5px] rounded-full px-[10px] font-mono text-[12px] font-semibold text-success"
+              style={{
+                background:
+                  "color-mix(in oklch, var(--success) 16%, transparent)",
+              }}
+            >
+              {gate.count}
+            </span>
+          </div>
+          <div className="rx-scroll max-h-[360px] overflow-y-auto">
             {gate.items.map((item) => (
               <HistoryRow
                 key={item.id}
@@ -252,7 +299,10 @@ export default function HistorialPage() {
           {/* "Sin gate" (name === null) has no gate name to target, so it
               carries no per-gate delete — only per-response + Borrar todo. */}
           {gate.name !== null && (
-            <div className="flex justify-end border-t border-border px-3 py-2">
+            <div
+              className="flex justify-end px-4 py-[9px]"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
               <button
                 className="rx-focus inline-flex items-center gap-1.5 font-mono text-[11.5px] text-danger transition-opacity hover:opacity-80"
                 type="button"
@@ -270,7 +320,7 @@ export default function HistorialPage() {
               </button>
             </div>
           )}
-        </SectionCard>
+        </div>
       ))}
 
       {/* Shared confirm for the two heavier deletes (gate + all). The

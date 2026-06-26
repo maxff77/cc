@@ -38,7 +38,7 @@ export function SectionCard({
   return (
     <section
       className={clsx(
-        "relative rounded border border-border bg-surface",
+        "relative rounded-[var(--radius)] border border-border bg-surface",
         padding === "gutter" && "p-3",
         rail === "accent" && "border-l-2 border-l-accent",
         rail === "warning" && "border-l-2 border-l-warning",
@@ -49,7 +49,7 @@ export function SectionCard({
         <LabelCaps
           as={legendAs}
           className={clsx(
-            "absolute -top-2 left-3 flex h-4 items-center px-1.5",
+            "absolute -top-2 left-3.5 flex h-4 items-center px-2",
             LEGEND_MASK,
           )}
         >

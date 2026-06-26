@@ -48,7 +48,7 @@ export function Area({
         className={clsx(
           // text-base on phones (<640) keeps the paste box ≥16px so iOS Safari
           // does not zoom on focus; the dense 13px mono returns at sm+.
-          "rx-scroll w-full resize-y rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-2.5 text-base leading-normal text-[var(--field-foreground)] outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-[var(--field-placeholder)] sm:text-[13px]",
+          "rx-scroll min-h-[92px] w-full resize-y rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-[11px] text-base leading-[1.55] text-[var(--field-foreground)] outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-[var(--field-placeholder)] sm:text-[12.5px]",
           mono && "font-mono",
           invalid
             ? "border-danger"

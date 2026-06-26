@@ -74,13 +74,16 @@ interface WordmarkProps {
 
 // "RANGER-X" wordmark lifted from the lockup. Its type is dark-on-light, so it
 // rides a light plate (rounded + border) to stay legible on the dark nav.
-export function Wordmark({ height = 22, className }: WordmarkProps) {
+export function Wordmark({ height = 18, className }: WordmarkProps) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center overflow-hidden rounded-md border border-border ring-1 ring-black/5",
+        "inline-flex h-[26px] items-center overflow-hidden rounded-[7px] border border-border px-[7px]",
         className,
       )}
+      // Canvas brand plate: fixed light field so the dark-on-light wordmark stays
+      // legible on the dark nav, with a faint outer ring.
+      style={{ background: "#f4f4fb", boxShadow: "0 0 0 1px rgba(0,0,0,.05)" }}
     >
       <Image
         alt="Ranger-X"

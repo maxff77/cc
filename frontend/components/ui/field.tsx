@@ -71,7 +71,7 @@ export function Field({
       )}
       <div
         className={clsx(
-          "flex items-center gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-2.5 transition-[border-color,box-shadow] duration-150",
+          "flex h-11 items-center gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 transition-[border-color,box-shadow] duration-150",
           invalid
             ? "border-danger"
             : focus

@@ -20,7 +20,6 @@ import { navLinks } from "@/config/nav";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { VersionPill } from "@/components/ui/version-badge";
-import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
@@ -65,7 +64,9 @@ function NavItem({
   return (
     <Link
       className={clsx(
-        "tap-44 rx-focus relative flex items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 font-display text-sm font-semibold tracking-[0.01em] transition-colors",
+        // Canvas nav tab: 34px tall pill, r8, Saira 13.5/600, active fills
+        // surface-tertiary; idle muted → foreground on hover.
+        "tap-44 rx-focus relative flex h-[34px] items-center justify-center rounded-[8px] px-[14px] font-display text-[13.5px] font-semibold tracking-[0.01em] transition-colors",
         active
           ? "bg-surface-tertiary text-foreground"
           : "text-muted hover:text-foreground",
@@ -89,7 +90,7 @@ function NavItem({
       {active && (
         <span
           aria-hidden
-          className="brand-fill absolute inset-x-3 -bottom-[13px] h-0.5 rounded"
+          className="brand-fill absolute inset-x-3 -bottom-[12px] h-0.5 rounded"
         />
       )}
     </Link>
@@ -107,6 +108,8 @@ export function ClientNav() {
   // Soporte + Cerrar sesión collapse into the ⋯ overflow menu.
   const [keyOpen, setKeyOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Build-time version stamp for the overflow menu's "Versión" row.
+  const version = process.env.NEXT_PUBLIC_APP_VERSION;
 
   // Escape closes the overflow menu (click-outside is the backdrop button).
   useEffect(() => {
@@ -164,13 +167,13 @@ export function ClientNav() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-border bg-[color-mix(in_oklch,var(--background)_82%,transparent)] px-4 py-3 backdrop-blur-md lg:px-6">
-        <div className="flex min-w-0 items-center gap-6">
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-[14px] border-b border-border bg-[color-mix(in_oklch,var(--background)_86%,transparent)] px-[14px] py-[11px] backdrop-blur-[10px] lg:px-5 lg:py-3">
+        <div className="flex min-w-0 items-center gap-[22px]">
           <Link
             className="rx-focus flex shrink-0 items-center gap-2.5"
             href="/app"
           >
-            <Mark size={28} />
+            <Mark size={30} />
             <Wordmark height={22} />
             <VersionPill />
           </Link>
@@ -205,7 +208,7 @@ export function ClientNav() {
               label returns at sm+) so the header clears the plan badge + theme
               toggle + ⋯ without overflow on a ~360px screen. */}
           <button
-            className="tap-44 rx-focus inline-flex h-[34px] items-center gap-2 rounded-[var(--radius-field)] border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[var(--accent-soft)] px-3 font-display text-[13px] font-semibold text-foreground transition-[transform] duration-150 hover:-translate-y-px"
+            className="tap-44 rx-focus inline-flex h-[34px] items-center gap-2 rounded-[9px] border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-[var(--accent-soft)] px-[13px] font-display text-[13px] font-semibold text-foreground transition-[transform] duration-150 hover:-translate-y-px"
             type="button"
             onClick={() => setKeyOpen(true)}
           >
@@ -214,16 +217,17 @@ export function ClientNav() {
           </button>
           <ThemeToggle />
           {/* Overflow ⋯ — Soporte (clients only) + Cerrar sesión. Consolidates
-              what used to be two standalone header buttons. */}
+              what used to be two standalone header buttons. Square 34px chrome
+              tile matching the canvas key/theme/⋯ trio. */}
           <div className="relative">
-            <Btn
+            <button
               aria-label="Más"
-              size="sm"
-              variant="secondary"
+              className="tap-44 rx-focus inline-flex size-[34px] items-center justify-center rounded-[9px] border border-border bg-surface-secondary text-muted transition-colors hover:text-foreground"
+              type="button"
               onClick={() => setMenuOpen((o) => !o)}
             >
               <Icon name="dots" size={18} />
-            </Btn>
+            </button>
             {menuOpen && (
               <>
                 <button
@@ -233,10 +237,24 @@ export function ClientNav() {
                   type="button"
                   onClick={() => setMenuOpen(false)}
                 />
-                <div className="rx-enter glow-soft absolute right-0 top-[calc(100%+8px)] z-50 w-56 rounded-[var(--radius)] border border-[var(--border-strong)] bg-surface-secondary p-1.5">
+                <div className="rx-enter glow-soft absolute right-0 top-[calc(100%+8px)] z-50 w-[220px] rounded-[14px] border border-[var(--border-strong)] bg-surface-secondary p-1.5 shadow-[0_20px_50px_rgba(0,0,0,.45)]">
+                  {/* Versión row — engraved caps label + mono accent stamp. */}
+                  {version && (
+                    <>
+                      <div className="flex items-center justify-between gap-2.5 px-3 pb-[7px] pt-2">
+                        <span className="font-display text-[11px] uppercase tracking-[0.08em] text-[var(--faint)]">
+                          Versión
+                        </span>
+                        <span className="font-mono text-[11px] font-semibold text-accent">
+                          v{version}
+                        </span>
+                      </div>
+                      <div className="mx-2 mb-[5px] mt-0.5 h-px bg-[var(--separator)]" />
+                    </>
+                  )}
                   {!isStaff && siteConfig.contacts[0] && (
                     <button
-                      className="tap-44 rx-focus flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2.5 text-left text-[13.5px] text-foreground transition-colors hover:bg-surface-tertiary"
+                      className="tap-44 rx-focus flex w-full items-center gap-[11px] rounded-[9px] px-3 py-[11px] text-left text-[13.5px] text-foreground transition-colors hover:bg-surface-tertiary"
                       type="button"
                       onClick={() => {
                         setMenuOpen(false);
@@ -252,10 +270,10 @@ export function ClientNav() {
                     </button>
                   )}
                   {!isStaff && (
-                    <div className="mx-2 my-1 h-px bg-[var(--separator)]" />
+                    <div className="mx-2 my-[5px] h-px bg-[var(--separator)]" />
                   )}
                   <button
-                    className="tap-44 rx-focus flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2.5 text-left text-[13.5px] text-danger transition-colors hover:bg-surface-tertiary"
+                    className="tap-44 rx-focus flex w-full items-center gap-[11px] rounded-[9px] px-3 py-[11px] text-left text-[13.5px] text-danger transition-colors hover:bg-surface-tertiary"
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);

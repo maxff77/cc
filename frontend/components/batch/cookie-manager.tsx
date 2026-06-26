@@ -1,12 +1,11 @@
 "use client";
 
 // Gate-cookie vault manager (amazon-gate-cookie-vault, Phase 1): the per-gate
-// place a client stores/lists/deletes their own cookies. Rendered by the
-// cockpit ONLY for a cookie-mode gate while the surface is idle (see send-form).
+// place a client stores/lists/deletes their own cookies. Rendered inside the
+// cookie modal (see cookie-modal / send-form) for a cookie-mode gate.
 //
 // Security: the stored value is a SENSITIVE credential. This UI NEVER renders a
-// raw value — the backend returns only `masked_value` (e.g. `ab••••yz`), and
-// the add input is `type="password"` so the typed secret is shielded too. The
+// raw value — the backend returns only `masked_value` (e.g. `ab••••yz`). The
 // list/store endpoints are tenant-scoped; this component just paints what the
 // vault returns.
 import type { CookieOut } from "@/types/api";
@@ -15,20 +14,27 @@ import { useState } from "react";
 
 import { ApiError } from "@/lib/api";
 import { useAddCookie, useDeleteCookie, useListCookies } from "@/lib/cookies";
-import { Btn } from "@/components/ui/btn";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Field } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
-import { LabelCaps } from "@/components/ui/label-caps";
-import { MonoChip } from "@/components/ui/mono-chip";
-import { Notice } from "@/components/ui/notice";
-import { PanelSkeleton } from "@/components/ui/panel-skeleton";
-import { SectionCard } from "@/components/ui/section-card";
 
 // Mirrors the backend per-(tenant, gate) cap (proposed 50). UX only — the
 // backend's `cookie_limit_reached` (409) stays authoritative; this just dims the
 // form and shows the count once the vault is full.
 const COOKIE_CAP = 50;
+
+function bannerStyle(kind: "ok" | "err"): React.CSSProperties {
+  const tone = kind === "ok" ? "var(--success)" : "var(--danger)";
+
+  return {
+    padding: "9px 12px",
+    borderRadius: 10,
+    marginBottom: 12,
+    fontSize: "12.5px",
+    fontWeight: 600,
+    background: `color-mix(in oklch, ${tone} 14%, transparent)`,
+    border: `1px solid color-mix(in oklch, ${tone} 30%, transparent)`,
+    color: tone,
+  };
+}
 
 export function CookieManager({
   gateId,
@@ -142,102 +148,282 @@ export function CookieManager({
   }
 
   return (
-    <SectionCard
-      className="flex flex-col gap-3.5"
-      legend="Cookies del gateway"
-      legendAs="h2"
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: "1 1 auto",
+        minHeight: 0,
+      }}
     >
-      {okMsg && <Notice status="success">{okMsg}</Notice>}
-      {banner && <Notice status="danger">{banner}</Notice>}
+      {/* header: cookie tile + title (the modal owns the close button) */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 12,
+          marginBottom: 16,
+          paddingRight: 40,
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            background: "var(--accent-soft)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <svg
+            fill="none"
+            height="22"
+            stroke="var(--accent)"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.7"
+            viewBox="0 0 24 24"
+            width="22"
+          >
+            <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5z" />
+            <circle cx="9" cy="13.5" r=".7" />
+            <circle cx="13.5" cy="16" r=".7" />
+            <circle cx="15.5" cy="10.5" r=".7" />
+          </svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
+          <h2
+            className="font-display"
+            style={{
+              margin: 0,
+              fontSize: 17,
+              fontWeight: 700,
+              color: "var(--foreground)",
+            }}
+          >
+            Cookies del gateway
+          </h2>
+        </div>
+      </div>
 
-      <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+      {okMsg && <div style={bannerStyle("ok")}>{okMsg}</div>}
+      {banner && <div style={bannerStyle("err")}>{banner}</div>}
+
+      <form style={{ flexShrink: 0 }} onSubmit={onSubmit}>
         {/* The stored value is a SENSITIVE credential, but the client is typing
             THEIR OWN cookie into THEIR OWN session — show it as plain text
             (owner request) so a paste is verifiable. The saved rows below stay
             masked (only `masked_value` ever crosses the wire). */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <LabelCaps>Cookie</LabelCaps>
-            <button
-              className="rx-focus inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-accent transition-colors hover:text-foreground"
-              type="button"
-              onClick={pasteCookie}
-            >
-              <Icon name="copy" size={13} />
-              Pegar
-            </button>
-          </div>
+        <span
+          className="font-display"
+          style={{
+            display: "block",
+            marginBottom: 7,
+            fontSize: "10.5px",
+            letterSpacing: ".1em",
+            textTransform: "uppercase",
+            color: "var(--faint)",
+          }}
+        >
+          Cookie
+        </span>
+
+        {/* paste row: input + Pegar side by side */}
+        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           {/* Visible plain text (owner request), but the value is still a
               credential: autoComplete off + spellCheck off keep the browser's
               form history / autofill and remote spellcheck services from
-              retaining or shipping it — the protections type="password" gave
-              implicitly. */}
-          <Field
+              retaining or shipping it. */}
+          <input
             autoComplete="off"
-            error={valueError}
+            className="font-mono rx-focus"
             name="cookie-value"
             placeholder="Pega la cookie"
             spellCheck={false}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 44,
+              padding: "0 13px",
+              borderRadius: "var(--radius-field)",
+              background: "var(--field-background)",
+              border: `1px solid ${
+                valueError ? "var(--danger)" : "var(--field-border)"
+              }`,
+              color: "var(--foreground)",
+              fontSize: "12.5px",
+            }}
             value={value}
-            onChange={(v) => {
-              setValue(v);
+            onChange={(e) => {
+              setValue(e.target.value);
               if (valueError) setValueError(null);
             }}
             onPaste={onPaste}
           />
+          <button
+            className="font-display rx-focus"
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              height: 44,
+              padding: "0 15px",
+              borderRadius: "var(--radius-field)",
+              background: "var(--surface-secondary)",
+              border: "1px solid var(--border-strong)",
+              color: "var(--foreground)",
+              fontSize: "12.5px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            type="button"
+            onClick={pasteCookie}
+          >
+            <Icon name="copy" size={14} />
+            Pegar
+          </button>
         </div>
 
-        <Btn
-          full
+        {valueError && (
+          <span
+            role="alert"
+            style={{
+              display: "block",
+              marginTop: 6,
+              fontSize: "12px",
+              color: "var(--danger)",
+            }}
+          >
+            {valueError}
+          </span>
+        )}
+
+        <button
+          className="font-display"
           disabled={add.isPending || atCap}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            height: 46,
+            borderRadius: 12,
+            background: "var(--brand-gradient)",
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 700,
+            border: "none",
+            cursor: add.isPending || atCap ? "not-allowed" : "pointer",
+            opacity: add.isPending || atCap ? 0.55 : 1,
+            boxShadow: "0 6px 22px oklch(64% 0.21 295 / 0.32)",
+          }}
           type="submit"
-          variant="primary"
         >
           {add.isPending ? "Guardando…" : "Guardar cookie"}
-        </Btn>
+        </button>
 
         {atCap && (
-          <Notice status="warning">
-            Alcanzaste el máximo de {COOKIE_CAP} cookies para este gateway. Elimina
-            una para agregar otra.
-          </Notice>
+          <div style={{ ...bannerStyle("err"), marginTop: 10, marginBottom: 0 }}>
+            Alcanzaste el máximo de {COOKIE_CAP} cookies para este gateway.
+            Elimina una para agregar otra.
+          </div>
         )}
       </form>
 
-      <div className="flex items-center justify-between">
-        <LabelCaps>Guardadas</LabelCaps>
-        <span className="text-[11px] text-muted tabular-nums">
+      {/* counter */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: 18,
+          paddingBottom: 10,
+          borderBottom: "1px solid var(--separator)",
+          flexShrink: 0,
+        }}
+      >
+        <span
+          className="font-display"
+          style={{
+            fontSize: "10.5px",
+            letterSpacing: ".12em",
+            textTransform: "uppercase",
+            color: "var(--faint)",
+          }}
+        >
+          Guardadas
+        </span>
+        <span
+          className="font-mono"
+          style={{ fontSize: 12, color: "var(--muted)" }}
+        >
           {count} / {COOKIE_CAP}
         </span>
       </div>
 
-      <div>
-        {list.isLoading && <PanelSkeleton rows={3} />}
+      {/* saved list */}
+      <div
+        className="rx-scroll"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 7,
+          marginTop: 12,
+          overflowY: "auto",
+          flex: "1 1 auto",
+          minHeight: 0,
+        }}
+      >
+        {list.isLoading &&
+          [0, 1, 2].map((i) => (
+            <div
+              key={i}
+              style={{
+                height: 38,
+                borderRadius: 10,
+                background: "var(--surface-secondary)",
+                border: "1px solid var(--border)",
+                opacity: 0.5,
+              }}
+            />
+          ))}
 
         {list.isError && (
-          <Notice status="danger">
+          <div style={bannerStyle("err")}>
             No pudimos cargar las cookies. Recarga la página.
-          </Notice>
+          </div>
         )}
 
         {!list.isLoading && !list.isError && cookies.length === 0 && (
-          <EmptyState message="Todavía no guardaste cookies para este gateway." />
+          <div
+            style={{
+              padding: "28px 12px",
+              textAlign: "center",
+              fontSize: "12.5px",
+              color: "var(--muted)",
+            }}
+          >
+            Todavía no guardaste cookies para este gateway.
+          </div>
         )}
 
-        {cookies.length > 0 && (
-          <ul className="m-0 flex list-none flex-col divide-y divide-separator p-0">
-            {cookies.map((c) => (
-              <CookieRow
-                key={c.id}
-                cookie={c}
-                gateId={gateId}
-                onDeleting={() => setOkMsg(null)}
-              />
-            ))}
-          </ul>
-        )}
+        {cookies.map((c) => (
+          <CookieRow
+            key={c.id}
+            cookie={c}
+            gateId={gateId}
+            onDeleting={() => setOkMsg(null)}
+          />
+        ))}
       </div>
-    </SectionCard>
+    </div>
   );
 }
 
@@ -273,28 +459,71 @@ function CookieRow({
   }
 
   return (
-    <li className="flex flex-wrap items-center gap-3 py-2.5">
-      <div className="flex min-w-0 flex-[1_1_9rem] flex-col gap-1">
-        {/* Only ever the masked value — the raw credential never reaches here. */}
-        <MonoChip className="self-start text-foreground">
-          {cookie.masked_value}
-        </MonoChip>
-        {error && (
-          <span className="text-[12px] text-danger" role="alert">
-            {error}
-          </span>
-        )}
-      </div>
-
-      <Btn
-        disabled={remove.isPending}
-        icon="trash"
-        size="sm"
-        variant="danger"
-        onClick={onDelete}
+    <div style={{ flexShrink: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "9px 11px",
+          borderRadius: 10,
+          background: "var(--surface-secondary)",
+          border: "1px solid var(--border)",
+        }}
       >
-        {remove.isPending ? "Eliminando…" : "Eliminar"}
-      </Btn>
-    </li>
+        {/* Only ever the masked value — the raw credential never reaches here. */}
+        <span
+          className="font-mono"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 12,
+            color: "var(--foreground)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {cookie.masked_value}
+        </span>
+        <button
+          aria-label="Eliminar cookie"
+          className="rx-focus"
+          disabled={remove.isPending}
+          style={{
+            flexShrink: 0,
+            width: 26,
+            height: 26,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 7,
+            background: "none",
+            border: "none",
+            color: "var(--faint)",
+            cursor: remove.isPending ? "not-allowed" : "pointer",
+            opacity: remove.isPending ? 0.5 : 1,
+          }}
+          type="button"
+          onClick={onDelete}
+        >
+          <Icon name="trash" size={14} />
+        </button>
+      </div>
+      {error && (
+        <span
+          role="alert"
+          style={{
+            display: "block",
+            marginTop: 4,
+            paddingLeft: 11,
+            fontSize: "12px",
+            color: "var(--danger)",
+          }}
+        >
+          {error}
+        </span>
+      )}
+    </div>
   );
 }

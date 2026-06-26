@@ -54,10 +54,11 @@ export function CookieModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-5">
       <button
         aria-label="Cerrar"
-        className="absolute inset-0 cursor-default"
+        className="absolute inset-0 cursor-default backdrop-blur-sm"
+        style={{ background: "rgba(6,4,12,.6)" }}
         tabIndex={-1}
         type="button"
         onClick={onClose}
@@ -65,21 +66,31 @@ export function CookieModal({
       <div
         ref={cardRef}
         aria-modal="true"
-        className="rx-enter relative w-full max-w-md"
+        className="rx-enter relative flex w-full max-h-[90%] flex-col rounded-t-[20px] rounded-b-none p-[18px_16px_22px] shadow-[0_-20px_60px_rgba(0,0,0,0.5)] sm:max-h-[86%] sm:max-w-[430px] sm:rounded-[18px] sm:p-[22px] sm:shadow-[0_30px_70px_rgba(0,0,0,0.5)]"
         role="dialog"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+        }}
       >
         <button
           aria-label="Cerrar"
-          className="rx-focus absolute right-3 top-3 z-10 inline-flex size-7 items-center justify-center rounded-[var(--radius-sm)] border border-border bg-surface-secondary text-muted transition-colors hover:text-foreground"
+          className="rx-focus absolute right-[18px] top-[18px] z-10 inline-flex items-center justify-center transition-colors hover:text-foreground sm:right-[22px] sm:top-[22px]"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 9,
+            background: "var(--surface-secondary)",
+            border: "1px solid var(--border)",
+            color: "var(--muted)",
+          }}
           type="button"
           onClick={onClose}
         >
           <Icon name="close" size={15} />
         </button>
 
-        <div className="max-h-[85vh] overflow-y-auto">
-          <CookieManager gateId={gateId} onSaved={onSaved} />
-        </div>
+        <CookieManager gateId={gateId} onSaved={onSaved} />
       </div>
     </div>
   );

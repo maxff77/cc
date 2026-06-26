@@ -16,7 +16,7 @@ export function LabelCaps({
   return (
     <Tag
       className={clsx(
-        "text-[10px] font-bold uppercase tracking-[0.1em] text-muted",
+        "font-display text-[10.5px] uppercase tracking-[0.1em] text-[var(--faint)]",
         className,
       )}
     >

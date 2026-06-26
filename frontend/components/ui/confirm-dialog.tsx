@@ -123,7 +123,11 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      // Canvas modal overlay: deep ink wash + blur, click-to-close.
+      style={{ background: "rgba(6,4,12,.6)", backdropFilter: "blur(3px)" }}
+    >
       {/* Full-bleed backdrop button — a native control so click-outside-to-close
           stays keyboard/touch accessible without a static onClick handler. */}
       <button
@@ -136,12 +140,15 @@ export function ConfirmDialog({
       <div
         ref={cardRef}
         aria-modal="true"
-        className="glow-soft relative w-full max-w-md rounded-[var(--radius)] border border-border bg-surface p-5"
+        // Canvas confirm card: surface plate, strong border, r16, deep drop
+        // shadow, fade-up entrance (rx-enter).
+        className="rx-enter relative w-full max-w-md rounded-[16px] border border-[var(--border-strong)] bg-surface p-6"
         role={role}
+        style={{ boxShadow: "0 30px 70px rgba(0,0,0,.5)" }}
         // -1 so the card itself can take focus as a last resort (no focusables).
         tabIndex={-1}
       >
-        <h2 className="font-display text-base font-bold leading-snug text-foreground">
+        <h2 className="font-display text-[17px] font-bold leading-snug text-foreground">
           {heading}
         </h2>
         {children && <div className="mt-3">{children}</div>}

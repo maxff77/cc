@@ -185,7 +185,7 @@ export function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
         className={clsx(
-          "tap-44 rx-focus flex w-full items-center justify-between gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 py-2.5 text-left text-sm transition-[border-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-55",
+          "tap-44 rx-focus flex h-10 w-full items-center justify-between gap-2.5 rounded-[var(--radius-field)] border bg-[var(--field-background)] px-3 text-left text-[13px] transition-[border-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-50",
           selected
             ? "text-[var(--field-foreground)]"
             : "text-[var(--field-placeholder)]",
@@ -217,7 +217,7 @@ export function Select({
           aria-activedescendant={
             highlight >= 0 ? `${baseId}-opt-${options[highlight].id}` : undefined
           }
-          className="rx-scroll glow-soft absolute left-0 right-0 top-full z-40 mt-1.5 max-h-60 overflow-y-auto rounded-[var(--radius-field)] border border-border bg-surface p-1.5"
+          className="rx-scroll absolute left-0 right-0 top-full z-40 mt-1.5 max-h-[220px] overflow-y-auto rounded-[10px] border border-[var(--border-strong)] bg-surface-secondary p-[5px] shadow-[0_16px_40px_rgba(0,0,0,0.4)]"
           role="listbox"
           tabIndex={-1}
           onKeyDown={onListKey}
@@ -234,12 +234,10 @@ export function Select({
                 }}
                 aria-selected={active}
                 className={clsx(
-                  "tap-44 flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-2.5 text-left text-sm",
-                  active
-                    ? "bg-[var(--accent-soft)] text-accent"
-                    : highlighted
-                      ? "bg-surface-secondary text-foreground"
-                      : "text-foreground hover:bg-surface-secondary",
+                  "tap-44 flex w-full items-center justify-between gap-2 rounded-[8px] px-[11px] py-[9px] text-left",
+                  active || highlighted
+                    ? "bg-[var(--accent-soft)]"
+                    : "hover:bg-[var(--accent-soft)]",
                 )}
                 id={`${baseId}-opt-${o.id}`}
                 role="option"
@@ -248,11 +246,20 @@ export function Select({
                 onClick={() => selectAt(i)}
                 onMouseEnter={() => setHighlight(i)}
               >
-                {o.label}
-                {o.mono && (
-                  <span className="font-mono text-[12px] text-muted">
-                    {o.mono}
-                  </span>
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-[13px] text-foreground">{o.label}</span>
+                  {o.mono && (
+                    <span className="truncate font-mono text-[11px] text-[var(--faint)]">
+                      {o.mono}
+                    </span>
+                  )}
+                </span>
+                {active && (
+                  <Icon
+                    className="shrink-0 text-accent"
+                    name="check"
+                    size={15}
+                  />
                 )}
               </button>
             );

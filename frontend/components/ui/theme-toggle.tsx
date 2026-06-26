@@ -16,8 +16,10 @@ export function ThemeToggle({ className }: { className?: string }) {
   useEffect(() => setMounted(true), []);
 
   const isDark = resolvedTheme !== "light";
+  // Canvas chrome control: 34px square, r9 surface-secondary plate, muted icon
+  // (sun while dark, moon while light).
   const cls =
-    "rx-focus flex size-[38px] items-center justify-center rounded-[var(--radius-field)] border border-border bg-surface-secondary text-foreground " +
+    "rx-focus flex size-[34px] items-center justify-center rounded-[9px] border border-border bg-surface-secondary text-muted " +
     (className ?? "");
 
   if (!mounted) {
@@ -33,7 +35,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       type="button"
       onClick={() => setTheme(isDark ? "light" : "dark")}
     >
-      <Icon name={isDark ? "sun" : "moon"} size={18} />
+      <Icon name={isDark ? "sun" : "moon"} size={16} />
     </button>
   );
 }

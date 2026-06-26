@@ -74,14 +74,21 @@ export function ClaimKey({
       {ok && <Notice status="success">{ok}</Notice>}
       {error && <Notice status="danger">{error}</Notice>}
       <Field
-        label="¿Tienes una key?"
+        mono
+        inputClassName="text-center tracking-[0.04em]"
         name="gift_key"
         placeholder="RangerX-XXXX-XXXX-XXXX"
         value={code}
         onChange={(v) => setCode(v)}
       />
-      <Btn full disabled={pending} type="submit" variant="primary">
-        {pending ? "Canjeando…" : "Canjear key"}
+      <Btn
+        full
+        disabled={pending}
+        style={{ height: "46px", borderRadius: "12px" }}
+        type="submit"
+        variant="primary"
+      >
+        {pending ? "Canjeando…" : "Canjear"}
       </Btn>
     </form>
   );

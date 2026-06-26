@@ -15,7 +15,6 @@ import clsx from "clsx";
 
 import { ApiError, downloadFile } from "@/lib/api";
 import { CountBadge } from "@/components/ui/count-badge";
-import { LabelCaps } from "@/components/ui/label-caps";
 import { Icon } from "@/components/ui/icon";
 import { DataRow, type DataRowProps } from "@/components/sessions/response-row";
 
@@ -100,7 +99,9 @@ function PanelList({
       }}
     >
       {rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-muted">{emptyText}</p>
+        <p className="px-3.5 py-[18px] text-center text-[12px] text-muted">
+          {emptyText}
+        </p>
       ) : (
         rows.map((row) => (
           <DataRow
@@ -196,12 +197,12 @@ function ClearButton({
   return (
     <button
       aria-label="Limpiar todas las vistas"
-      className="rx-focus inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--surface-secondary)] px-3 py-[5px] font-mono text-[11.5px] leading-none text-foreground transition-colors hover:border-[var(--muted)] hover:bg-[var(--surface-tertiary)] disabled:opacity-40 disabled:hover:border-[var(--border-strong)] disabled:hover:bg-[var(--surface-secondary)]"
+      className="rx-focus inline-flex h-7 items-center gap-1.5 rounded-[7px] border border-[var(--border-strong)] bg-[var(--surface-secondary)] px-2.5 font-mono text-[11px] leading-none text-foreground transition-colors hover:border-[var(--muted)] hover:bg-[var(--surface-tertiary)] disabled:opacity-40 disabled:hover:border-[var(--border-strong)] disabled:hover:bg-[var(--surface-secondary)]"
       disabled={disabled}
       type="button"
       onClick={onClick}
     >
-      <Icon name="trash" size={13} />
+      <Icon name="trash" size={12} />
       Limpiar
     </button>
   );
@@ -262,9 +263,11 @@ function ResponsePanel({
       )}
     >
       {header && (
-        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-          <LabelCaps className="tracking-[0.12em]">{header}</LabelCaps>
-          <CountBadge tone={countTone} value={count} />
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-[var(--separator)] px-3.5 py-[13px]">
+          <span className="flex items-center gap-2 font-display text-[13px] font-bold uppercase tracking-[0.08em] text-foreground">
+            {header}
+            <CountBadge tone={countTone} value={count} />
+          </span>
         </div>
       )}
       <PanelList className={listClassName} emptyText={emptyText} rows={rows} />
@@ -274,7 +277,7 @@ function ResponsePanel({
         // left-aligned exactly as before.
         <div
           className={clsx(
-            "flex items-center gap-2 border-t border-border px-3 py-2",
+            "flex flex-shrink-0 items-center gap-2 border-t border-[var(--separator)] px-3.5 py-[9px]",
             (onClear || copyText !== undefined) && "justify-between",
           )}
         >
@@ -524,7 +527,7 @@ export function ResponseTabs({
           <ClearButton disabled={clearDisabled ?? false} onClick={onClear} />
         </div>
       )}
-      <div className="flex gap-1 rounded-[var(--radius-field)] border border-border bg-surface-secondary p-1">
+      <div className="flex gap-1 rounded-[11px] border border-border bg-surface p-1">
         {TABS.map((t) => (
           <button
             key={t.id}

@@ -364,9 +364,9 @@ export function SendForm({
         <form className="flex flex-col gap-3.5" onSubmit={onSubmit}>
           {isLive ? (
             // Active-gate chip (UX-DR9): name · comando visible.
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col gap-[7px]">
               <LabelCaps>Gateway activo</LabelCaps>
-              <MonoChip>
+              <MonoChip dot className="self-start text-[12.5px]">
                 {live.gateName} · {live.gateDisplayValue}
               </MonoChip>
               {selectError && (
@@ -420,18 +420,24 @@ export function SendForm({
             exempt from credits, so the strip would only show a misleading
             "Créditos: 0". */}
           {isMetered && (
-            <div className="flex items-center justify-between text-[11px]">
+            <div className="flex items-center justify-between text-[11.5px]">
               <span
                 className={
                   live.creditBalance <= 0 ? "text-danger" : "text-muted"
                 }
               >
                 Créditos:{" "}
-                <span className="tabular-nums">{live.creditBalance}</span>
+                <span className="font-mono font-semibold tabular-nums text-foreground">
+                  {live.creditBalance}
+                </span>
               </span>
               {gateCost > 0 && (
                 <span
-                  className={blockedByCredits ? "text-danger" : "text-muted"}
+                  className={
+                    blockedByCredits
+                      ? "font-mono text-danger"
+                      : "font-mono text-muted"
+                  }
                 >
                   {gateCost} créd./✅
                 </span>
@@ -442,15 +448,49 @@ export function SendForm({
               active gate is cookie-mode — idle-picked OR live — so cookies can
               be topped up mid-send. Opens the CookieModal. */}
           {cookieGate && (
-            <Btn
-              full
-              icon="key"
+            <button
+              className="rx-focus flex h-[42px] w-full items-center justify-between gap-2.5 rounded-[var(--radius-field)] border px-[13px] font-display"
+              style={{
+                background: "var(--accent-soft)",
+                borderColor:
+                  "color-mix(in oklch, var(--accent) 40%, transparent)",
+              }}
               type="button"
-              variant="secondary"
               onClick={() => setCookieModalGateId(cookieGate.id)}
             >
-              Cookies ({cookieList.isPending ? "…" : cookieCount})
-            </Btn>
+              <span className="inline-flex items-center gap-[9px] text-[13px] font-semibold text-foreground">
+                <svg
+                  fill="none"
+                  height="16"
+                  stroke="var(--accent)"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.8"
+                  viewBox="0 0 24 24"
+                  width="16"
+                >
+                  <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5z" />
+                  <circle cx="9" cy="13.5" r=".6" />
+                  <circle cx="13.5" cy="16" r=".6" />
+                  <circle cx="15.5" cy="10.5" r=".6" />
+                </svg>
+                Cookies del gateway
+              </span>
+              <span
+                className="font-mono text-[11px] tabular-nums"
+                style={{
+                  padding: "1px 7px",
+                  borderRadius: "99px",
+                  background:
+                    cookieCount > 0
+                      ? "color-mix(in oklch, var(--accent) 20%, transparent)"
+                      : "var(--surface-tertiary)",
+                  color: cookieCount > 0 ? "var(--accent)" : "var(--muted)",
+                }}
+              >
+                {cookieList.isPending ? "…" : cookieCount}
+              </span>
+            </button>
           )}
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
@@ -466,7 +506,7 @@ export function SendForm({
             </div>
             <Area
               error={textError}
-              placeholder="Pega tus líneas"
+              placeholder="Pega tus líneas (una por renglón)"
               rows={5}
               value={text}
               onChange={(v) => {

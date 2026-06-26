@@ -40,10 +40,11 @@ export function KeyModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
       <button
         aria-label="Cerrar"
-        className="absolute inset-0 cursor-default"
+        className="absolute inset-0 cursor-default backdrop-blur-[3px]"
+        style={{ background: "rgba(6,4,12,.6)" }}
         tabIndex={-1}
         type="button"
         onClick={onClose}
@@ -51,27 +52,32 @@ export function KeyModal({
       <div
         ref={cardRef}
         aria-modal="true"
-        className="rx-enter glow-soft relative w-full max-w-sm rounded-[var(--radius)] border border-[var(--border-strong)] bg-surface p-6"
+        className="rx-enter relative w-full max-w-[380px] border border-[var(--border-strong)] bg-surface"
         role="dialog"
+        style={{
+          borderRadius: "18px",
+          padding: "24px 22px",
+          boxShadow: "0 30px 70px rgba(0,0,0,.5)",
+        }}
       >
         <button
           aria-label="Cerrar"
-          className="rx-focus absolute right-3.5 top-3.5 inline-flex size-7 items-center justify-center rounded-[var(--radius-sm)] border border-border bg-surface-secondary text-muted transition-colors hover:text-foreground"
+          className="rx-focus absolute right-3.5 top-3.5 inline-flex size-[30px] items-center justify-center rounded-[var(--radius-sm)] border border-border bg-surface-secondary text-muted transition-colors hover:text-foreground"
           type="button"
           onClick={onClose}
         >
           <Icon name="close" size={15} />
         </button>
 
-        <div className="mb-5 flex flex-col items-center gap-3.5 text-center">
+        <div className="mb-[18px] flex flex-col items-center gap-3.5 text-center">
           <div className="flex size-[52px] items-center justify-center rounded-[14px] bg-[var(--accent-soft)]">
             <Icon className="text-accent" name="key" size={26} />
           </div>
           <div className="flex flex-col gap-1">
-            <h2 className="font-display text-lg font-bold text-foreground">
+            <h2 className="font-display text-[19px] font-bold text-foreground">
               Canjear key
             </h2>
-            <p className="text-[13px] leading-relaxed text-muted">
+            <p className="text-[13px] leading-[1.5] text-muted">
               Pega tu key de regalo para sumar días a tu plan.
             </p>
           </div>

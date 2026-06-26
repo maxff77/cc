@@ -43,36 +43,26 @@ export function StatePill({
   children: React.ReactNode;
   className?: string;
 }) {
-  // Glow is a live-moment signal, not decoration: only the sending/live pill
-  // (accent tone + pulsing dot) carries it; every static pill stays flat.
-  const isLive = tone === "accent" && dot === "pulse";
-
+  // Canvas state pill: 26px tall full-round chip, Saira 600 / 12px, leading 6px
+  // dot. The dot pulses (rx-pulse) ONLY while live (dot="pulse"); static pills
+  // stay flat (control-room calm — energy in moments, not on every chip).
   return (
     <span
       className={clsx(
-        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-[3px] font-display text-[10px] font-bold uppercase leading-none tracking-[0.12em]",
-        dot && "gap-1.5",
+        "inline-flex h-[26px] shrink-0 items-center gap-[7px] whitespace-nowrap rounded-full px-[11px] font-display text-[12px] font-semibold leading-none",
         TONE_CLASS[tone],
         className,
       )}
-      style={
-        isLive
-          ? { boxShadow: "0 0 calc(8px * var(--glow)) currentColor" }
-          : undefined
-      }
     >
       {dot && (
         <span
           aria-hidden
-          className={clsx(
-            "size-1.5 rounded-full",
-            // The LIVE/sending dot (accent + pulse) wears the brand gradient;
-            // every other state keeps its semantic tone via bg-current.
-            tone === "accent" && dot === "pulse"
-              ? "gradient-moment"
-              : "bg-current",
-            dot === "pulse" && "motion-safe:animate-pulse",
-          )}
+          className="size-[6px] rounded-full bg-current"
+          style={
+            dot === "pulse"
+              ? { animation: "rx-pulse 1.4s ease infinite" }
+              : undefined
+          }
         />
       )}
       {children}
