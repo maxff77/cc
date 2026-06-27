@@ -20,7 +20,7 @@ import { navLinks } from "@/config/nav";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { VersionPill } from "@/components/ui/version-badge";
-import { Icon } from "@/components/ui/icon";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { StatePill, type PillTone } from "@/components/ui/state-pill";
 import { PlanBadge } from "@/components/ui/plan-badge";
@@ -47,6 +47,65 @@ const PILL_TONE: Record<Exclude<BatchSurfaceState, "idle">, PillTone> = {
   stopping: "danger",
   waiting: "warning",
 };
+
+// Canvas bottom-nav icons for the client links (only two — kept local so the
+// shared config/nav.ts stays a plain href+label list).
+const BOTTOM_ICON: Record<string, IconName> = {
+  "/app": "send",
+  "/app/historial": "history",
+};
+
+// Mobile bottom-nav tab (Cliente Redesign canvas `bottomNavItems`): icon stacked
+// over a 10.5px Saira label, active tinted accent, no underline. Renders as a
+// Link (Envío/Historial) or a button (Key → claim modal). The live dot rides
+// the Envío icon, same state mapping as the desktop NavItem.
+function BottomTab({
+  icon,
+  label,
+  active,
+  dot,
+  href,
+  onClick,
+}: {
+  icon: IconName;
+  label: string;
+  active: boolean;
+  dot?: "success" | "warning" | null;
+  href?: string;
+  onClick?: () => void;
+}) {
+  const cls = clsx(
+    "tap-44 rx-focus flex flex-1 flex-col items-center gap-[3px] rounded-[var(--radius-sm)] py-1 font-display text-[10.5px] font-semibold transition-colors",
+    active ? "text-accent" : "text-muted hover:text-foreground",
+  );
+  const inner = (
+    <>
+      <span className="relative">
+        <Icon name={icon} size={18} />
+        {dot && (
+          <span
+            aria-hidden
+            className={clsx(
+              "absolute -right-1 -top-0.5 size-1.5 rounded-full",
+              dot === "success" ? "bg-success" : "bg-warning",
+            )}
+          />
+        )}
+      </span>
+      {label}
+    </>
+  );
+
+  return href ? (
+    <Link className={cls} href={href}>
+      {inner}
+    </Link>
+  ) : (
+    <button className={cls} type="button" onClick={onClick}>
+      {inner}
+    </button>
+  );
+}
 
 function NavItem({
   href,
@@ -302,15 +361,31 @@ export function ClientNav() {
           isStaff ? "gap-1 overflow-x-auto rx-scroll px-2" : "justify-around",
         )}
       >
-        {items(isStaff ? "shrink-0 whitespace-nowrap" : "flex-1 text-center")}
-        {!isStaff && (
-          <button
-            className="tap-44 rx-focus relative flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-2 text-center font-display text-sm font-semibold tracking-[0.01em] text-muted transition-colors hover:text-foreground"
-            type="button"
-            onClick={() => setKeyOpen(true)}
-          >
-            Key
-          </button>
+        {!isStaff ? (
+          <>
+            {navItems.map((item) => (
+              <BottomTab
+                key={item.href}
+                active={
+                  pathname === item.href ||
+                  (item.href !== "/app" &&
+                    pathname.startsWith(item.href + "/"))
+                }
+                dot={item.href === "/app" ? dot : null}
+                href={item.href}
+                icon={BOTTOM_ICON[item.href]}
+                label={item.label}
+              />
+            ))}
+            <BottomTab
+              active={false}
+              icon="key"
+              label="Key"
+              onClick={() => setKeyOpen(true)}
+            />
+          </>
+        ) : (
+          items("shrink-0 whitespace-nowrap")
         )}
       </nav>
 

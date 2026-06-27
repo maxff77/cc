@@ -25,6 +25,7 @@ export type IconName =
   | "check"
   | "logout"
   | "key"
+  | "history"
   | "dots"
   | "copy"
   | "phone"
@@ -148,6 +149,18 @@ const PATHS: Record<IconName, React.ReactNode> = {
     >
       <circle cx="8" cy="9" r="4" />
       <path d="M11 11l8 8M17 19l2-2M15 17l1.5-1.5" />
+    </g>
+  ),
+  history: (
+    <g
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M3 3v5h5M3.05 13A9 9 0 106 5.3L3 8" />
+      <path d="M12 7v5l3 2" />
     </g>
   ),
   dots: (
