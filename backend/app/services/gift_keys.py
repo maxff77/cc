@@ -12,6 +12,7 @@ boundary is the route's role gate. Each op flushes; the router commits.
 """
 
 import logging
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,18 +139,40 @@ async def claim(
 async def revoke(
     session: AsyncSession, key_id: int, *, revoked_by_user_id: int
 ) -> GiftKey:
-    """Revoke an UNCLAIMED key (idempotent on already-revoked).
+    """Revoke a key (idempotent on already-revoked); caller commits.
 
-    A claimed key cannot be revoked (the days are already granted) →
-    ``key_already_claimed``. Locks the row; caller commits.
+    Revoking a CLAIMED key is a kill-switch: it cancels the claimer's plan in
+    the same transaction — expires it NOW (``is_plan_expired`` boundary is
+    ``<=``, so ``get_current_user`` locks them out on their next request) and
+    bulk-revokes their live sessions for an immediate kick, mirroring
+    ``set_blocked``. Expiry is the right semantic over a block: an expired
+    client can recover by claiming another key (``allow_expired`` flow).
+
+    The cascade runs ONLY when the key granted days (``key.days > 0``) — a
+    credits-only key never created a plan, so there is nothing to expire (and
+    granted credits are not clawed back). Already-revoked → no-op (so a key
+    whose claimer was later renewed is NOT re-expired).
     """
+    # ponytail: this locks KEY then USER, the inverse of claim()'s USER→KEY.
+    # An ABBA deadlock needs a claim of THIS same already-claimed key to race
+    # this revoke — a microscopic window, and Postgres aborts one txn cleanly
+    # (no corruption): the loser is either the already-doomed re-claim or an
+    # admin retry. If revoke throughput ever matters, peek the key unlocked to
+    # get the claimer, lock the user first, then re-lock + re-check the key.
     key = await gift_keys_repo.get_by_id(session, key_id, for_update=True)
     if key is None:
         raise key_not_found()
     if key.status == "revoked":
         return key
-    if key.status == "claimed":
-        raise key_already_claimed()
+    if key.status == "claimed" and key.days > 0 and key.claimed_by_user_id:
+        claimer = await users_repo.get_user_by_id(
+            session, key.claimed_by_user_id, for_update=True
+        )
+        # role guard: a client promoted to staff after claiming carries no plan
+        # (expiry is a no-op for them), so don't stamp expires_at / kick them.
+        if claimer is not None and claimer.role == "client":
+            claimer.expires_at = datetime.now(UTC)
+            await users_repo.revoke_all_sessions_for_user(session, claimer.id)
     return await gift_keys_repo.revoke(
         session, key, revoked_by_user_id=revoked_by_user_id
     )

@@ -170,8 +170,9 @@ async def revoke_key(
     actor: User = Depends(require_admin_or_owner),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """Revoke an UNCLAIMED key. Unknown → 404 ``key_not_found``; already
-    claimed → 409 ``key_already_claimed`` (the days are already granted)."""
+    """Revoke a key. Unknown → 404 ``key_not_found``. Revoking a CLAIMED key
+    cancels the claimer's plan (expires it now + revokes their sessions) — see
+    ``gift_keys_service.revoke``."""
     if not 0 < key_id <= _PG_INT_MAX:
         raise key_not_found()
     await gift_keys_service.revoke(session, key_id, revoked_by_user_id=actor.id)

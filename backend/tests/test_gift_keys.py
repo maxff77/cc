@@ -89,6 +89,12 @@ async def _balance(tenant_id: int) -> int:
         return await tenants_repo.get_credit_balance(s, tenant_id)
 
 
+async def _user_expiry(user_id: int) -> datetime | None:
+    async with async_session_factory() as s:
+        u = await s.get(User, user_id)
+        return u.expires_at if u else None
+
+
 async def _gen_key(client: AsyncClient, days: int = 3) -> dict:
     res = await client.post("/api/admin/keys", json={"days": days})
     assert res.status_code == 201, res.text
@@ -305,7 +311,7 @@ async def test_non_client_cannot_claim(ctx, plan_factory):
 # --- Revoke ---------------------------------------------------------------
 
 
-async def test_revoke_unclaimed_then_claimed(ctx, plan_factory):
+async def test_revoke_unclaimed_key(ctx, plan_factory):
     await plan_factory(default=True)
     admin: AsyncClient = ctx["admin_client"]
 
@@ -315,13 +321,87 @@ async def test_revoke_unclaimed_then_claimed(ctx, plan_factory):
     listing = (await admin.get("/api/admin/keys")).json()["items"]
     assert next(k for k in listing if k["id"] == k1["id"])["status"] == "revoked"
 
-    # Claimed key cannot be revoked → 409 key_already_claimed.
-    k2 = await _gen_key(admin, days=2)
-    http, user = await _new_client()
+
+async def test_revoke_claimed_key_cancels_plan(ctx, plan_factory):
+    # Kill-switch: revoking a claimed DAYS key revokes the key AND cancels the
+    # claimer's plan — expires_at pulled to <= now and their live session killed.
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=30)
+    http, user = await _new_client(expires_in_days=5)
     try:
-        assert (await http.post("/api/keys/claim", json={"code": k2["code"]})).status_code == 200
-        res = await admin.post(f"/api/admin/keys/{k2['id']}/revoke")
-        assert res.status_code == 409 and res.json()["code"] == "key_already_claimed"
+        assert (
+            await http.post("/api/keys/claim", json={"code": key["code"]})
+        ).status_code == 200
+        assert (await http.get("/api/auth/me")).status_code == 200  # active
+        res = await admin.post(f"/api/admin/keys/{key['id']}/revoke")
+        assert res.status_code == 204, res.text
+        listing = (await admin.get("/api/admin/keys")).json()["items"]
+        assert next(k for k in listing if k["id"] == key["id"])["status"] == "revoked"
+        exp = await _user_expiry(user.id)
+        assert exp is not None and exp <= datetime.now(UTC) + timedelta(seconds=5)
+        # session revoked → next request is unauthenticated.
+        assert (await http.get("/api/auth/me")).status_code == 401
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_revoke_claimed_credits_only_keeps_plan(ctx, plan_factory):
+    # A credits-ONLY key never granted days, so revoking it revokes the key but
+    # leaves the claimer's plan + session untouched.
+    await plan_factory(default=True)
+    premium = await plan_factory()
+    admin: AsyncClient = ctx["admin_client"]
+    key = (
+        await admin.post("/api/admin/keys", json={"days": 0, "credits": 50})
+    ).json()
+    http, user = await _new_client(expires_in_days=5)
+    try:
+        async with async_session_factory() as s:
+            await s.execute(
+                update(User).where(User.id == user.id).values(plan_id=premium)
+            )
+            await s.commit()
+        assert (
+            await http.post("/api/keys/claim", json={"code": key["code"]})
+        ).status_code == 200
+        before = await _user_expiry(user.id)
+        res = await admin.post(f"/api/admin/keys/{key['id']}/revoke")
+        assert res.status_code == 204, res.text
+        assert await _user_expiry(user.id) == before  # plan untouched
+        assert (await http.get("/api/auth/me")).status_code == 200  # session alive
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_revoke_claimed_idempotent_no_reexpire(ctx, plan_factory):
+    # A second revoke after the claimer was renewed is a no-op — the renewed
+    # plan is NOT re-expired (early-return on already-revoked).
+    await plan_factory(default=True)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=30)
+    http, user = await _new_client(expires_in_days=5)
+    try:
+        assert (
+            await http.post("/api/keys/claim", json={"code": key["code"]})
+        ).status_code == 200
+        assert (
+            await admin.post(f"/api/admin/keys/{key['id']}/revoke")
+        ).status_code == 204
+        # operator later renews the client into the future.
+        future = datetime.now(UTC) + timedelta(days=10)
+        async with async_session_factory() as s:
+            await s.execute(
+                update(User).where(User.id == user.id).values(expires_at=future)
+            )
+            await s.commit()
+        # revoke again → no-op, renewed expiry preserved.
+        assert (
+            await admin.post(f"/api/admin/keys/{key['id']}/revoke")
+        ).status_code == 204
+        assert await _user_expiry(user.id) == future
     finally:
         await http.aclose()
         await cleanup_users({user.email})

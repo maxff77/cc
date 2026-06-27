@@ -185,7 +185,8 @@ export default function AdminKeysPage() {
                           : ""}
                       </span>
                     </div>
-                    {key.status === "active" && (
+                    {(key.status === "active" ||
+                      key.status === "claimed") && (
                       <RevokeKeyAction keyRow={key} onRevoked={invalidate} />
                     )}
                   </li>
@@ -370,11 +371,8 @@ function RevokeKeyAction({
       onRevoked();
     },
     onError: (err) => {
-      // Already claimed/gone in another tab → refresh to reflect reality.
-      if (
-        err instanceof ApiError &&
-        (err.code === "key_already_claimed" || err.code === "key_not_found")
-      ) {
+      // Gone in another tab → refresh to reflect reality.
+      if (err instanceof ApiError && err.code === "key_not_found") {
         setError(err.message);
         onRevoked();
 
@@ -404,7 +402,11 @@ function RevokeKeyAction({
       <ConfirmDialog
         confirmLabel={mutation.isPending ? "Revocando…" : "Revocar"}
         confirmVariant="danger"
-        heading="¿Revocar esta key?"
+        heading={
+          keyRow.status === "claimed"
+            ? "¿Revocar esta key y cancelar el plan?"
+            : "¿Revocar esta key?"
+        }
         open={open}
         pending={mutation.isPending}
         onConfirm={() => mutation.mutate()}
@@ -416,8 +418,18 @@ function RevokeKeyAction({
         <div className="flex flex-col gap-2">
           {error && <Notice status="danger">{error}</Notice>}
           <p className="text-sm text-muted">
-            La key <code className="font-mono">{keyRow.code}</code> dejará de
-            poder canjearse. Esto no afecta a quien ya la haya canjeado.
+            {keyRow.status === "claimed" ? (
+              <>
+                Cancelará el plan de{" "}
+                <strong>{keyRow.claimed_by_email ?? "quien la canjeó"}</strong>:
+                expira ahora y su sesión se cierra al instante.
+              </>
+            ) : (
+              <>
+                La key <code className="font-mono">{keyRow.code}</code> dejará de
+                poder canjearse. Esto no afecta a quien ya la haya canjeado.
+              </>
+            )}
           </p>
         </div>
       </ConfirmDialog>
