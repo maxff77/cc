@@ -28,6 +28,8 @@ Run:
     python amazon_login.py --no-add            # solo login (no agrega dirección ni cookies)
     python amazon_login.py --headless          # sin pantalla (nadie resuelve CAPTCHA/OTP)
     python amazon_login.py --selftest          # checa parsers + pick_proxy, sin browser
+    python amazon_login.py --signup            # crea 1 cuenta nueva (email en mail.lohari.com.mx)
+    python amazon_login.py --signup-n 5        # crea N cuentas nuevas secuencialmente
 
 Passkey: el prompt (incl. el diálogo nativo de iCloud) se auto-cancela vía un init
 script que neutraliza WebAuthn -> Amazon cae a contraseña sola, sin click humano.
@@ -45,9 +47,12 @@ import json
 import os
 import random
 import re
+import secrets
+import string
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 ADDRESSES_URL = "https://www.amazon.com/a/addresses"
@@ -87,12 +92,38 @@ CITIES = [
 ]
 STREETS = ["Main St", "Oak Ave", "Maple Dr", "Cedar Ln", "Pine St",
            "Elm St", "Washington Ave", "Lake View Rd", "Park Blvd", "Sunset Dr"]
-FIRST = ["James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda"]
-LAST = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis"]
+FIRST = [
+    "James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda",
+    "William", "Barbara", "David", "Elizabeth", "Richard", "Susan", "Joseph", "Jessica",
+    "Thomas", "Sarah", "Charles", "Karen", "Christopher", "Lisa", "Daniel", "Nancy",
+    "Matthew", "Betty", "Anthony", "Margaret", "Mark", "Sandra", "Donald", "Ashley",
+    "Steven", "Dorothy", "Paul", "Kimberly", "Andrew", "Emily", "Joshua", "Donna",
+    "Kevin", "Michelle", "Brian", "Carol", "George", "Amanda", "Timothy", "Melissa",
+    "Ronald", "Deborah", "Edward", "Stephanie", "Jason", "Rebecca", "Jeffrey", "Sharon",
+    "Ryan", "Laura", "Jacob", "Cynthia", "Gary", "Kathleen", "Nicholas", "Helen",
+    "Eric", "Amy", "Jonathan", "Shirley", "Stephen", "Angela", "Larry", "Anna",
+]
+LAST = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+    "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+    "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson",
+    "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson", "Walker",
+    "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
+    "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
+    "Carter", "Roberts", "Turner", "Phillips", "Evans", "Collins", "Stewart", "Morris",
+    "Rogers", "Reed", "Cook", "Morgan", "Bell", "Murphy", "Bailey", "Cooper", "Richardson",
+]
 UNITS = ["Apt", "Unit", "Ste", "#"]
 
 # Direcciones ya usadas (fingerprints) -> garantiza no repetir NUNCA la misma calle.
 USED_ADDRESSES_FILE = Path(__file__).with_name("used_addresses.txt")
+
+# --- Registro / identidades generadas ---
+# Agregar dominios aquí al darlos de alta en ForwardEmail; _gen_email elige uno al azar.
+EMAIL_DOMAINS    = ["mail.lohari.com.mx"]
+EMAILS_WORKER    = "https://email-inbound.lohari.workers.dev/emails"
+OTP_AUTH_TOKEN   = "8d6b7721d96cf4c88bdbea7bdca97a1643d8a6dd75a85f4bd3edf3352c89ea51"
+USED_EMAILS_FILE = Path(__file__).with_name("used_emails.txt")
 
 
 def random_address() -> dict:
@@ -137,6 +168,89 @@ def _record_address(a: dict, seen_path: Path = USED_ADDRESSES_FILE) -> None:
         f.write(a["_fp"] + "\n")
 
 
+# --- Generación de identidades para registro ---
+
+def _gen_password() -> str:
+    """14 chars: al menos 1 de cada clase + 10 aleatorios mezclados."""
+    pool = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*"
+    pw = (
+        [secrets.choice(string.ascii_lowercase),
+         secrets.choice(string.ascii_uppercase),
+         secrets.choice(string.digits),
+         secrets.choice("!@#$%^&*")]
+        + [secrets.choice(pool) for _ in range(10)]
+    )
+    random.shuffle(pw)
+    return "".join(pw)
+
+
+def _gen_email(first: str, last: str) -> str:
+    """7 patrones rotados al azar + dominio elegido de EMAIL_DOMAINS."""
+    f, l = first.lower(), last.lower()
+    domain = random.choice(EMAIL_DOMAINS)
+    n2   = str(random.randint(10, 99))
+    n4   = str(random.randint(1000, 9999))
+    year = str(random.randint(1975, 2002))
+    fmt  = random.randint(0, 6)
+    if   fmt == 0: local = f"{f}.{l}"
+    elif fmt == 1: local = f"{f}{l}{n2}"
+    elif fmt == 2: local = f"{l}_{f}{n2}"
+    elif fmt == 3: local = f"{f}{n4}"
+    elif fmt == 4: local = f"{f[0]}.{l}{n2}"
+    elif fmt == 5: local = f"{f}_{l}{year}"
+    else:          local = f"{f[0]}{l}"
+    return f"{local}@{domain}"
+
+
+def gen_identity() -> dict:
+    first = random.choice(FIRST)
+    last  = random.choice(LAST)
+    return {
+        "first": first, "last": last,
+        "full_name": f"{first} {last}",
+        "email": _gen_email(first, last),
+        "password": _gen_password(),
+    }
+
+
+def unique_identity(seen_path: Path = USED_EMAILS_FILE) -> dict:
+    """Identidad con email garantizado único. Persiste el email en seen_path."""
+    used = set(seen_path.read_text(encoding="utf-8").splitlines()) if seen_path.exists() else set()
+    for _ in range(100_000):
+        ident = gen_identity()
+        if ident["email"] not in used:
+            with seen_path.open("a", encoding="utf-8") as fh:
+                fh.write(ident["email"] + "\n")
+            return ident
+    raise RuntimeError("espacio de identidades agotado")
+
+
+def fetch_otp(to_addr: str, timeout_s: int = 120) -> str | None:
+    """Sondea GET /emails?to=<alias>&limit=1 hasta encontrar un código de 6 dígitos."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        req = urllib.request.Request(
+            f"{EMAILS_WORKER}?to={urllib.parse.quote(to_addr)}&limit=1",
+            headers={
+                "Authorization": f"Bearer {OTP_AUTH_TOKEN}",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                rows = json.loads(r.read())
+            if rows:
+                text = (rows[0].get("text") or "") + (rows[0].get("html") or "")
+                m = re.search(r"\b(\d{6})\b", text)
+                if m:
+                    return m.group(1)
+        except Exception as e:
+            print(f"⚠️  fetch_otp: {e}")
+        time.sleep(5)
+    return None
+
+
 def load_dotenv(path: Path) -> None:
     # ponytail: 6-line .env reader; swap for python-dotenv if you need multiline/escapes
     if not path.exists():
@@ -175,14 +289,16 @@ def account_slug(email: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", email.lower()).strip("_") or "default"
 
 
-def proxy_for(email: str) -> dict | None:
+def proxy_for(email: str, attempt: int = 0) -> dict | None:
     """Parsea AMZ_PROXY -> dict proxy de Playwright. Sustituye {session} por un token
     estable por cuenta (sha256(email)[:10]) -> IP sticky DISTINTA por cuenta, estable
-    dentro de la ventana del proxy. Sin AMZ_PROXY -> None (conexión directa)."""
+    dentro de la ventana del proxy. `attempt`>0 saltea el token (email#n) -> IP sticky
+    distinta por reintento (rotar tras IP degradada). Sin AMZ_PROXY -> None (directa)."""
     raw = os.environ.get("AMZ_PROXY", "").strip()
     if not raw:
         return None
-    session = hashlib.sha256(email.encode()).hexdigest()[:10]
+    seed = email if not attempt else f"{email}#{attempt}"
+    session = hashlib.sha256(seed.encode()).hexdigest()[:10]
     u = urllib.parse.urlsplit(raw.replace("{session}", session))
     if not u.hostname:
         return None
@@ -368,12 +484,51 @@ def _address_listed(page, line1: str) -> bool:
         return False
 
 
+def _dismiss_not_found(page) -> bool:
+    """Soft-404 de Amazon ('¿Buscas algo?' / 'not a functioning page', con link Continuar)
+    que a veces interpone al abrir /a/addresses/add. Clic en Continuar/Continue para que deje
+    de servirlo. Devuelve True si lo detectó (bilingüe: el proxy puede forzar locale es)."""
+    try:
+        body = page.locator("body").inner_text(timeout=2000).lower()
+    except Exception:
+        return False
+    markers = ("no es una página activa", "not a functioning page",
+               "buscas algo", "looking for something")
+    if not any(m in body for m in markers):
+        return False
+    for sel in ("a:has-text('Continuar')", "a:has-text('Continue')",
+                "text=Continuar", "text=Continue"):
+        try:
+            link = page.locator(sel).first
+            if link.count() and link.is_visible():
+                _human_click(page, link)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+                return True
+        except Exception:
+            continue
+    return True  # detectado pero sin link clicable: igual reportar para reintentar la nav
+
+
 def _fill_and_submit_address(page, a: dict) -> None:
     """Un intento de alta: abre el form (espera a que cargue), llena, elige estado,
     envía y CONFIRMA (reaparece el tile Add Address). Lanza si no confirma."""
-    click_if_present(page, "#ya-myab-address-add-link", "text=Add Address")
-    page.wait_for_selector("#address-ui-widgets-enterAddressFullName",
-                           state="visible", timeout=10000)
+    # Abrir el form. Amazon a veces interpone el soft-404 'no es una página activa' (link
+    # Continuar) en /addresses/add -> despejarlo y reintentar abrir una vez (no reaparece).
+    for _ in range(2):
+        click_if_present(page, "#ya-myab-address-add-link", "text=Add Address")
+        try:
+            page.wait_for_selector("#address-ui-widgets-enterAddressFullName",
+                                   state="visible", timeout=10000)
+            break
+        except Exception:
+            if not _dismiss_not_found(page):
+                raise
+            page.goto(ADDRESSES_URL, wait_until="domcontentloaded")
+    else:
+        raise RuntimeError("no cargó el form de alta (soft-404 persistente)")
     # Tecleo humano. Numéricos con typos=False (un typo filtrado borraría un dígito real).
     # El nombre Amazon lo PRE-LLENA con el de la cuenta -> NO reescribir (apendaría y daría
     # "Inappropriate words in Name"); solo llenar si viene vacío. El nombre real es más legítimo.
@@ -670,41 +825,46 @@ def _warmup(page, prof):
     falta, avisa y sigue."""
     print("🔥 Calentando sesión (modo humano)...")
     rlo, rhi = prof["read"]
+    walled = False
     try:
         page.goto(HOME_URL, wait_until="domcontentloaded")
-        _continue_shopping(page)  # saltar el muro anti-bot si reemplazó la home
+        walled = _continue_shopping(page)  # muro anti-bot = IP de baja reputación (home degradada)
         _idle(page, rlo, rhi)
         _wander(page)
         _human_scroll(page)
-        for _ in range(random.randint(*prof["searches"])):
-            _warmup_search(page, random.choice(WARMUP_SEARCHES))
-            try:  # esperar resultados; NO wait_for_load_state (race mid-nav)
-                page.wait_for_url("**/s?k=**", timeout=15000)
-            except Exception:
-                pass  # el autocompletado pudo ir a otra URL; sigo igual
+        # IP degradada -> el form de búsqueda es el LEGACY y devuelve 500 ("Sorry! Something went
+        # wrong"). Saltar la búsqueda (y su nav de recuperación): no insistir sobre una IP mala.
+        if not walled:
+            for _ in range(random.randint(*prof["searches"])):
+                _warmup_search(page, random.choice(WARMUP_SEARCHES))
+                try:  # esperar resultados; NO wait_for_load_state (race mid-nav)
+                    page.wait_for_url("**/s?k=**", timeout=15000)
+                except Exception:
+                    pass  # el autocompletado pudo ir a otra URL; sigo igual
+                _idle(page, rlo, rhi)
+                _wander(page)
+                _human_scroll(page)
+                for _ in range(random.randint(*prof["products"])):
+                    try:  # abrir un producto: approach en curva -> click -> leer -> volver
+                        prod = page.locator("a[href*='/dp/']").nth(random.randint(0, 4))
+                        _human_click(page, prod)
+                        page.wait_for_url("**/dp/**", timeout=12000)
+                        _idle(page, rlo, rhi)
+                        _human_scroll(page)
+                        _wander(page)
+                        _human_scroll(page, n=random.randint(1, 3), up=True)  # vuelve a subir
+                        page.go_back(wait_until="domcontentloaded")
+                        _idle(page, rlo, rhi)
+                    except Exception:
+                        break  # sin producto clickable: la búsqueda ya cuenta, sigo
+            page.goto(HOME_URL, wait_until="domcontentloaded")
+            _continue_shopping(page)
             _idle(page, rlo, rhi)
             _wander(page)
-            _human_scroll(page)
-            for _ in range(random.randint(*prof["products"])):
-                try:  # abrir un producto: approach en curva -> click -> leer -> volver
-                    prod = page.locator("a[href*='/dp/']").nth(random.randint(0, 4))
-                    _human_click(page, prod)
-                    page.wait_for_url("**/dp/**", timeout=12000)
-                    _idle(page, rlo, rhi)
-                    _human_scroll(page)
-                    _wander(page)
-                    _human_scroll(page, n=random.randint(1, 3), up=True)  # vuelve a subir
-                    page.go_back(wait_until="domcontentloaded")
-                    _idle(page, rlo, rhi)
-                except Exception:
-                    break  # sin producto clickable: la búsqueda ya cuenta, sigo
-        page.goto(HOME_URL, wait_until="domcontentloaded")
-        _continue_shopping(page)
-        _idle(page, rlo, rhi)
-        _wander(page)
         print("✅ Calentamiento completado")
     except Exception as e:
         print("⚠️  calentamiento incompleto (sigo):", e)
+    return walled
 
 
 # Botones "saltar" de los interstitiales post-login de Amazon (teléfono, guardar
@@ -837,11 +997,17 @@ def launch_browser(proxy, headless: bool):
     )
 
 
-def run_account(account: dict, proxy, headless: bool, skip_add: bool, hold: bool) -> int:
+BAD_PROXY = 3  # rc centinela interno: warmup detectó muro (IP degradada) -> main rota de proxy
+MAX_PROXY_TRIES = 3  # intentos de IP por cuenta antes de proceder best-effort (muro frecuente)
+
+
+def run_account(account: dict, proxy, headless: bool, skip_add: bool, hold: bool,
+                bail_on_wall: bool = False) -> int:
     """Flujo completo de UNA cuenta en navegador EFÍMERO Camoufox: warmup multi-sitio +
     Amazon -> login -> /a/addresses -> alta ÚNICA -> cosecha cookies en cookies/<slug>.txt.
-    Devuelve rc 0 ok / 1 alta falló / 2 necesita humano (CAPTCHA/OTP). Cierra siempre
-    (el `with` descarta el navegador efímero al salir)."""
+    Devuelve rc 0 ok / 1 alta falló / 2 necesita humano (CAPTCHA/OTP) / 3 IP degradada (sólo
+    con bail_on_wall, lo consume el loop de main). Cierra siempre (el `with` descarta el
+    navegador efímero al salir)."""
     email, password = account["email"], account["password"]
     slug = account_slug(email)
     COOKIES_DIR.mkdir(parents=True, exist_ok=True)
@@ -869,17 +1035,22 @@ def run_account(account: dict, proxy, headless: bool, skip_add: bool, hold: bool
         # detrás del JS anti-bot tras el muro 'Continue shopping'). Por cuenta -> correcto en --all.
         _prime_viewport(page)
         page.context.add_init_script(WEBAUTHN_NEUTER)  # passkey auto-cancel, antes de navegar
-        saver = {"images": True}  # warmup sin imágenes (ahorro); se flipea antes del login
+        # ponytail: imágenes SIEMPRE on (bloquearlas = señal de bot, Camoufox #170). El saver
+        # sigue cortando media+font+trackers (ahorro de bajo riesgo); sólo no toca imágenes.
+        saver = {"images": False}
         _install_saver_routes(page.context, saver)
 
         # Sembrar historial neutral + calentar Amazon (clave anti-CAPTCHA). AMZ_WARMUP regula
         # intensidad/velocidad; 'off' salta el warmup y va directo al login.
         prof = _warmup_profile()
+        walled = False
         if prof["mode"] != "off":
             _warmup_web(page, prof)
-            _warmup(page, prof)
+            walled = _warmup(page, prof)
+        if walled and bail_on_wall:
+            print("🚫 IP degradada (muro anti-bot) -> rotando proxy")
+            return BAD_PROXY  # corta antes del login: ahorra los bytes del login en una IP mala
 
-        saver["images"] = False  # login/CAPTCHA/form: dejar cargar imágenes (CAPTCHA visible)
         page.goto(ADDRESSES_URL, wait_until="domcontentloaded")
 
         # Login SÓLO si Amazon nos manda a signin. Best-effort: si está el form clásico
@@ -969,16 +1140,320 @@ def run_account(account: dict, proxy, headless: bool, skip_add: bool, hold: bool
         return rc
 
 
+def _cvf_error(page) -> bool:
+    """500 de Amazon en el paso de verificación CVF: 'something went wrong on our end'
+    en /ap/cvf|/ap/signin. Señal de IP de baja reputación (Amazon rechaza el envío del OTP)."""
+    try:
+        body = page.locator("body").inner_text(timeout=2000).lower()
+    except Exception:
+        return False
+    if "went wrong on our end" not in body:
+        return False
+    return "/ap/cvf" in page.url or "/ap/signin" in page.url
+
+
+def run_signup(proxy, headless: bool, hold: bool, bail_on_wall: bool = False) -> tuple[dict, int]:
+    """Crea UNA cuenta Amazon nueva con identidad generada al vuelo.
+    OTP de verificación leído automáticamente del worker de correo.
+    RC: 0 ok / 1 alta de dirección falló / 2 necesita humano."""
+    ident = unique_identity()
+    email, password = ident["email"], ident["password"]
+    full_name = ident["full_name"]
+    slug = account_slug(email)
+    COOKIES_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"\n=== Registro nuevo: {full_name} <{email}> ===")
+    if proxy:
+        print(f"🌐 proxy: {proxy['server']}")
+
+    with launch_browser(proxy, headless) as browser:
+        page = browser.new_page()
+        page.set_default_navigation_timeout(20000)
+        page.set_default_timeout(15000)
+        try:
+            geo = page.evaluate("() => ({lang: navigator.language, "
+                                "tz: Intl.DateTimeFormat().resolvedOptions().timeZone})")
+            flag = "" if str(geo["lang"]).lower().startswith("en-us") else "  ⚠️ NO-US"
+            print(f"🌍 locale/tz del proxy: {geo['lang']} / {geo['tz']}{flag}")
+        except Exception:
+            pass
+        _prime_viewport(page)
+        page.context.add_init_script(WEBAUTHN_NEUTER)
+        # ponytail: imágenes SIEMPRE on (bloquearlas = señal de bot, Camoufox #170).
+        # _install_saver_routes sigue cortando media+font+trackers (ahorro de bajo riesgo).
+        saver = {"images": False}
+        _install_saver_routes(page.context, saver)
+
+        prof = _warmup_profile()
+        walled = False
+        if prof["mode"] != "off":
+            _warmup_web(page, prof)
+            walled = _warmup(page, prof)
+        if walled and bail_on_wall:
+            print("🚫 IP degradada (muro anti-bot) -> rotando proxy")
+            return {"email": email, "password": password}, BAD_PROXY
+
+        # Mismo punto de entrada que run_account: /ap/register da 404; Amazon
+        # detecta cuenta nueva desde el flujo de login standard.
+        page.goto(ADDRESSES_URL, wait_until="domcontentloaded")
+        _dismiss_interstitials(page)
+
+        # Paso 1 — email (mismos selectores que login)
+        try:
+            eb = page.locator("#ap_email, #ap_email_login").first
+            eb.wait_for(state="visible", timeout=8000)
+            _human_type(page, eb, email, typos=False)
+            cont = page.locator("#continue")
+            if cont.count():
+                _human_click(page, cont.first)
+            # Esperar navegación post-Continue (redirige a /ax/claim/intent o similar)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+        except Exception as e:
+            print("⚠️  paso email:", e)
+
+        # Paso 2 — Amazon detecta email nuevo: "Looks like you're new to Amazon"
+        # El botón es <input type="submit"> — no es <button>, así que :has-text no aplica.
+        # #createAccountSubmit es el ID estándar; input[type="submit"] como comodín.
+        try:
+            proceed = page.locator(
+                "#createAccountSubmit, "
+                "[data-testid='create-account-submit'], "
+                "input[type='submit']"
+            ).first
+            proceed.wait_for(state="visible", timeout=20000)
+            _human_click(page, proceed)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+            # Algunas IP/sesiones no navegan al primer click: reenviar el form por JS.
+            # requestSubmit(el) incluye el value del botón en el POST openid (submit() no).
+            if "/ax/claim/intent" in page.url and not page.locator("#ap_customer_name").count():
+                try:
+                    proceed.evaluate("el => el.form && (el.form.requestSubmit "
+                                     "? el.form.requestSubmit(el) : el.form.submit())")
+                    page.wait_for_load_state("domcontentloaded", timeout=20000)
+                except Exception:
+                    pass
+        except Exception as e:
+            print("⚠️  botón 'Proceed to create an account':", e)
+
+        # Gate — el form de registro DEBE aparecer. Si no, la sesión quedó atascada en el
+        # intent (típico de IP degradada): no marchar a contraseña/OTP/dirección quemando MB.
+        if not page.locator("#ap_customer_name").count():
+            try:
+                page.locator("#ap_customer_name").first.wait_for(state="visible", timeout=12000)
+            except Exception:
+                if bail_on_wall:
+                    print("🚫 atascado en el intent (IP degradada) -> rotando proxy")
+                    return {"email": email, "password": password}, BAD_PROXY
+                print("🚫 no se llegó al formulario de registro -> abortando cuenta")
+                if hold and not headless:
+                    try:
+                        input("⏸️  ENTER para cerrar...")
+                    except Exception:
+                        pass
+                return {"email": email, "password": password}, 2
+
+        # Paso 3 — formulario de registro (nombre + contraseña; email ya pre-relleno)
+        try:
+            nb = page.locator("#ap_customer_name").first
+            nb.wait_for(state="visible", timeout=15000)
+            _human_type(page, nb, full_name)
+        except Exception as e:
+            print("⚠️  campo nombre:", e)
+
+        try:
+            pb = page.locator("#ap_password").first
+            pb.wait_for(state="visible", timeout=6000)
+            _human_type(page, pb, password, typos=False)
+            pb2 = page.locator("#ap_password_check").first
+            pb2.wait_for(state="visible", timeout=6000)
+            _human_type(page, pb2, password, typos=False)
+        except Exception as e:
+            print("⚠️  campo contraseña:", e)
+
+        try:
+            _human_click(page, page.locator("#continue").first)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+        except Exception as e:
+            print("⚠️  submit registro:", e)
+
+        # Paso 3.5 — selector de canal CVF (/ap/cvf/request): clic "Verify email" para que
+        # Amazon despache el OTP. Sin ese clic nunca llega el correo -> timeout. La página
+        # puede devolver 500 "went wrong on our end" en IP de baja reputación: un reload barato
+        # cubre el 500 transitorio; si persiste, es la IP -> rotar (o resolver a mano).
+        def _pick_email_channel():
+            vb = page.locator(
+                "input[value*='Verify email'], input[value*='verify email'], "
+                "a:has-text('Verify email'), button:has-text('Verify email')"
+            ).first
+            if vb.count():
+                print("📬 Seleccionando canal 'Verify email' ...")
+                _human_click(page, vb)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+
+        try:
+            _pick_email_channel()
+        except Exception as e:
+            print("⚠️  channel selector:", e)
+
+        for _ in range(2):
+            if not _cvf_error(page):
+                break
+            print("⚠️  CVF 500 de Amazon — recargando")
+            _pause(page, 1500, 3000)
+            try:
+                page.reload(wait_until="domcontentloaded")
+            except Exception:
+                pass
+            try:
+                _pick_email_channel()
+            except Exception:
+                pass
+        if _cvf_error(page):
+            if bail_on_wall:
+                print("🚫 CVF 500 persistente (IP de baja reputación) -> rotando proxy")
+                return {"email": email, "password": password}, BAD_PROXY
+            print("🚫 CVF 500 persiste — resuélvelo a mano en la ventana (no espero OTP en vano)")
+            if hold and not headless:
+                try:
+                    input("⏸️  ENTER cuando lo resuelvas (o para cerrar)...")
+                except Exception:
+                    pass
+            return {"email": email, "password": password}, 2
+
+        # Paso 4 — OTP de Amazon por correo
+        print(f"📧 Esperando OTP en {email} ...")
+        otp = fetch_otp(email, timeout_s=120)
+        if otp:
+            print(f"✅ OTP: {otp}")
+            try:
+                otp_box = page.locator("#cvf-input-code, input[name='code']").first
+                otp_box.wait_for(state="visible", timeout=10000)
+                _human_type(page, otp_box, otp, typos=False)
+                _human_click(page, page.locator("input[type='submit'], .a-button-input").first)
+            except Exception as e:
+                print("⚠️  OTP auto-fill falló:", e)
+        else:
+            print("⏳ OTP no llegó en 2 min — resuélvelo a mano en la ventana")
+
+        _settle_after_login(page, timeout_s=180)
+        _dismiss_interstitials(page)
+
+        for _ in range(2):
+            try:
+                page.goto(ADDRESSES_URL, wait_until="domcontentloaded")
+                break
+            except Exception as e:
+                print("nav falló, reintento:", e)
+
+        click_if_present(page, "text=Quedarse en Amazon.com")
+        _continue_shopping(page)
+        try:
+            page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        if "/a/addresses" in page.url and not page.locator("#ya-myab-address-add-link").count():
+            try:
+                page.reload(wait_until="domcontentloaded")
+            except Exception:
+                pass
+
+        rc = 2
+        if "/a/addresses" in page.url:
+            print("✅ En Mis Direcciones")
+            added = None
+            try:
+                added = add_random_address(page)
+            except Exception as e:
+                print("⚠️  fallo al agregar dirección:", e)
+            if added:
+                dump_cookies(page.context, str(COOKIES_DIR / f"{slug}.txt"))
+                rc = 0
+            else:
+                rc = 1
+        else:
+            print("⚠️  URL actual:", page.url)
+
+        page.screenshot(path=str(COOKIES_DIR / f"{slug}_signup.png"), full_page=True)
+        if hold and not headless:
+            try:
+                input("Enter para cerrar el navegador...")
+            except EOFError:
+                page.wait_for_timeout(90_000)
+
+    return {"email": email, "password": password}, rc
+
+
 def main() -> int:
     load_dotenv(Path(__file__).with_name(".env"))
+
+    headless = "--headless" in sys.argv or os.environ.get("HEADLESS") == "1"
+    proxies  = load_proxies()
+    state    = load_proxy_state()
+    if proxies:
+        print(f"🌐 {len(proxies)} proxies (LRU + enfriamiento 10 min)")
+
+    def _next_proxy(email: str, attempt: int = 0):
+        if proxies:
+            proxy, wait = pick_proxy(proxies, state, time.time())
+            if wait > 0:
+                print(f"⏳ esperando {int(wait)}s a que rote la IP de {proxy['server']}...")
+                time.sleep(wait)
+            state[proxy["server"]] = time.time()
+            save_proxy_state(state)
+            return proxy  # proxies.txt: pick_proxy ya rota por LRU (el fallido quedó recién-usado)
+        return proxy_for(email, attempt)
+
+    # --- modo registro --signup / --signup-n N ---
+    signup_n = 0
+    if "--signup-n" in sys.argv:
+        i = sys.argv.index("--signup-n")
+        signup_n = int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 1
+    elif "--signup" in sys.argv:
+        signup_n = 1
+
+    if signup_n:
+        worst = 0
+        for idx in range(signup_n):
+            print(f"\n--- Registro {idx + 1}/{signup_n} ---")
+            hold = (signup_n == 1)
+            rc, new_acct = 2, None
+            for attempt in range(MAX_PROXY_TRIES):
+                proxy = _next_proxy(f"new{idx}", attempt)  # idx -> IP base distinta por cuenta
+                last = attempt == MAX_PROXY_TRIES - 1
+                try:  # IP degradada (muro/intent atascado) -> BAD_PROXY -> rotar; último procede igual
+                    new_acct, rc = run_signup(proxy, headless, hold, bail_on_wall=not last)
+                except Exception as e:
+                    print("❌ error en registro:", e)
+                    rc, new_acct = 2, None
+                if rc != BAD_PROXY:
+                    break
+                print(f"🔁 IP degradada -> otra IP ({attempt + 2}/{MAX_PROXY_TRIES})")
+            worst = max(worst, rc)
+            if rc == 0 and new_acct:
+                with ACCOUNTS_FILE.open("a", encoding="utf-8") as f:
+                    f.write(f"{new_acct['email']}:{new_acct['password']}\n")
+                print(f"✅ Cuenta guardada en accounts.txt: {new_acct['email']}")
+        return worst
+
+    # --- modo login (comportamiento original) ---
     accounts = load_accounts()
     if not accounts:
         sys.exit("No hay cuentas: crea accounts.txt (email:password por línea) "
                  "o pon AMZ_EMAIL/AMZ_PASSWORD en .env")
 
-    headless = "--headless" in sys.argv or os.environ.get("HEADLESS") == "1"
     skip_add = "--no-add" in sys.argv
-    run_all = "--all" in sys.argv
+    run_all  = "--all" in sys.argv
     selected = None
     if "--account" in sys.argv:
         i = sys.argv.index("--account")
@@ -991,37 +1466,24 @@ def main() -> int:
         if not targets:
             sys.exit(f"Cuenta no encontrada (accounts.txt / .env): {selected}")
     else:
-        targets = accounts[:1]  # default: primera (compat single-account)
+        targets = accounts[:1]
 
-    # En --all no bloqueamos por cada cuenta (correría desatendido); en single sí.
     hold = not run_all
-
-    # Proxy por LRU + enfriamiento: cada corrida toma el puerto MENOS-recientemente usado;
-    # si aún no cumplió 10 min, espera -> al reusar el puerto su IP sticky ya rotó = IP
-    # fresca. proxies.txt tiene precedencia; sin él, AMZ_PROXY ({session}) como fallback.
-    proxies = load_proxies()
-    state = load_proxy_state()
-    if proxies:
-        print(f"🌐 {len(proxies)} proxies (LRU + enfriamiento 10 min)")
-
     worst = 0
     for account in targets:
-        email = account["email"]
-        if proxies:
-            proxy, wait = pick_proxy(proxies, state, time.time())
-            if wait > 0:
-                print(f"⏳ esperando {int(wait)}s a que rote la IP de {proxy['server']}...")
-                time.sleep(wait)
-            state[proxy["server"]] = time.time()
-            save_proxy_state(state)
-        else:
-            proxy = proxy_for(email)  # fallback single-proxy (.env AMZ_PROXY) o None
-        try:
-            rc = run_account(account, proxy, headless, skip_add, hold)
-        except Exception as e:
-            print("❌ error en la cuenta", email, "->", e)
-            rc = 2
-        worst = max(worst, rc)  # 0 ok < 1 alta falló < 2 necesita humano
+        rc = 2
+        for attempt in range(MAX_PROXY_TRIES):
+            proxy = _next_proxy(account["email"], attempt)
+            last = attempt == MAX_PROXY_TRIES - 1
+            try:  # IP degradada (muro) -> BAD_PROXY -> rotar; en el último intento procede igual
+                rc = run_account(account, proxy, headless, skip_add, hold, bail_on_wall=not last)
+            except Exception as e:
+                print("❌ error en la cuenta", account["email"], "->", e)
+                rc = 2
+            if rc != BAD_PROXY:
+                break
+            print(f"🔁 IP degradada -> otra IP ({attempt + 2}/{MAX_PROXY_TRIES})")
+        worst = max(worst, rc)
     return worst
 
 
@@ -1061,7 +1523,7 @@ def _selftest() -> None:
                                      _human_move, _idle, _warmup_search, _install_saver_routes,
                                      launch_browser, _select_state, _fill_and_submit_address,
                                      _warmup_profile, _await_address_ok, _address_listed,
-                                     _continue_shopping))
+                                     _continue_shopping, _dismiss_not_found, _cvf_error))
     # _human_type acepta typos (numéricos lo desactivan para no corromper el dígito).
     import inspect
     assert "typos" in inspect.signature(_human_type).parameters
@@ -1077,6 +1539,14 @@ def _selftest() -> None:
     os.environ["AMZ_WARMUP"] = "garbage"
     assert _warmup_profile()["mode"] == "light", "valor inválido cae a light"
     os.environ.pop("AMZ_WARMUP", None)
+    # rotación de proxy tras IP degradada: cada `attempt` -> sesión sticky distinta (IP distinta).
+    assert MAX_PROXY_TRIES >= 1 and BAD_PROXY not in (0, 1, 2), (MAX_PROXY_TRIES, BAD_PROXY)
+    assert "bail_on_wall" in inspect.signature(run_account).parameters
+    assert "bail_on_wall" in inspect.signature(run_signup).parameters
+    os.environ["AMZ_PROXY"] = "http://u-{session}:p@gate.decodo.com:7000"
+    p0, p1 = proxy_for("x@y.com", 0), proxy_for("x@y.com", 1)
+    assert p0 and p1 and p0["username"] != p1["username"], (p0, p1)
+    os.environ.pop("AMZ_PROXY", None)
     # CITIES: zip de 5 dígitos + state abbr de 2 letras (combos consistentes, residenciales).
     for city, abbr, name, zipc in CITIES:
         assert len(zipc) == 5 and zipc.isdigit(), (city, zipc)
