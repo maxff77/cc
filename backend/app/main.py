@@ -37,6 +37,7 @@ from app.api.targets import router as targets_router
 from app.api.watchdog import router as watchdog_router
 from app.api.ws import router as ws_router
 from app.core import capture
+from app.core.key_purge import run_key_purge
 from app.core.reconciler import run_reconciler
 from app.core.send_worker import run_worker
 from app.core.telegram import gateway
@@ -98,16 +99,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # live Telethon update stream dropped (catch_up gaps, missed edits) by
     # re-reading chat history into the SAME idempotent capture path.
     reconciler_task = asyncio.create_task(run_reconciler())
+    # Daily housekeeping: prune stale gift keys (expired-unclaimed + revoked) so
+    # the admin keys view doesn't accumulate clutter. In-process, same idiom as
+    # the reconciler — runs whether or not anyone opens the view.
+    key_purge_task = asyncio.create_task(run_key_purge())
     yield
     worker_task.cancel()
     capture_task.cancel()
     reconciler_task.cancel()
+    key_purge_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
     with contextlib.suppress(asyncio.CancelledError):
         await capture_task
     with contextlib.suppress(asyncio.CancelledError):
         await reconciler_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await key_purge_task
     await gateway.disconnect()
     await engine.dispose()
 

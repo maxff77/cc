@@ -98,6 +98,14 @@ export default function AdminKeysPage() {
     queryClient.invalidateQueries({ queryKey: KEYS_KEY });
 
   const items = keys.data?.items ?? [];
+  // Declutter: default to only ACTIVE keys; the toggle reveals claimed +
+  // (any not-yet-purged) revoked. Pure client-side filter of the existing list
+  // — the daily backend purge eventually deletes expired-unclaimed + revoked.
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll
+    ? items
+    : items.filter((key) => key.status === "active");
+  const hiddenCount = items.length - visible.length;
 
   return (
     // Admin + owner reach this page; owner tabs show only for the owner.
@@ -123,8 +131,33 @@ export default function AdminKeysPage() {
                 message="Todavía no hay keys. Genera la primera."
               />
             ) : (
-              <ul className="m-0 list-none p-0">
-                {items.map((key, i) => (
+              <>
+                <div className="flex items-center justify-between gap-3 border-b border-separator px-3.5 py-2">
+                  <span className="text-[11px] text-muted tabular-nums">
+                    {showAll
+                      ? `${items.length} en total`
+                      : hiddenCount > 0
+                        ? `${visible.length} activas · ${hiddenCount} ocultas`
+                        : `${visible.length} activas`}
+                  </span>
+                  {(showAll || hiddenCount > 0) && (
+                    <Btn
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setShowAll((v) => !v)}
+                    >
+                      {showAll ? "Solo activas" : "Mostrar todas"}
+                    </Btn>
+                  )}
+                </div>
+                {visible.length === 0 ? (
+                  <EmptyState
+                    eyebrow="Keys"
+                    message="No hay keys activas. Activa “Mostrar todas” para ver canjeadas y revocadas."
+                  />
+                ) : (
+                  <ul className="m-0 list-none p-0">
+                    {visible.map((key, i) => (
                   <li
                     key={key.id}
                     className={clsx(
@@ -156,8 +189,10 @@ export default function AdminKeysPage() {
                       <RevokeKeyAction keyRow={key} onRevoked={invalidate} />
                     )}
                   </li>
-                ))}
-              </ul>
+                    ))}
+                  </ul>
+                )}
+              </>
             ))}
         </SectionCard>
       </div>

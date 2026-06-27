@@ -11,7 +11,7 @@ Pure ORM, flush not commit — callers own the transaction.
 import secrets
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -114,6 +114,34 @@ async def list_all(session: AsyncSession) -> list[Row]:
         .order_by(GiftKey.id.desc())
     )
     return list((await session.execute(stmt)).all())
+
+
+async def delete_stale(session: AsyncSession) -> int:
+    """Hard-delete stale gift keys; return the number of rows removed.
+
+    Two cases go (the keys-view-declutter feature):
+    - any ``revoked`` key (it can never be claimed again), and
+    - an UNCLAIMED (``active``) key past its shelf life, where shelf life =
+      ``created_at + days`` (the key's own grant size doubles as its lifespan).
+
+    ``claimed`` keys are NEVER deleted — they are the mint/claim audit trail (the
+    frontend hides them behind a toggle instead). Credits-only keys (``days==0``)
+    are EXEMPT from the days rule: ``created_at + 0`` would purge them instantly.
+
+    Set-based DELETE — no ``FOR UPDATE`` (idempotent, no read-modify-write);
+    caller commits.
+    """
+    expired_unclaimed = and_(
+        GiftKey.status == "active",
+        GiftKey.days > 0,
+        GiftKey.created_at + func.make_interval(0, 0, 0, GiftKey.days) < func.now(),
+    )
+    stmt = delete(GiftKey).where(
+        or_(GiftKey.status == "revoked", expired_unclaimed)
+    )
+    result = await session.execute(stmt)
+    rowcount: int = getattr(result, "rowcount", 0) or 0
+    return rowcount
 
 
 async def mark_claimed(
