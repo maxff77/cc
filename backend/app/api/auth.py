@@ -6,7 +6,6 @@ server-side session cookie (see Dev Notes / architecture for exact flags).
 
 import re
 from datetime import datetime
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, field_validator
@@ -77,10 +76,10 @@ class RegisterRequest(BaseModel):
 class PlanSummary(BaseModel):
     # The client's pricing-plan summary surfaced to the cockpit (plan-catalog
     # feature): the cockpit shows/enforces the line cap client-side from this;
-    # the backend stays authoritative. ``antispam_seconds`` is exact (Decimal,
-    # mirrors the Numeric column).
+    # the backend stays authoritative. Antispam is no longer a plan field
+    # (antispam-per-user feature) — it's per-user/global and owner-only, so it
+    # is not surfaced here.
     name: str
-    antispam_seconds: Decimal
     max_lines_per_batch: int
 
 
@@ -327,7 +326,6 @@ async def me(
         if plan is not None:
             plan_summary = PlanSummary(
                 name=plan.name,
-                antispam_seconds=plan.antispam_seconds,
                 max_lines_per_batch=plan.max_lines_per_batch,
             )
     credit_balance = await tenants_repo.get_credit_balance(session, user.tenant_id)

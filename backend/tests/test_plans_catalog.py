@@ -76,7 +76,6 @@ def _plan_payload(**overrides: object) -> dict:
         "name": f"Plan {uuid.uuid4().hex[:8]}",
         "price_usd": "19.99",
         "duration_days": 30,
-        "antispam_seconds": "5",
         "max_lines_per_batch": 100,
         "is_active": True,
     }
@@ -127,7 +126,6 @@ async def test_create_plan_persists_and_appears_in_list(
         name=f"Pro {uuid.uuid4().hex[:8]}",
         price_usd="49.50",
         duration_days=15,
-        antispam_seconds="20",
         max_lines_per_batch=10,
     )
     assert plan["duration_days"] == 15
@@ -135,7 +133,6 @@ async def test_create_plan_persists_and_appears_in_list(
     assert plan["is_active"] is True
     # Decimals serialize as strings/numbers — compare by value, not literal.
     assert Decimal(str(plan["price_usd"])) == Decimal("49.50")
-    assert Decimal(str(plan["antispam_seconds"])) == Decimal("20")
 
     listing = await owner_client.get("/api/admin/plans")
     assert listing.status_code == 200
@@ -231,11 +228,10 @@ async def test_plans_list_is_401_anonymous(track_plans: set[int]) -> None:
 async def test_create_plan_invalid_fields_rejected(
     ctx: dict[str, object], track_plans: set[int]
 ) -> None:
-    """Matrix 'Invalid plan field': antispam 0 / days 0 / lines 0 / negative
-    price → 400 invalid_plan, each with a field-specific message."""
+    """Matrix 'Invalid plan field': days 0 / lines 0 / negative price → 400
+    invalid_plan, each with a field-specific message."""
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     cases = [
-        {"antispam_seconds": "0"},
         {"duration_days": 0},
         {"max_lines_per_batch": 0},
         {"price_usd": "-1"},
@@ -258,7 +254,7 @@ async def test_update_plan_invalid_field_rejected(
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     plan = await _create_plan(owner_client, track_plans)
     res = await owner_client.patch(
-        f"/api/admin/plans/{plan['id']}", json={"antispam_seconds": "0"}
+        f"/api/admin/plans/{plan['id']}", json={"duration_days": 0}
     )
     assert res.status_code == 400, res.text
     assert res.json()["code"] == "invalid_plan"
@@ -502,12 +498,13 @@ async def test_renew_via_inactive_plan_is_invalid(
 async def test_me_carries_plan_summary_when_assigned(
     ctx: dict[str, object], track_plans: set[int]
 ) -> None:
-    """A client on a plan sees ``me.plan = {name, antispam_seconds,
-    max_lines_per_batch}``; a no-plan client sees ``plan = null``."""
+    """A client on a plan sees ``me.plan = {name, max_lines_per_batch}``;
+    a no-plan client sees ``plan = null``. Antispam is no longer in the summary
+    (antispam-per-user feature)."""
     owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     created: set[str] = ctx["created"]  # type: ignore[assignment]
     plan = await _create_plan(
-        owner_client, track_plans, antispam_seconds="12", max_lines_per_batch=7
+        owner_client, track_plans, max_lines_per_batch=7
     )
 
     client = await seed_user(
@@ -532,7 +529,7 @@ async def test_me_carries_plan_summary_when_assigned(
         assert summary is not None
         assert summary["name"] == plan["name"]
         assert summary["max_lines_per_batch"] == 7
-        assert Decimal(str(summary["antispam_seconds"])) == Decimal("12")
+        assert "antispam_seconds" not in summary
 
 
 # --- Batch line cap on CREATE (matrix: Send within / over cap) ---------------
@@ -652,54 +649,6 @@ async def test_no_plan_client_has_no_line_cap(
     assert res.json()["added"] == 500
 
 
-# --- active_senders DB-join: per-tenant antispam resolution ------------------
-
-
-@pytest.mark.asyncio(loop_scope="session")
-async def test_active_senders_resolves_plan_antispam_and_null_to_zero(
-    ctx: dict[str, object], track_plans: set[int], gate: dict
-) -> None:
-    """The load-bearing join: ``active_senders`` resolves a planned tenant's
-    ``antispam_seconds`` to the plan's value via tenant→client user→plan, and a
-    NULL-plan tenant to 0.0 (no per-tenant cooldown — the global g_min sleep is
-    the sole pacer). Exercises the real DB resolution, not just the in-memory
-    scheduler struct.
-    """
-    from app.db.repos import batches as batches_repo
-
-    owner_client: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
-    created: set[str] = ctx["created"]  # type: ignore[assignment]
-    plan = await _create_plan(owner_client, track_plans, antispam_seconds="20")
-
-    planned = await seed_user(
-        "client", expires_at=datetime.now(UTC) + timedelta(days=30)
-    )
-    created.add(planned.email)
-    await _set_plan_id(planned.id, plan["id"])
-
-    null_plan = await seed_user(
-        "client", expires_at=datetime.now(UTC) + timedelta(days=30)
-    )
-    created.add(null_plan.email)
-    assert null_plan.plan_id is None  # seeded with no plan
-
-    # Each tenant posts a batch so both appear in active_senders ('sending'
-    # batch with a queued line).
-    async with _client() as a, _client() as b:
-        await login(a, planned.email)
-        await login(b, null_plan.email)
-        assert (await _post_batch(a, "x", gate["id"])).status_code == 201
-        assert (await _post_batch(b, "y", gate["id"])).status_code == 201
-
-    # global_interval is passed for caller/stub compatibility; the NULL-plan
-    # tenant must NOT pick it up — it resolves to 0.0, not 4.0.
-    async with async_session_factory() as session:
-        senders = await batches_repo.active_senders(session, global_interval=4.0)
-    by_tenant = {s.tenant_id: s.antispam_seconds for s in senders}
-    assert by_tenant.get(planned.tenant_id) == 20.0
-    assert by_tenant.get(null_plan.tenant_id) == 0.0
-
-
 # --- Global interval floor (matrix: Floor below min) -------------------------
 
 
@@ -792,7 +741,7 @@ def test_cooldown_lets_uncooled_tenant_through_while_other_waits() -> None:
     clock = _FakeClock()
     sched = Scheduler(now=clock)
     slow = _sender(1, antispam=20.0)
-    fast = _sender(2, antispam=0.0)  # plan_id NULL fallback resolves to 0 here
+    fast = _sender(2, antispam=0.0)  # no override → 0 (no per-tenant cooldown)
 
     # Slow tenant sends, then is skipped; the fast peer is always servable.
     assert sched.pick_next([slow]).tenant_id == 1

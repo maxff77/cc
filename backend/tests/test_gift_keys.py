@@ -47,7 +47,6 @@ async def plan_factory(ctx: dict):
                 name=f"plan-{uuid.uuid4().hex[:8]}",
                 price_usd=Decimal("5.00"),
                 duration_days=30,
-                antispam_seconds=Decimal("4"),
                 max_lines_per_batch=100,
                 credits=credits,
                 is_active=True,

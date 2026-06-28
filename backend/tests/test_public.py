@@ -81,7 +81,6 @@ async def _seed_plan(
             name=f"Plan {uuid.uuid4().hex[:10]}",
             price_usd=Decimal("21.00"),
             duration_days=30,
-            antispam_seconds=Decimal("4.00"),
             max_lines_per_batch=500,
             credits=credits,
             is_active=is_active,

@@ -90,8 +90,8 @@ from app.db.repos import gate_cookies as gate_cookies_repo
 from app.db.repos import send_log as send_log_repo
 from app.db.repos import users as users_repo
 from app.services import admission as admission_service
+from app.services import antispam as antispam_service
 from app.services import batches as batches_service
-from app.services import pacing as pacing_service
 
 logger = logging.getLogger(__name__)
 
@@ -331,14 +331,14 @@ async def step() -> bool:
     expired = False
     async with async_session_factory() as session:
         # The per-tenant antispam cooldown rides on each ActiveSender, resolved
-        # as coalesce(client plan.antispam_seconds, 0.0): a tenant with plan_id
-        # NULL carries NO per-tenant cooldown (legacy behavior). The global
-        # interval below remains the account-wide pacer (the pacing sleep at the
-        # end of the loop); it is still passed for caller/stub compatibility but
-        # no longer gates a no-plan tenant in the scheduler.
-        global_interval = await pacing_service.get_interval(session)
+        # as coalesce(User.antispam_seconds, default) for clients and 0.0 for
+        # owner/admin house tenants (antispam-per-user feature). The owner-set
+        # global default is read once per loop and passed in; the account-wide
+        # g_min sleep (end of the loop) still paces every send — the cooldown
+        # only re-gates a tenant on top of it.
+        default_antispam = await antispam_service.get_default(session)
         active = await batches_repo.active_senders(
-            session, global_interval=global_interval
+            session, default_antispam=default_antispam
         )
         pick = scheduler.pick_next(active)
         if pick is None:
@@ -552,8 +552,9 @@ async def _record_sent(
             await sleep_paced(_ERROR_RETRY_SECONDS)
 
     _sent_by_tenant[tenant_id] += 1
-    # Start this tenant's antispam cooldown (plan-catalog feature): pick_next
-    # skips it until its plan's antispam_seconds elapses. REAL deliveries only,
+    # Start this tenant's antispam cooldown (antispam-per-user feature):
+    # pick_next skips it until its resolved antispam_seconds elapses. REAL
+    # deliveries only,
     # same boundary as the watchdog feed below (boot reconciliation confirms
     # are old sends and never call this). Memory-only, like the rest of the
     # scheduler state; the global g_min sleep below still paces the account.

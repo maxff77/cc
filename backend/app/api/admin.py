@@ -53,6 +53,7 @@ from app.errors import (
     gate_exists,
     gate_not_found,
     invalid_admission_cap,
+    invalid_antispam,
     invalid_contact,
     invalid_credits,
     invalid_gate,
@@ -69,6 +70,7 @@ from app.errors import (
     user_not_found,
 )
 from app.services import admission as admission_service
+from app.services import antispam as antispam_service
 from app.services import auth as auth_service
 from app.services import live_forward as live_forward_service
 from app.services import pacing as pacing_service
@@ -194,6 +196,10 @@ class UserOut(BaseModel):
     # table and updated by recharge / plan renewal. Lives on the tenant, so it
     # is passed in rather than read off the ``User`` row.
     credit_balance: int = 0
+    # The per-user antispam override (antispam-per-user feature): seconds, or
+    # null when the client falls back to the owner's global default. Owner sets
+    # it from the admin users table when a client buys a faster speed.
+    antispam_seconds: float | None = None
 
 
 class UserListResponse(BaseModel):
@@ -210,6 +216,7 @@ def _to_out(user: User, *, credit_balance: int = 0) -> UserOut:
         is_blocked=user.is_blocked,
         contact=user.contact,
         credit_balance=credit_balance,
+        antispam_seconds=user.antispam_seconds,
     )
 
 
@@ -513,6 +520,47 @@ async def recharge_credits(
         target.tenant_id, "credits.updated", {"balance": resolved}
     )
     return _to_out(target, credit_balance=resolved)
+
+
+# --- Per-user antispam override (antispam-per-user feature) ----------------
+#
+# Owner-only: set (or clear) a client's antispam cooldown. The deal is made
+# offline; the owner writes the agreed value here. null clears it → the client
+# falls back to the global default. Lower = re-picked more often (faster); 0 =
+# no per-tenant cooldown. The g_min floor still caps the shared account, so this
+# can never push it past 1/g_min.
+
+
+class SetUserAntispamRequest(BaseModel):
+    # Seconds in [0, 30], or null to clear the override (use the global default).
+    antispam_seconds: float | None
+
+
+@router.post("/users/{user_id}/antispam", response_model=UserOut)
+async def set_user_antispam(
+    user_id: int,
+    body: SetUserAntispamRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    """Set/clear a client's antispam override — owner-only.
+
+    null clears it (falls back to the global default). A finite value is bounded
+    [0, ANTISPAM_MAX]: 0 = no per-tenant cooldown (the fastest a client can be
+    sold), still floored by the account-wide g_min. Out of range → 400
+    invalid_antispam. Target must be a client.
+    """
+    value = body.antispam_seconds
+    if value is not None and (
+        not math.isfinite(value)
+        or not 0.0 <= value <= antispam_service.ANTISPAM_MAX
+    ):
+        raise invalid_antispam()
+    target = await _require_client_target(session, user_id)
+    target.antispam_seconds = value
+    await session.commit()
+    balance = await tenants_repo.get_credit_balance(session, target.tenant_id)
+    return _to_out(target, credit_balance=balance)
 
 
 # --- Password reset (Story 1.6) -------------------------------------------
@@ -919,6 +967,55 @@ async def update_interval(
     return IntervalOut(interval_seconds=body.interval_seconds)
 
 
+# --- Default antispam (antispam-per-user feature) ----------------------------
+#
+# Owner-only knob: the GLOBAL default per-tenant cooldown applied to every client
+# without a per-user override. Lives in system_settings (hot, durable), bounded
+# 1–30s. Read by the send worker once per loop; nothing to apply to the scheduler
+# (the cooldown rides on each ActiveSender, not the singleton floor).
+
+
+class AntispamOut(BaseModel):
+    antispam_seconds: float
+
+
+class UpdateAntispamRequest(BaseModel):
+    antispam_seconds: float
+
+
+@router.get("/antispam", response_model=AntispamOut)
+async def get_default_antispam(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> AntispamOut:
+    """Current global default antispam in seconds (config fallback when unset)."""
+    return AntispamOut(antispam_seconds=await antispam_service.get_default(session))
+
+
+@router.put("/antispam", response_model=AntispamOut)
+async def update_default_antispam(
+    body: UpdateAntispamRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> AntispamOut:
+    """Set the global default antispam (seconds), bounded 1–30s.
+
+    isfinite guard so NaN/±Inf can't slip the chained compare (same ban-safety
+    idiom as the send interval). Persisted; the next worker loop reads it — no
+    scheduler apply, no worker wake (a control never makes the account send
+    faster mid-sleep).
+    """
+    if not math.isfinite(body.antispam_seconds) or not (
+        antispam_service.ANTISPAM_MIN
+        <= body.antispam_seconds
+        <= antispam_service.ANTISPAM_MAX
+    ):
+        raise invalid_antispam()
+    await antispam_service.set_default(session, body.antispam_seconds)
+    await session.commit()
+    return AntispamOut(antispam_seconds=body.antispam_seconds)
+
+
 # --- Live-forward channel (Amazon lives → Telegram) --------------------------
 #
 # Owner-only knob: the GLOBAL Telegram channel/group where every Amazon "live"
@@ -1149,20 +1246,17 @@ async def delete_gate_category(
 # --- Pricing-plan catalog CRUD (plan-catalog feature) ------------------------
 #
 # Owner-only curation of the GLOBAL pricing-plan catalog (no tenant scoping —
-# see the ``db.repos.plans`` module note). Plans hold price + duration +
-# per-tenant antispam cooldown + a max-lines-per-batch cap. The catalog ships
-# EMPTY (nothing seeded). Delete is RESTRICTed while ≥1 client references the
-# plan (409 plan_in_use) — retire via ``is_active=false`` instead, so historical
-# assignments never dangle. Money/seconds are exact ``Decimal`` (Numeric
-# columns); the route validates field bounds BEFORE the service runs
-# (antispam/duration/max-lines >= 1, price >= 0) so a bad value surfaces the
-# invalid_plan code, not a raw 422.
+# see the ``db.repos.plans`` module note). Plans hold price + duration + a
+# max-lines-per-batch cap + credits. Antispam is NO LONGER a plan field
+# (antispam-per-user feature). The catalog ships EMPTY (nothing seeded). Delete
+# is RESTRICTed while ≥1 client references the plan (409 plan_in_use) — retire
+# via ``is_active=false`` instead, so historical assignments never dangle. Money
+# is exact ``Decimal`` (Numeric column); the route validates field bounds BEFORE
+# the service runs (duration/max-lines >= 1, price >= 0) so a bad value surfaces
+# the invalid_plan code, not a raw 422.
 
 PLAN_NAME_MAX = 80
 PLAN_DURATION_MAX = PLAN_DAYS_MAX  # same ~100-year ceiling as plan renewal
-# Numeric(6,2) holds up to 9999.99; the antispam cooldown can only SLOW a tenant
-# below the account-wide floor, so a generous upper bound is harmless.
-PLAN_ANTISPAM_MAX = 9999
 PLAN_MAX_LINES_MAX = _PG_INT_MAX
 PLAN_PRICE_MAX = Decimal("99999999.99")  # Numeric(10,2) column ceiling
 
@@ -1185,7 +1279,6 @@ class CreatePlanRequest(BaseModel):
     # Money is exact (Decimal); pydantic v2 coerces JSON numbers to Decimal.
     price_usd: Decimal
     duration_days: int
-    antispam_seconds: Decimal
     max_lines_per_batch: int
     # Credits granted to the tenant on assign/renew (credits feature). 0 ⇒ a
     # time-only plan. Bounds-checked in _validate_plan_fields.
@@ -1204,7 +1297,6 @@ class UpdatePlanRequest(BaseModel):
     name: str | None = None
     price_usd: Decimal | None = None
     duration_days: int | None = None
-    antispam_seconds: Decimal | None = None
     max_lines_per_batch: int | None = None
     credits: int | None = None
     is_active: bool | None = None
@@ -1220,7 +1312,6 @@ class PlanOut(BaseModel):
     name: str
     price_usd: Decimal
     duration_days: int
-    antispam_seconds: Decimal
     max_lines_per_batch: int
     credits: int
     is_active: bool
@@ -1241,7 +1332,6 @@ def _plan_to_out(plan: Plan) -> PlanOut:
         name=plan.name,
         price_usd=plan.price_usd,
         duration_days=plan.duration_days,
-        antispam_seconds=plan.antispam_seconds,
         max_lines_per_batch=plan.max_lines_per_batch,
         credits=plan.credits,
         is_active=plan.is_active,
@@ -1254,19 +1344,15 @@ def _validate_plan_fields(
     *,
     price_usd: Decimal,
     duration_days: int,
-    antispam_seconds: Decimal,
     max_lines_per_batch: int,
     credits: int,
 ) -> None:
     """Field-bound policy (creation AND edit), surfaced as invalid_plan (400).
 
-    Bounds: ``antispam_seconds >= 1``, ``duration_days >= 1``,
-    ``max_lines_per_batch >= 1``, ``price_usd >= 0``, ``credits >= 0`` — plus
-    the column ceilings so a fat-finger value can't overflow Numeric/int4. The
-    message is field-specific Spanish copy (the invalid_plan contract accepts
-    an override)."""
-    if not Decimal(1) <= antispam_seconds <= PLAN_ANTISPAM_MAX:
-        raise invalid_plan("El antispam debe ser de al menos 1 segundo.")
+    Bounds: ``duration_days >= 1``, ``max_lines_per_batch >= 1``,
+    ``price_usd >= 0``, ``credits >= 0`` — plus the column ceilings so a
+    fat-finger value can't overflow Numeric/int4. The message is field-specific
+    Spanish copy (the invalid_plan contract accepts an override)."""
     if not 1 <= duration_days <= PLAN_DURATION_MAX:
         raise invalid_plan("La duración debe ser de al menos 1 día.")
     if not 1 <= max_lines_per_batch <= PLAN_MAX_LINES_MAX:
@@ -1317,7 +1403,6 @@ async def create_plan(
     _validate_plan_fields(
         price_usd=body.price_usd,
         duration_days=body.duration_days,
-        antispam_seconds=body.antispam_seconds,
         max_lines_per_batch=body.max_lines_per_batch,
         credits=body.credits,
     )
@@ -1326,7 +1411,6 @@ async def create_plan(
         name=body.name,
         price_usd=body.price_usd,
         duration_days=body.duration_days,
-        antispam_seconds=body.antispam_seconds,
         max_lines_per_batch=body.max_lines_per_batch,
         credits=body.credits,
         is_active=body.is_active,
@@ -1348,8 +1432,8 @@ async def update_plan(
     Only fields present in the body are written. The post-edit values (current
     row merged with the patch) are bounds-checked so an edit can't drop a field
     below its floor. Existing clients keep their already-derived ``expires_at``;
-    editing the plan changes only future assignments/renewals + the live
-    antispam cooldown — never retroactively (recorded scope).
+    editing the plan changes only future assignments/renewals — never
+    retroactively (recorded scope).
     """
     if not 0 < plan_id <= _PG_INT_MAX:
         raise plan_not_found()
@@ -1359,7 +1443,6 @@ async def update_plan(
     _validate_plan_fields(
         price_usd=fields.get("price_usd", current.price_usd),
         duration_days=fields.get("duration_days", current.duration_days),
-        antispam_seconds=fields.get("antispam_seconds", current.antispam_seconds),
         max_lines_per_batch=fields.get(
             "max_lines_per_batch", current.max_lines_per_batch
         ),

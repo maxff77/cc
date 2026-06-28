@@ -11,10 +11,10 @@ Pure ORM, flush not commit — callers own the transaction.
 from datetime import UTC, datetime
 from typing import NamedTuple
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Batch, BatchLine, Plan, User
+from app.db.models import Batch, BatchLine, User
 from app.db.repos import send_log as send_log_repo
 
 # Pause reasons for a cookie-mode batch (Phase 2). Both are an ORDINARY
@@ -285,10 +285,10 @@ class ActiveSender(NamedTuple):
     at most one live batch per tenant, so tenant ≡ batch in the rotation.
 
     ``antispam_seconds`` is the tenant's per-tenant scheduler COOLDOWN
-    (plan-catalog feature): the gap a tenant waits before being re-picked,
-    resolved as ``coalesce(client plan.antispam_seconds, 0.0)`` — a plan_id of
-    NULL means NO per-tenant cooldown (legacy behavior: the account-wide
-    ``g_min`` sleep is the SOLE pacer). It rides on the struct so
+    (antispam-per-user feature): the gap a tenant waits before being re-picked,
+    resolved as ``coalesce(User.antispam_seconds, default_antispam)`` for client
+    tenants and ``0.0`` for owner/admin "house" tenants (no client row → never
+    gated). The plan is NOT consulted. It rides on the struct so
     ``core.scheduler.pick_next`` stays DB-free: the cooldown only SLOWS a
     tenant on top of the global floor; it never speeds the account up.
     """
@@ -304,7 +304,7 @@ class ActiveSender(NamedTuple):
 
 
 async def active_senders(
-    session: AsyncSession, *, global_interval: float
+    session: AsyncSession, *, default_antispam: float
 ) -> list[ActiveSender]:
     """Tenants with a 'sending' batch that has ≥1 servable ('queued') line.
 
@@ -313,29 +313,33 @@ async def active_senders(
     the AC 2 paused-tenant exclusion needs no extra code, only the test.
 
     Each sender's ``antispam_seconds`` (the per-tenant cooldown) is resolved
-    here as ``coalesce(plan.antispam_seconds, 0.0)`` via the tenant → client
-    user → plan join — left joins so a tenant with no client row or a
-    ``plan_id`` of NULL falls back to 0.0: NO per-tenant cooldown, the legacy
-    behavior where the global ``g_min`` sleep alone paces the account. Only a
-    tenant WITH a plan carries a positive cooldown (and the plan's antispam is
-    itself floored at ≥1s on the way in). ``global_interval`` is accepted for
-    caller/stub compatibility but no longer gates a no-plan tenant — the global
-    floor lives in the worker's own pacing sleep, not in this per-tenant gate.
+    here from the tenant → its client user (LEFT join, ``role='client'``):
+    a CLIENT tenant gets ``coalesce(User.antispam_seconds, default_antispam)``
+    (the owner-set per-user override, else the global default ``default_antispam``
+    passed in); an owner/admin "house" tenant (no client row) gets ``0.0`` — no
+    per-tenant cooldown, never gated, so owner/admin priority stays responsive.
+    The plan is NOT consulted (antispam-per-user feature). The cooldown only
+    SLOWS a tenant on top of the global ``g_min`` floor; it never speeds the
+    shared account up.
     """
     has_queued = (
         select(BatchLine.id)
         .where(BatchLine.batch_id == Batch.id, BatchLine.state == LINE_QUEUED)
         .exists()
     )
-    # Resolve the cooldown via tenant → its client user → that user's plan.
-    # Both joins are OUTER: owner/admin "house" tenants carry no client row,
-    # and a client with plan_id NULL has no plan row — either way coalesce
-    # lands on 0.0 (no per-tenant cooldown; the global g_min sleep paces them,
-    # exactly as before the plan catalog). (One client per tenant — see
-    # ``users_repo.get_user_by_tenant`` — so the join never multiplies rows;
-    # the belt-and-braces ``role == 'client'`` predicate keeps a shared tenant
-    # from joining a staff row.)
-    antispam = func.coalesce(Plan.antispam_seconds, 0.0)
+    # Resolve the cooldown via the tenant → its client user (OUTER join,
+    # role='client'). A house tenant (owner/admin, no client row) → 0.0: never
+    # gated, so priority lanes stay responsive. A client row → its per-user
+    # override when set, else the global ``default_antispam`` passed in. The plan
+    # is never consulted (antispam-per-user feature). One client per tenant (see
+    # ``users_repo.get_user_by_tenant``) so the join never multiplies rows; the
+    # belt-and-braces ``role == 'client'`` predicate keeps a shared tenant from
+    # joining a staff row.
+    antispam = case(
+        (User.id.is_(None), 0.0),
+        (User.antispam_seconds.isnot(None), User.antispam_seconds),
+        else_=default_antispam,
+    )
     # Cookie-mode SERIALIZE GATE (Phase 2): a cookie-mode batch sends the
     # atomic ``.cookie``/``.amz`` pair then HOLDS the tenant until the bot's
     # verdict for that line arrives. While ``awaiting_verdict_until`` is set and
@@ -353,7 +357,6 @@ async def active_senders(
         .outerjoin(
             User, (User.tenant_id == Batch.tenant_id) & (User.role == "client")
         )
-        .outerjoin(Plan, Plan.id == User.plan_id)
         .where(Batch.state == STATE_SENDING, has_queued, awaiting_clear)
         .order_by(Batch.tenant_id)
     )

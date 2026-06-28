@@ -393,6 +393,17 @@ def invalid_send_interval() -> AppError:
     )
 
 
+def invalid_antispam() -> AppError:
+    # The global default antispam (1–30s) or a per-user override (0–30s, or null
+    # to clear) was out of range / not finite (antispam-per-user feature). 400 —
+    # the request is malformed; owner-only knob either way.
+    return AppError(
+        status_code=400,
+        code="invalid_antispam",
+        message="Indica un antispam válido (0–30 s; el default global va de 1 a 30).",
+    )
+
+
 def invalid_live_channel() -> AppError:
     return AppError(
         status_code=400,

@@ -22,13 +22,14 @@ import { StatePill } from "@/components/ui/state-pill";
 
 // Local response shapes mirror the backend plan schemas (snake_case,
 // end-to-end) — same explicit-interface idiom as the gates/users pages. Decimal
-// fields (price_usd, antispam_seconds) ride as number|string per the JSON.
+// fields (price_usd) ride as number|string per the JSON. Antispam is no longer a
+// plan field (antispam-per-user feature) — it's a global default + per-user
+// override, managed from the Usuarios page.
 interface PlanOut {
   id: number;
   name: string;
   price_usd: number | string;
   duration_days: number;
-  antispam_seconds: number | string;
   max_lines_per_batch: number;
   // Credits granted on assign/renew (credits feature). 0 ⇒ time-only plan.
   credits: number;
@@ -47,9 +48,9 @@ interface PlanListResponse {
 const PLANS_KEY = ["admin-plans"] as const;
 const PLAN_NAME_MAX = 80;
 
-// Field bounds mirror the backend `_validate_plan_fields`: antispam ≥ 1,
-// duration ≥ 1, max_lines ≥ 1, price ≥ 0. Validated client-side so the owner
-// gets an inline message instead of a raw 400 round-trip; backend authoritative.
+// Field bounds mirror the backend `_validate_plan_fields`: duration ≥ 1,
+// max_lines ≥ 1, price ≥ 0. Validated client-side so the owner gets an inline
+// message instead of a raw 400 round-trip; backend authoritative.
 function validatePlanName(raw: string): string | null {
   const name = raw.trim();
 
@@ -71,13 +72,6 @@ function validatePrice(raw: string): boolean {
   return /^\d+(\.\d+)?$/.test(v) && Number(v) >= 0;
 }
 
-// Decimal ≥ 1 (antispam seconds): same shape as price but with a floor.
-function validateAntispam(raw: string): boolean {
-  const v = raw.trim();
-
-  return /^\d+(\.\d+)?$/.test(v) && Number(v) >= 1;
-}
-
 function formatCreated(iso: string): string {
   return new Date(iso).toLocaleDateString("es", {
     year: "numeric",
@@ -92,19 +86,11 @@ function formatPrice(value: number | string): string {
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : String(value);
 }
 
-// Antispam may carry a trailing ".0" from the Decimal — trim it for display.
-function formatSeconds(value: number | string): string {
-  const n = Number(value);
-
-  return Number.isFinite(n) ? `${n}s` : `${value}s`;
-}
-
 // One draft of the plan form fields (create + edit share the shape).
 interface PlanDraft {
   name: string;
   price_usd: string;
   duration_days: string;
-  antispam_seconds: string;
   max_lines_per_batch: string;
   credits: string;
   is_active: boolean;
@@ -114,7 +100,6 @@ const EMPTY_DRAFT: PlanDraft = {
   name: "",
   price_usd: "",
   duration_days: "",
-  antispam_seconds: "",
   max_lines_per_batch: "",
   credits: "0",
   is_active: true,
@@ -133,8 +118,6 @@ function validateDraft(
     errors.price_usd = "Indica un precio válido (≥ 0).";
   if (!validateIntAtLeast(draft.duration_days, 1))
     errors.duration_days = "Indica un número entero de días (≥ 1).";
-  if (!validateAntispam(draft.antispam_seconds))
-    errors.antispam_seconds = "Indica los segundos (≥ 1).";
   if (!validateIntAtLeast(draft.max_lines_per_batch, 1))
     errors.max_lines_per_batch = "Indica el máximo de líneas (≥ 1).";
   if (!validateIntAtLeast(draft.credits, 0))
@@ -149,7 +132,6 @@ function draftToPayload(draft: PlanDraft) {
     name: draft.name.trim(),
     price_usd: Number(draft.price_usd),
     duration_days: Number(draft.duration_days),
-    antispam_seconds: Number(draft.antispam_seconds),
     max_lines_per_batch: Number(draft.max_lines_per_batch),
     credits: Number(draft.credits),
     is_active: draft.is_active,
@@ -219,8 +201,8 @@ export default function AdminPlansPage() {
                       </div>
                       <span className="font-mono text-[11px] text-muted tabular-nums">
                         {formatPrice(plan.price_usd)} · {plan.duration_days} d ·
-                        antispam {formatSeconds(plan.antispam_seconds)} · máx{" "}
-                        {plan.max_lines_per_batch} líneas · {plan.credits} créd.
+                        máx {plan.max_lines_per_batch} líneas · {plan.credits}{" "}
+                        créd.
                       </span>
                       <span className="font-mono text-[11px] text-[var(--faint)] tabular-nums">
                         {formatCreated(plan.created_at)}
@@ -287,30 +269,16 @@ function PlanFields({
         />
       </div>
 
-      <div className="flex gap-2">
-        <Field
-          required
-          className="flex-1"
-          error={errors.antispam_seconds}
-          label="Antispam (s)"
-          name="antispam_seconds"
-          placeholder="4"
-          type="number"
-          value={draft.antispam_seconds}
-          onChange={(v) => onChange("antispam_seconds", v)}
-        />
-        <Field
-          required
-          className="flex-1"
-          error={errors.max_lines_per_batch}
-          label="Máx. líneas"
-          name="max_lines_per_batch"
-          placeholder="500"
-          type="number"
-          value={draft.max_lines_per_batch}
-          onChange={(v) => onChange("max_lines_per_batch", v)}
-        />
-      </div>
+      <Field
+        required
+        error={errors.max_lines_per_batch}
+        label="Máx. líneas"
+        name="max_lines_per_batch"
+        placeholder="500"
+        type="number"
+        value={draft.max_lines_per_batch}
+        onChange={(v) => onChange("max_lines_per_batch", v)}
+      />
 
       <Field
         required
@@ -461,7 +429,6 @@ function EditPlanAction({
       name: plan.name,
       price_usd: String(Number(plan.price_usd)),
       duration_days: String(plan.duration_days),
-      antispam_seconds: String(Number(plan.antispam_seconds)),
       max_lines_per_batch: String(plan.max_lines_per_batch),
       credits: String(plan.credits),
       is_active: plan.is_active,

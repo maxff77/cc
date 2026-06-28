@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/.env, resolved from this file so the CWD the server is launched from
@@ -64,6 +65,25 @@ class Settings(BaseSettings):
     # now (no adaptive band). 4.0s is the owner's hard floor. A residual
     # SEND_INTERVAL_SECONDS in a VPS .env is harmless (extra="ignore").
     scheduler_g_min_seconds: float = 4.0
+
+    # Out-of-box per-tenant antispam cooldown for CLIENTS (antispam-per-user
+    # feature), used only until the owner sets one via /api/admin/antispam
+    # (system_settings key ``default_antispam_seconds``). Sits well above
+    # ``scheduler_g_min_seconds`` ON PURPOSE: a client who buys a lower override
+    # needs headroom below the default to actually send faster. Distinct from the
+    # g_min FLOOR — this is the per-tenant cooldown, not the account-wide pace.
+    scheduler_default_antispam_seconds: float = 15.0
+
+    @field_validator("scheduler_default_antispam_seconds")
+    @classmethod
+    def _clamp_default_antispam(cls, v: float) -> float:
+        # Keep the env-loaded default cooldown in the [1, 30] band the admin API
+        # (services.antispam.ANTISPAM_MIN/MAX) and scheduler enforce — 30 == the
+        # governor ceiling / ``_prune_cooldowns`` cutoff. A typo'd env override is
+        # clamped, not silently pushed past where the prune can still gate a
+        # tenant. (Tests neutralize the cooldown by assigning this field directly,
+        # which bypasses validation — validate_assignment is off — on purpose.)
+        return min(max(v, 1.0), 30.0)
 
     # --- Credential vault API key ----------------------------------------
     # Single shared key for the /api/credentials endpoints (header X-Api-Key).

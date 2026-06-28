@@ -16,7 +16,7 @@ export type PlanErrorCode =
     | "plan_in_use"
     | "batch_line_limit";
 
-export type ApiErrorCode = PlanErrorCode | (string & {});
+export type ApiErrorCode = PlanErrorCode | "invalid_antispam" | (string & {});
 
 // --- Hand-maintained: public (no-auth) landing endpoints. These live on the
 // `/api/public/*` router the backend exposes for the sales landing and carry
@@ -948,8 +948,6 @@ export interface components {
         PlanSummary: {
             /** Name */
             name: string;
-            /** Antispam Seconds */
-            antispam_seconds: number | string;
             /** Max Lines Per Batch */
             max_lines_per_batch: number;
         };
@@ -963,8 +961,6 @@ export interface components {
             price_usd: number | string;
             /** Duration Days */
             duration_days: number;
-            /** Antispam Seconds */
-            antispam_seconds: number | string;
             /** Max Lines Per Batch */
             max_lines_per_batch: number;
             /** Is Active */
@@ -990,8 +986,6 @@ export interface components {
             price_usd: number | string;
             /** Duration Days */
             duration_days: number;
-            /** Antispam Seconds */
-            antispam_seconds: number | string;
             /** Max Lines Per Batch */
             max_lines_per_batch: number;
             /**
@@ -1011,8 +1005,6 @@ export interface components {
             price_usd?: number | string | null;
             /** Duration Days */
             duration_days?: number | null;
-            /** Antispam Seconds */
-            antispam_seconds?: number | string | null;
             /** Max Lines Per Batch */
             max_lines_per_batch?: number | null;
             /** Is Active */
@@ -1146,6 +1138,8 @@ export interface components {
             expires_at: string | null;
             /** Is Blocked */
             is_blocked: boolean;
+            /** Antispam Seconds */
+            antispam_seconds?: number | string | null;
         };
         /** ValidationError */
         ValidationError: {

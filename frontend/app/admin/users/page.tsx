@@ -32,6 +32,9 @@ interface UserOut {
   // The tenant's credit balance (credits feature). Shown in the table; the
   // owner recharges it via the per-row action.
   credit_balance: number;
+  // Per-user antispam override (antispam-per-user feature): seconds, or null
+  // when the client falls back to the global default. Owner edits it per row.
+  antispam_seconds: number | string | null;
 }
 
 interface UserListResponse {
@@ -52,7 +55,6 @@ interface PlanOut {
   name: string;
   price_usd: number | string;
   duration_days: number;
-  antispam_seconds: number | string;
   max_lines_per_batch: number;
   is_active: boolean;
   created_at: string;
@@ -345,6 +347,9 @@ export default function AdminUsersPage() {
 
           {/* Owner knob: constant send interval (configurable pacing). */}
           {isOwner && <SendIntervalCard />}
+
+          {/* Owner knob: default per-tenant antispam cooldown. */}
+          {isOwner && <DefaultAntispamCard />}
 
           {/* Owner knob: Telegram channel for Amazon lives. */}
           {isOwner && <LiveChannelCard />}
@@ -871,6 +876,126 @@ function SendIntervalCard() {
   );
 }
 
+// --- Default antispam (antispam-per-user feature, owner only) --------------
+
+interface AntispamOut {
+  antispam_seconds: number;
+}
+
+const ANTISPAM_KEY = ["admin-antispam"] as const;
+const ANTISPAM_MIN = 1;
+const ANTISPAM_MAX = 30;
+
+function isValidAntispam(value: string): boolean {
+  const v = value.trim();
+  const n = Number(v);
+
+  return /^\d+(\.\d+)?$/.test(v) && n >= ANTISPAM_MIN && n <= ANTISPAM_MAX;
+}
+
+function DefaultAntispamCard() {
+  const queryClient = useQueryClient();
+  // null = untouched → render the server value; editing overrides it.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  const antispam = useQuery({
+    queryKey: ANTISPAM_KEY,
+    queryFn: () => api.get<AntispamOut>("/api/admin/antispam"),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (seconds: number) =>
+      api.put<AntispamOut>("/api/admin/antispam", {
+        antispam_seconds: seconds,
+      }),
+    onSuccess: (data) => {
+      setDraft(null);
+      setBanner(null);
+      queryClient.setQueryData(ANTISPAM_KEY, data);
+    },
+    onError: (err) => {
+      // invalid_antispam (and anything else) carries the server's Spanish copy.
+      setBanner(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos conectar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  const value = draft ?? String(antispam.data?.antispam_seconds ?? "");
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (mutation.isPending) return;
+    setError(null);
+    setBanner(null);
+
+    if (!isValidAntispam(value)) {
+      setError(
+        `Indica un antispam entre ${ANTISPAM_MIN} y ${ANTISPAM_MAX} segundos.`,
+      );
+
+      return;
+    }
+    mutation.mutate(Number(value));
+  }
+
+  return (
+    <SectionCard legend="Antispam por defecto" legendAs="h2">
+      <p className="mb-3 text-sm leading-relaxed text-muted">
+        Segundos entre envíos para CADA cliente que no haya comprado una
+        velocidad propia. Súbelo para dejar margen y poder vender un antispam más
+        bajo por cliente. No baja del piso de la cuenta. Aplica en vivo.
+      </p>
+
+      {banner && (
+        <Notice className="mb-3" status="danger">
+          {banner}
+        </Notice>
+      )}
+
+      {antispam.isError ? (
+        <Notice status="danger">
+          No pudimos cargar el antispam. Recarga la página.
+        </Notice>
+      ) : (
+        <form
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={onSubmit}
+        >
+          <Field
+            required
+            className="sm:w-40"
+            disabled={antispam.isLoading}
+            error={error}
+            label="Segundos por defecto"
+            name="default_antispam_seconds"
+            placeholder="15"
+            type="number"
+            value={value}
+            onChange={(v) => {
+              setDraft(v);
+              if (error) setError(null);
+            }}
+          />
+
+          <Btn
+            className="sm:mb-1"
+            disabled={mutation.isPending || antispam.isLoading}
+            type="submit"
+            variant="primary"
+          >
+            {mutation.isPending ? "Guardando…" : "Guardar"}
+          </Btn>
+        </form>
+      )}
+    </SectionCard>
+  );
+}
+
 // --- Live-forward channel (Amazon lives → Telegram, owner only) -----------
 
 interface LiveChannelOut {
@@ -1051,8 +1176,9 @@ function ClientLifecycleActions({
   return (
     <div className="flex flex-wrap gap-1.5">
       <RenewAction userId={user.id} onChanged={onChanged} />
-      {/* Recharge is owner-only (backend require_owner) — hidden for admins. */}
+      {/* Recharge + antispam are owner-only (backend require_owner). */}
       {isOwner && <RechargeCreditsAction user={user} onChanged={onChanged} />}
+      {isOwner && <AntispamOverrideAction user={user} onChanged={onChanged} />}
       <EditContactAction user={user} onChanged={onChanged} />
       <BlockAction user={user} onChanged={onChanged} />
       <ResetPasswordAction user={user} onChanged={onChanged} />
@@ -1137,6 +1263,115 @@ function RechargeCreditsAction({
             label="Saldo de créditos"
             name="credit_balance"
             placeholder="0"
+            type="number"
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              if (error) setError(null);
+            }}
+          />
+
+          {error && <Notice status="danger">{error}</Notice>}
+        </div>
+      </ConfirmDialog>
+    </>
+  );
+}
+
+// --- Per-user antispam override (antispam-per-user feature, owner only) -----
+// The owner sets a client's send cooldown when a faster speed is bought offline.
+// Empty input clears it → the client falls back to the global default. 0 = no
+// per-tenant cooldown (fastest); otherwise 0–30s. Mirrors the recharge dialog.
+
+function AntispamOverrideAction({
+  user,
+  onChanged,
+}: {
+  user: UserOut;
+  onChanged: () => void;
+}) {
+  const initial =
+    user.antispam_seconds == null ? "" : String(Number(user.antispam_seconds));
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.post<UserOut>(`/api/admin/users/${user.id}/antispam`, {
+        antispam_seconds: value.trim() === "" ? null : Number(value),
+      }),
+    onSuccess: () => {
+      setOpen(false);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => {
+      // invalid_antispam (and anything else) carries the server's Spanish copy.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos guardar. Intenta de nuevo.",
+      );
+    },
+  });
+
+  function submit() {
+    if (mutation.isPending) return;
+    const v = value.trim();
+
+    if (
+      v !== "" &&
+      (!/^\d+(\.\d+)?$/.test(v) || Number(v) < 0 || Number(v) > 30)
+    ) {
+      setError("Indica 0–30 s, o déjalo vacío para usar el default.");
+
+      return;
+    }
+    setError(null);
+    mutation.mutate();
+  }
+
+  return (
+    <>
+      <Btn
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          setValue(
+            user.antispam_seconds == null
+              ? ""
+              : String(Number(user.antispam_seconds)),
+          );
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        Antispam
+      </Btn>
+
+      <ConfirmDialog
+        confirmLabel={mutation.isPending ? "Guardando…" : "Guardar"}
+        confirmVariant="primary"
+        heading="Antispam del cliente"
+        open={open}
+        pending={mutation.isPending}
+        onConfirm={submit}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setError(null);
+        }}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-sm leading-relaxed text-muted">
+            Segundos entre los envíos de este cliente. Más bajo = más rápido (lo
+            “compra” el cliente). Vacío = usa el default global. 0 = sin cooldown
+            propio. El piso de la cuenta siempre manda.
+          </p>
+          <Field
+            label="Antispam (s) — vacío = default"
+            name="antispam_seconds"
+            placeholder="(default)"
             type="number"
             value={value}
             onChange={(v) => {

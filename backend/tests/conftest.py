@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from app.config import settings
 from app.core import alerts, capture, cookie_verdict, send_worker
 from app.core.scheduler import scheduler
 from app.core.telegram import gateway
@@ -36,6 +37,14 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 
 PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
+
+# The antispam-per-user feature gives every CLIENT a default per-tenant cooldown
+# (config ``scheduler_default_antispam_seconds`` — 15s in prod, for "buy faster"
+# headroom). Worker-driven integration tests fire many lines per client in a
+# rapid loop and would stall on that cooldown, so the suite pins the default to
+# 0.0 (the pre-feature pace — clients always re-pickable). Tests that exercise
+# the cooldown itself pass the value explicitly (see tests/test_antispam.py).
+settings.scheduler_default_antispam_seconds = 0.0
 
 
 class FakeGateway:

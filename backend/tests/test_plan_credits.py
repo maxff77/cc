@@ -37,7 +37,6 @@ PASSWORD = "seed-pass-123"  # noqa: S105 — throwaway test credential
 _PLAN_BASE = {
     "price_usd": "9.99",
     "duration_days": 30,
-    "antispam_seconds": "4",
     "max_lines_per_batch": 100,
 }
 

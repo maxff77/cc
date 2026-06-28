@@ -381,7 +381,7 @@ async def test_active_senders_skips_awaiting_tenant_other_tenant_still_sends(
 
         # active_senders must NOT return the awaiting cookie tenant.
         async with async_session_factory() as session:
-            senders = await batches_repo.active_senders(session, global_interval=1.0)
+            senders = await batches_repo.active_senders(session, default_antispam=0.0)
         sender_tenants = {s.tenant_id for s in senders}
         cookie_tenant = (await _batch_row(cookie_batch)).tenant_id
         assert cookie_tenant not in sender_tenants  # serialize hold
@@ -403,7 +403,7 @@ async def test_active_senders_skips_awaiting_tenant_other_tenant_still_sends(
             await batches_repo.clear_awaiting_verdict(session, b)
             await session.commit()
         async with async_session_factory() as session:
-            senders = await batches_repo.active_senders(session, global_interval=1.0)
+            senders = await batches_repo.active_senders(session, default_antispam=0.0)
         assert cookie_tenant in {s.tenant_id for s in senders}
     finally:
         await other_http.aclose()

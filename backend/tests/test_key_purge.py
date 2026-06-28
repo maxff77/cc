@@ -37,7 +37,6 @@ async def plan_id() -> AsyncIterator[int]:
             name=f"purge-plan-{uuid.uuid4().hex[:8]}",
             price_usd=Decimal("5.00"),
             duration_days=30,
-            antispam_seconds=Decimal("4"),
             max_lines_per_batch=100,
             credits=50,
             is_active=True,

@@ -90,6 +90,19 @@ class User(Base):
     plan_id: Mapped[int | None] = mapped_column(
         ForeignKey("plans.id", ondelete="RESTRICT"), nullable=True, index=True
     )
+    # Per-user antispam OVERRIDE (antispam-per-user feature): the scheduler
+    # cooldown for this client's tenant, resolved as
+    # ``coalesce(antispam_seconds, default_antispam_seconds)``. NULL ⇒ the
+    # client uses the owner's global default (system_settings); the owner sets a
+    # lower value here when a client buys a faster speed. Antispam is no longer a
+    # plan dimension — the plan is never consulted for it. The global ``g_min``
+    # floor still caps the shared account, so this can only re-pick the tenant
+    # faster, never push the account past ``1/g_min``. 0.0 = no per-tenant
+    # cooldown (the fastest a client can be sold). Owner/admin rows leave it NULL
+    # and are never gated (house tenants carry no cooldown).
+    antispam_seconds: Mapped[float | None] = mapped_column(
+        Numeric(6, 2), nullable=True
+    )
     # Telegram handle for renewal outreach (sin '@'; un solo formato canónico).
     # Optional — clientes previos quedan NULL hasta que se llene.
     contact: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -893,9 +906,10 @@ class Plan(Base):
     a delete while referenced: the ``User.plan_id`` FK is ``RESTRICT`` and the
     service raises ``plan_in_use``, so historical assignments never dangle.
 
-    Money/seconds use ``Numeric`` (exact, no float drift): ``price_usd`` for
-    display/billing, ``antispam_seconds`` as the per-tenant scheduler cooldown
-    (never below the global floor — the account-wide ban protector).
+    Money uses ``Numeric`` (exact, no float drift) for ``price_usd``. Antispam
+    is NO LONGER a plan field (antispam-per-user feature) — the per-tenant
+    cooldown now resolves from ``User.antispam_seconds`` over an owner-set
+    global default; the plan only carries duration/line-cap/credits/price.
     """
 
     __tablename__ = "plans"
@@ -917,7 +931,6 @@ class Plan(Base):
     name: Mapped[str] = mapped_column(String(80))
     price_usd: Mapped[float] = mapped_column(Numeric(10, 2))
     duration_days: Mapped[int] = mapped_column()
-    antispam_seconds: Mapped[float] = mapped_column(Numeric(6, 2))
     max_lines_per_batch: Mapped[int] = mapped_column()
     # Credits granted to a tenant when this plan is assigned/renewed (credits
     # feature). ADDED to the tenant's ``credit_balance`` each time (a renewal
