@@ -17,6 +17,7 @@ const OWNER: readonly NavLink[] = [
   { href: "/admin/plans", label: "Planes" },
   { href: "/admin/gates", label: "Gateways" },
   { href: "/admin/destinos", label: "Destinos" },
+  { href: "/admin/contactos", label: "Contactos" },
   { href: "/admin/monitor", label: "Monitoreo" },
 ];
 

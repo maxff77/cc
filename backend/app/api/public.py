@@ -28,6 +28,7 @@ from app.db.base import get_session
 from app.db.models import Plan
 from app.db.repos import gates as gates_repo
 from app.db.repos import plans as plans_repo
+from app.services import support_contacts as support_contacts_service
 
 # A plan with at least this many credits is shown as "unlimited" (∞). This is a
 # pure display convention — no DB column, no engine change (the owner sets the
@@ -66,6 +67,19 @@ class PublicPlanOut(BaseModel):
 class PublicPlansResponse(BaseModel):
     items: list[PublicPlanOut]
     total: int
+
+
+class SupportContactOut(BaseModel):
+    """One Telegram support handle (canonical: no '@', no t.me prefix)."""
+
+    handle: str
+
+
+class SupportContactsResponse(BaseModel):
+    """Ordered support handles — index 0 is the primary contact. Shared shape
+    for the public read here and the owner read/write in ``api/admin``."""
+
+    contacts: list[SupportContactOut]
 
 
 @router.get("/gates", response_model=PublicGatesResponse)
@@ -113,4 +127,20 @@ async def public_plans(
     plans = await plans_repo.list_active(session)
     return PublicPlansResponse(
         items=[_plan_to_public_out(p) for p in plans], total=len(plans)
+    )
+
+
+@router.get("/support-contacts", response_model=SupportContactsResponse)
+async def public_support_contacts(
+    session: AsyncSession = Depends(get_session),
+) -> SupportContactsResponse:
+    """The owner-managed Telegram support handles (no auth).
+
+    Marketing-safe: these handles are already rendered in the logged-out
+    ``/login`` HTML. Falls back to the pre-feature defaults when unset (the
+    service owns that). Feeds the client ``useSupportContacts`` hook.
+    """
+    handles = await support_contacts_service.get_handles(session)
+    return SupportContactsResponse(
+        contacts=[SupportContactOut(handle=h) for h in handles]
     )

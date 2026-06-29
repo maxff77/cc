@@ -65,16 +65,20 @@ from app.errors import (
     plan_not_found,
     renewal_would_shorten,
     session_not_found,
+    support_contacts_empty,
     telegram_unauthorized,
     tenant_not_found,
+    too_many_support_contacts,
     user_not_found,
 )
+from app.api.public import SupportContactOut, SupportContactsResponse
 from app.services import admission as admission_service
 from app.services import antispam as antispam_service
 from app.services import auth as auth_service
 from app.services import live_forward as live_forward_service
 from app.services import pacing as pacing_service
 from app.services import plans as plans_service
+from app.services import support_contacts as support_contacts_service
 from app.services import users as users_service
 
 logger = logging.getLogger(__name__)
@@ -1647,4 +1651,68 @@ async def get_tenant_session_detail(
             session, target_session.id, status=responses_repo.STATUS_OK
         ),
         cc_total=len(cc),
+    )
+
+
+# --- Support contacts (editable-support-contacts) -------------------------
+#
+# Owner-only: the Telegram handles clients see on /login, /expired, and the
+# in-app "Soporte" link. Stored GLOBALLY in system_settings (no tenant), read
+# publicly by /api/public/support-contacts. Handles go through the same
+# ``_normalize_contact`` single source of truth as the per-user contact; the
+# canonical list (deduped, first-wins, 1..MAX) is what we persist.
+
+
+class UpdateSupportContactsRequest(BaseModel):
+    # Raw handles (a bare '@user' or a pasted 't.me/user' link is accepted);
+    # normalized/validated in the route so a bad value surfaces invalid_contact
+    # (400), not a pydantic 422.
+    handles: list[str]
+
+
+@router.get("/support-contacts", response_model=SupportContactsResponse)
+async def get_support_contacts(
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> SupportContactsResponse:
+    """Current support handles (owner view — same shape the public read uses)."""
+    handles = await support_contacts_service.get_handles(session)
+    return SupportContactsResponse(
+        contacts=[SupportContactOut(handle=h) for h in handles]
+    )
+
+
+@router.put("/support-contacts", response_model=SupportContactsResponse)
+async def update_support_contacts(
+    body: UpdateSupportContactsRequest,
+    actor: User = Depends(require_owner),
+    session: AsyncSession = Depends(get_session),
+) -> SupportContactsResponse:
+    """Replace the support-contact list (owner-only).
+
+    Each handle is normalized via the shared ``_normalize_contact`` (blank rows
+    dropped, a malformed one raises ``invalid_contact``); the result is deduped
+    case-insensitively (first wins). An all-empty result raises
+    ``support_contacts_empty``; more than ``MAX_SUPPORT_CONTACTS`` raises
+    ``too_many_support_contacts``.
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in body.handles:
+        handle = _normalize_contact(raw)
+        if handle is None:
+            continue
+        key = handle.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(handle)
+    if not normalized:
+        raise support_contacts_empty()
+    if len(normalized) > support_contacts_service.MAX_SUPPORT_CONTACTS:
+        raise too_many_support_contacts()
+    await support_contacts_service.set_handles(session, normalized)
+    await session.commit()
+    return SupportContactsResponse(
+        contacts=[SupportContactOut(handle=h) for h in normalized]
     )
