@@ -56,3 +56,12 @@ dsbuild/dist/index.js
 amazon_addresses.png
 amazon_cookies.txt
 amazon_profile/
+# multi-cuenta: creds en claro + perfiles/cookies por identidad -> NUNCA commitear
+accounts.txt
+proxies.txt
+profiles/
+cookies/
+used_addresses.txt
+used_emails.txt
+proxy_state.json
+.amz_profiles/

@@ -1,0 +1,11 @@
+name = "email-inbound"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "EMAILS_DB"
+database_name = "emails"
+database_id = "46998e32-08b8-4de4-8649-9aa084128086"
+
+# AUTH_TOKEN se setea como secret, NO aqui: wrangler secret put AUTH_TOKEN
+# Sirve para el webhook (POST /inbound?key=AUTH_TOKEN) y la lectura (GET /emails, Bearer).
