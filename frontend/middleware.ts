@@ -185,6 +185,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/admin/users", request.url));
   }
 
+  // /admin/contactos is owner-only (editable-support-contacts — the handles are
+  // a global, all-clients-facing surface): same gate as the catalogs above.
+  // Admins → /admin/users; clients were already bounced to /app.
+  const isContactosPath =
+    request.nextUrl.pathname === "/admin/contactos" ||
+    request.nextUrl.pathname.startsWith("/admin/contactos/");
+
+  if (isContactosPath && me.role !== "owner") {
+    return NextResponse.redirect(new URL("/admin/users", request.url));
+  }
+
   return NextResponse.next();
 }
 

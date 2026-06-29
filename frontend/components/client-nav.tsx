@@ -15,8 +15,9 @@ import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import { siteConfig, telegramHref } from "@/config/site";
+import { telegramHref } from "@/config/site";
 import { navLinks } from "@/config/nav";
+import { useSupportContacts } from "@/hooks/use-support-contacts";
 import { useLiveBatch, type BatchSurfaceState } from "@/lib/ws";
 import { Mark, Wordmark } from "@/components/ui/logo";
 import { VersionPill } from "@/components/ui/version-badge";
@@ -167,6 +168,9 @@ export function ClientNav() {
   // Soporte + Cerrar sesión collapse into the ⋯ overflow menu.
   const [keyOpen, setKeyOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Owner-managed support handle (index 0 = primary). Falls back to the static
+  // default while loading (the hook owns that).
+  const primaryContact = useSupportContacts()[0];
   // Build-time version stamp for the overflow menu's "Versión" row.
   const version = process.env.NEXT_PUBLIC_APP_VERSION;
 
@@ -311,21 +315,21 @@ export function ClientNav() {
                       <div className="mx-2 mb-[5px] mt-0.5 h-px bg-[var(--separator)]" />
                     </>
                   )}
-                  {!isStaff && siteConfig.contacts[0] && (
+                  {!isStaff && primaryContact && (
                     <button
                       className="tap-44 rx-focus flex w-full items-center gap-[11px] rounded-[9px] px-3 py-[11px] text-left text-[13.5px] text-foreground transition-colors hover:bg-surface-tertiary"
                       type="button"
                       onClick={() => {
                         setMenuOpen(false);
                         window.open(
-                          telegramHref(siteConfig.contacts[0].handle),
+                          telegramHref(primaryContact.handle),
                           "_blank",
                           "noopener,noreferrer",
                         );
                       }}
                     >
                       <Icon className="text-accent" name="phone" size={17} />
-                      Soporte · @{siteConfig.contacts[0].handle}
+                      Soporte · @{primaryContact.handle}
                     </button>
                   )}
                   {!isStaff && (

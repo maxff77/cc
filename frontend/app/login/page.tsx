@@ -3,7 +3,8 @@
 import { useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import { siteConfig, telegramHref } from "@/config/site";
+import { telegramHref } from "@/config/site";
+import { useSupportContacts } from "@/hooks/use-support-contacts";
 import { ContactPanel } from "@/components/contact-panel";
 import { Logo, Mark } from "@/components/ui/logo";
 import { VersionPill } from "@/components/ui/version-badge";
@@ -40,6 +41,7 @@ export default function LoginPage() {
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [submitting, setSubmitting] = useState(false);
+  const supportContacts = useSupportContacts();
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -167,7 +169,7 @@ export default function LoginPage() {
 
             <p className="m-0 flex flex-wrap items-center justify-center gap-2">
               <LabelCaps>Soporte Telegram</LabelCaps>
-              {siteConfig.contacts.map((c) => (
+              {supportContacts.map((c) => (
                 <a
                   key={c.handle}
                   className="rounded-[var(--radius-sm)] border border-[var(--field-border)] px-2 py-0.5 font-mono text-[12px] text-accent no-underline transition-colors hover:border-accent"

@@ -254,6 +254,25 @@ def telegram_target_unresolvable() -> AppError:
     )
 
 
+# --- Support contacts (editable-support-contacts) ------------------------
+
+
+def support_contacts_empty() -> AppError:
+    return AppError(
+        status_code=400,
+        code="support_contacts_empty",
+        message="Necesitas al menos un contacto de soporte.",
+    )
+
+
+def too_many_support_contacts() -> AppError:
+    return AppError(
+        status_code=400,
+        code="too_many_support_contacts",
+        message="Máximo 8 contactos de soporte.",
+    )
+
+
 # --- Codes this story (2.3) defines --------------------------------------
 
 
