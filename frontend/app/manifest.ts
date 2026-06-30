@@ -9,7 +9,14 @@ import { siteConfig } from "@/config/site";
 // standalone window), nothing more.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    id: "/app",
+    // Matches start_url. Android keys its WebAPK registry on `id`; the old
+    // `/app` value got a poisoned mint entry from the earlier redirecting
+    // start_url, and clearing site data does NOT clear that registry — so the
+    // phone kept reusing the stuck "installing…" mint. A fresh id (== start_url,
+    // the conventional single-entry config) forces a clean mint. Trade-off: the
+    // laptop's existing `/app`-id install is orphaned (keeps working, won't
+    // auto-update); reinstall to adopt the new identity.
+    id: "/",
     name: siteConfig.name,
     short_name: siteConfig.shortName,
     description: siteConfig.description,
@@ -17,7 +24,7 @@ export default function manifest(): MetadataRoute.Manifest {
     // server fetches start_url without the session cookie, and a redirect there
     // hangs the install ("installing…" forever). "/" is the public landing
     // (200); middleware bounces a logged-in launch on to /app, a logged-out one
-    // shows the landing → login. (`id` stays /app so existing installs persist.)
+    // shows the landing → login.
     start_url: "/",
     scope: "/",
     display: "standalone",
