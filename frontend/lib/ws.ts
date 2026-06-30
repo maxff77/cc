@@ -49,7 +49,7 @@ export interface ResponseRow {
   // re-delivery (same id) carried by a snapshot/session.active re-seed race.
   responseId: number;
   messageId: number;
-  status: "ok" | "rejected";
+  status: "ok" | "rejected" | "neutral";
   text: string;
   capturedAt: string;
   nueva: boolean;
@@ -145,7 +145,7 @@ export interface LiveBatchState {
 interface SnapshotResponseRow {
   id: number;
   message_id: number;
-  status: "ok" | "rejected";
+  status: "ok" | "rejected" | "neutral";
   text: string;
   created_at: string;
 }
@@ -255,8 +255,8 @@ interface ResponseCapturedData {
   session_id: number;
   batch_id: number | null;
   message_id: number;
-  status: "ok" | "rejected";
-  previous_status: "ok" | "rejected" | null;
+  status: "ok" | "rejected" | "neutral";
+  previous_status: "ok" | "rejected" | "neutral" | null;
   edited: boolean;
   text: string;
   new_cc: string[];

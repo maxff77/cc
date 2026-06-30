@@ -26,6 +26,10 @@ KIND_CC = "cc"
 # Effective status of a 'full' revision; NULL on 'cc' rows.
 STATUS_OK = "ok"
 STATUS_REJECTED = "rejected"
+# A captured reply with NO ✅/❌ glyph (the bot's terminal no-verdict answer).
+# Visible ONLY in Completa; never counted as Aprobada/Rechazada, never billed,
+# never extracted to CC, and invisible to "esperando respuesta".
+STATUS_NEUTRAL = "neutral"
 
 # Hard cap on an INDEXED CC value (review 3-1): ``uq_responses_session_msg_cc``
 # is a btree including the raw text and Postgres rejects index rows over ~2704
@@ -375,6 +379,10 @@ async def responded_line_count(
     stmt = select(func.count(func.distinct(Response.line_id))).where(
         Response.capture_session_id == capture_session_id,
         Response.kind == KIND_FULL,
+        # Neutral (no-verdict) rows are NOT "answered" — a line whose only reply
+        # carried no ✅/❌ stays esperando, identical to the pre-neutral behavior
+        # (a ⏳ used to write no row at all). Only ✅/❌ resolve a line.
+        Response.status.in_((STATUS_OK, STATUS_REJECTED)),
     )
     count: int = (await session.execute(stmt)).scalar_one()
     return count

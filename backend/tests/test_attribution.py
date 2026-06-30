@@ -269,25 +269,32 @@ async def test_reply_maps_to_exact_tenant_batch_line_and_saves_cc(
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_first_intermediate_revision_without_emoji_is_not_persisted(
+async def test_first_no_verdict_reply_persists_neutral_row(
     client_user: tuple[AsyncClient, User],
     gate: dict,
     fake_gateway: FakeGateway,
     events: list[tuple],
 ) -> None:
-    """Legacy parity (recorded decision): the first ⏳ produces no row and no
-    event — its later ✅ edit arrives with reply_to intact and attributes."""
+    """A first reply WITHOUT ✅/❌ (the bot's terminal no-verdict answer) is now
+    persisted as a NEUTRAL 'full' row + emitted, so Completa shows it instead of
+    silently dropping it (the bug). It does NOT enter the unmatched bucket
+    (attributed). A later ✅ edit appends an 'ok' revision over it (collapses
+    per message_id), and its previous_status is the neutral state."""
     http, _ = client_user
     await _post_batch(http, "uno", gate["id"])
     await _drain()
 
     await capture.process_incoming(
         IncomingReply(
-            message_id=4001, reply_to_msg_id=1, text="⏳ Procesando", edited=False
+            message_id=4001, reply_to_msg_id=1, text="No disponible", edited=False
         )
     )
-    assert await _full_rows(4001) == []
-    assert _captured(events) == []
+    fulls = await _full_rows(4001)
+    assert [f.status for f in fulls] == ["neutral"]
+    captured = _captured(events)
+    assert len(captured) == 1
+    assert captured[0][2]["status"] == "neutral"
+    assert captured[0][2]["previous_status"] is None
     assert capture._unmatched_total == 0  # attributed — NOT the bucket
 
     await capture.process_incoming(
@@ -299,10 +306,11 @@ async def test_first_intermediate_revision_without_emoji_is_not_persisted(
         )
     )
     fulls = await _full_rows(4001)
-    assert [f.status for f in fulls] == ["ok"]
+    assert [f.status for f in fulls] == ["neutral", "ok"]
     captured = _captured(events)
-    assert len(captured) == 1
-    assert captured[0][2]["previous_status"] is None
+    assert len(captured) == 2
+    assert captured[1][2]["status"] == "ok"
+    assert captured[1][2]["previous_status"] == "neutral"
 
 
 # --- Edits (AC 5) -------------------------------------------------------------

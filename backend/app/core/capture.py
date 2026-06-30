@@ -456,9 +456,29 @@ async def process_incoming(reply: IncomingReply) -> None:
             status = responses_repo.STATUS_OK
         elif "❌" in clean_text:
             status = responses_repo.STATUS_REJECTED
-        else:
-            # Intermediate edit (⏳) keeps the previous state (legacy parity).
+        elif previous_status is not None:
+            # No-verdict EDIT of a message that already has a revision: keep the
+            # prior state (legacy parity — a ⏳ edit never downgrades a ✅/❌, and
+            # a neutral stays neutral). A text change still appends a revision
+            # below, exactly like an ok/rejected edit does.
+            # ponytail: a chatty no-verdict bot (e.g. "10%"→"50%"→"90%") thus
+            # writes one neutral revision per distinct text — same as ✅/❌ edits,
+            # and the one-row-per-message collapse keeps the display clean. If raw
+            # row volume ever matters, early-return here when previous is neutral.
             status = previous_status
+        else:
+            # FIRST reply to this message carries no ✅/❌ glyph: the bot's
+            # terminal no-verdict answer. Persist a NEUTRAL row so Completa shows
+            # it instead of silently dropping it (was: ``status = None`` ⇒ no
+            # row ⇒ invisible). A real ⏳ intermediate also lands here, but
+            # Completa collapses per (chat_id, message_id) and ws.ts upserts by
+            # message_id, so its later ✅/❌ edit overwrites this row in place —
+            # no double row, no noise. Neutral is invisible to esperando-respuesta
+            # (the awaiting gate ``_answered_full_exists`` counts only ok/rejected),
+            # Aprobadas, Datos CC and credits (all gated on STATUS_OK). Cookie- and
+            # special-mode never reach here — they short-circuit above and still
+            # write nothing.
+            status = responses_repo.STATUS_NEUTRAL
 
         # No-op edit (legacy parity): the stored text AND the status are both
         # unchanged. Status is part of the discriminator — NOT just the text —

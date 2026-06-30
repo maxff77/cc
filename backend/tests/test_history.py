@@ -148,13 +148,13 @@ async def test_history_groups_only_approved_latest_by_gate(
     http, _ = client_user
 
     # Gate A: 4 lines → message_id 1..4. One pure ✅, one ✅→❌ (latest ❌),
-    # one ⏳-only (writes nothing), one ❌-only.
+    # one ⏳-only (writes a neutral row — excluded from history, status≠ok), one ❌-only.
     await _post_batch(http, "a1\na2\na3\na4", gate["id"])
     await _drain()
     await _capture(1, 1, "✅ Aprobada CC: 4111 Status x")  # stays ✅
     await _capture(2, 2, "✅ Aprobada CC: 4222 Status y")  # then edited ❌:
     await _capture(2, 2, "❌ Declinada", edited=True)  # latest ❌ ⇒ excluded
-    await _capture(3, 3, "⏳ procesando")  # ⏳-only ⇒ no row ⇒ excluded
+    await _capture(3, 3, "⏳ procesando")  # ⏳-only ⇒ neutral row, status≠ok ⇒ excluded
     await _capture(4, 4, "❌ Declinada")  # never ✅ ⇒ excluded
 
     # Gate B (created AFTER A's captures so it is the most recent activity):

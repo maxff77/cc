@@ -52,7 +52,7 @@ interface SupportSessionsResponse {
 interface SessionResponseRow {
   id: number;
   message_id: number;
-  status: "ok" | "rejected";
+  status: "ok" | "rejected" | "neutral";
   text: string;
   created_at: string;
 }

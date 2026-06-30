@@ -86,7 +86,8 @@ async def test_delivered_lines_are_awaiting_until_first_reply(
     fake_gateway: FakeGateway,
 ) -> None:
     """Three lines sent, none answered → 3 esperando; the first ✅/❌ per line
-    drops it by one. ⏳ keeps the count (no row persisted)."""
+    drops it by one. A no-verdict reply (now a neutral row) does NOT resolve a
+    line — esperando stays put (neutral is excluded from _answered_full_exists)."""
     http, user = client_user
     await _post_batch(http, "uno\ndos\ntres", gate["id"])
     await _drain()  # FakeGateway message ids 1, 2, 3
@@ -106,7 +107,8 @@ async def test_delivered_lines_are_awaiting_until_first_reply(
     )
     assert await _awaiting(user.tenant_id) == 1
 
-    # A pure ⏳ persists NO row → line 3 is still awaiting (count unchanged).
+    # A pure ⏳ persists a NEUTRAL row, which does NOT "answer" the line → line 3
+    # is still awaiting (count unchanged — neutral ∉ _answered_full_exists).
     await capture.process_incoming(
         IncomingReply(
             message_id=1103, reply_to_msg_id=3, text="⏳ proc", edited=False

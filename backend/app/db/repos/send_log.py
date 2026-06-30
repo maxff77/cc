@@ -26,7 +26,7 @@ from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Batch, BatchLine, Response, SendLog
-from app.db.repos.responses import KIND_FULL
+from app.db.repos.responses import KIND_FULL, STATUS_OK, STATUS_REJECTED
 
 
 async def record_intent(session: AsyncSession, line: BatchLine) -> SendLog:
@@ -173,7 +173,15 @@ def _answered_full_exists():  # type: ignore[no-untyped-def]
     (shared by the awaiting work-list and its beyond-window counter)."""
     return (
         select(Response.id)
-        .where(Response.line_id == SendLog.line_id, Response.kind == KIND_FULL)
+        .where(
+            Response.line_id == SendLog.line_id,
+            Response.kind == KIND_FULL,
+            # Only a real verdict answers a line — a NEUTRAL (no-glyph) row does
+            # NOT: the line stays "esperando" (parity with the old ⏳-writes-no-row
+            # behavior) AND the reconciler keeps it on the work-list so a MISSED
+            # ✅/❌ edit on a so-far-no-verdict message can still be recovered.
+            Response.status.in_((STATUS_OK, STATUS_REJECTED)),
+        )
         .exists()
     )
 

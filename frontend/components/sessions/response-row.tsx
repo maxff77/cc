@@ -11,7 +11,7 @@ import clsx from "clsx";
 export interface DataRowProps {
   left: string;
   text: string;
-  status?: "ok" | "rejected";
+  status?: "ok" | "rejected" | "neutral";
   nueva: boolean;
 }
 
@@ -56,15 +56,26 @@ export function DataRow({ left, text, status, nueva }: DataRowProps) {
         <span
           className={clsx(
             "shrink-0 text-[12px] leading-none",
-            status === "ok" ? "text-success" : "text-danger",
+            status === "ok"
+              ? "text-success"
+              : status === "rejected"
+                ? "text-danger"
+                : "text-muted",
           )}
         >
-          {/* The ✓/✕ glyph carries the state visually; the sr-only word
-              carries it as TEXT so screen readers announce the verdict
-              (the glyph alone is silent/ambiguous to assistive tech). */}
-          <span aria-hidden>{status === "ok" ? "✓" : "✕"}</span>
+          {/* The glyph carries the state visually; the sr-only word carries it
+              as TEXT so screen readers announce the verdict (the glyph alone is
+              silent/ambiguous to assistive tech). `neutral` = a terminal reply
+              the bot sent with NO ✅/❌ — a muted · so Completa still shows it. */}
+          <span aria-hidden>
+            {status === "ok" ? "✓" : status === "rejected" ? "✕" : "·"}
+          </span>
           <span className="sr-only">
-            {status === "ok" ? "Aprobada" : "Rechazada"}
+            {status === "ok"
+              ? "Aprobada"
+              : status === "rejected"
+                ? "Rechazada"
+                : "Sin veredicto"}
           </span>
         </span>
       )}
