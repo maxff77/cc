@@ -13,9 +13,12 @@ export default function manifest(): MetadataRoute.Manifest {
     name: siteConfig.name,
     short_name: siteConfig.shortName,
     description: siteConfig.description,
-    // The cockpit IS "the app". Logged-out launches hit auth middleware and
-    // land on /login inside the standalone window.
-    start_url: "/app",
+    // Must return 200 to an UNAUTHENTICATED fetch: Android's WebAPK minting
+    // server fetches start_url without the session cookie, and a redirect there
+    // hangs the install ("installing…" forever). "/" is the public landing
+    // (200); middleware bounces a logged-in launch on to /app, a logged-out one
+    // shows the landing → login. (`id` stays /app so existing installs persist.)
+    start_url: "/",
     scope: "/",
     display: "standalone",
     // Match the dark default shell (layout renders className="dark") so the
