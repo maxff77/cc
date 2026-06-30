@@ -8,6 +8,7 @@
 // the backdrop mounts its dimmed `--calm` variant. The louder default backdrop
 // stays on landing/login/register.
 import { ClientNav } from "@/components/client-nav";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { RxBackdrop } from "@/components/ui/rx-backdrop";
 
 export default function ClientLayout({
@@ -24,6 +25,7 @@ export default function ClientLayout({
     <div className="rx-calm relative flex min-h-screen flex-col lg:h-[100dvh] lg:min-h-0 lg:overflow-hidden">
       <RxBackdrop className="rx-backdrop--calm" />
       <ClientNav />
+      <InstallPrompt />
       <main className="relative z-[1] flex-1 client-shell lg:min-h-0 overflow-y-hidden">
         {children}
       </main>
