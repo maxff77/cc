@@ -41,13 +41,15 @@ async def plan_factory(ctx: dict):
     owner: AsyncClient = ctx["owner_client"]  # type: ignore[assignment]
     created: list[int] = []
 
-    async def make(*, default: bool = False, credits: int = 50) -> int:
+    async def make(
+        *, default: bool = False, credits: int = 50, max_lines: int = 100
+    ) -> int:
         async with async_session_factory() as s:
             plan = Plan(
                 name=f"plan-{uuid.uuid4().hex[:8]}",
                 price_usd=Decimal("5.00"),
                 duration_days=30,
-                max_lines_per_batch=100,
+                max_lines_per_batch=max_lines,
                 credits=credits,
                 is_active=True,
             )
@@ -226,6 +228,71 @@ async def test_claim_existing_client_keeps_plan(ctx, plan_factory):
         assert body["plan_id"] == premium      # kept, NOT downgraded to bronze
         assert body["days_added"] == 3
         assert await _balance(user.tenant_id) == 20  # untouched
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_claim_upgrades_existing_client_to_bigger_keys_plan(ctx, plan_factory):
+    # Keys plan is the BIGGER tier: an existing client on a smaller plan is
+    # upgraded so the line cap follows the keys plan (the reported bug).
+    small = await plan_factory(max_lines=5)
+    big = await plan_factory(default=True, max_lines=10)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=3)
+
+    http, user = await _new_client(expires_in_days=5)
+    try:
+        async with async_session_factory() as s:
+            await s.execute(
+                update(User).where(User.id == user.id).values(plan_id=small)
+            )
+            await s.commit()
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        assert res.json()["plan_id"] == big    # upgraded 5 -> 10 lines
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_claim_does_not_downgrade_to_smaller_keys_plan(ctx, plan_factory):
+    # Keys plan is the SMALLER tier: an existing client on a bigger plan keeps
+    # it — a gift key must never strip lines from a premium client.
+    await plan_factory(default=True, max_lines=5)
+    big = await plan_factory(max_lines=10)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=3)
+
+    http, user = await _new_client(expires_in_days=5)
+    try:
+        async with async_session_factory() as s:
+            await s.execute(
+                update(User).where(User.id == user.id).values(plan_id=big)
+            )
+            await s.commit()
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        assert res.json()["plan_id"] == big    # kept; NOT downgraded to small
+    finally:
+        await http.aclose()
+        await cleanup_users({user.email})
+
+
+async def test_claim_grants_current_default_not_mint_snapshot(ctx, plan_factory):
+    # Mint under a small default, then re-point the keys plan to a bigger one:
+    # the PENDING key grants the CURRENT default (live), not its mint snapshot.
+    small = await plan_factory(default=True, max_lines=5)
+    admin: AsyncClient = ctx["admin_client"]
+    key = await _gen_key(admin, days=3)            # snapshots `small`
+    assert key["plan_id"] == small
+    big = await plan_factory(default=True, max_lines=10)  # switch keys plan
+
+    http, user = await _new_client(expires_in_days=5)  # plan-less
+    try:
+        res = await http.post("/api/keys/claim", json={"code": key["code"]})
+        assert res.status_code == 200, res.text
+        assert res.json()["plan_id"] == big        # current default, not snapshot
     finally:
         await http.aclose()
         await cleanup_users({user.email})

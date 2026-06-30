@@ -1,11 +1,12 @@
 """Gift-key service: generate / claim / revoke (gift-keys feature).
 
-A key carries only ``days`` + a SNAPSHOT of the owner-designated default
-("basic") plan; admins never choose the tier (anti-abuse). Claiming adds days
-(``compute_renewed_expiry`` — stacks on an active plan, grants from today on a
-lapsed one) and NEVER touches credits; it assigns the basic plan ONLY to a
-plan-less client (a new/just-registered user), leaving an existing client's
-plan intact.
+A key carries only ``days`` + a snapshot of the default plan at mint; admins
+never choose the tier (anti-abuse). Claiming adds days (``compute_renewed_expiry``
+— stacks on an active plan, grants from today on a lapsed one) and NEVER touches
+credits; it grants the CURRENT keys plan (the live default, re-resolved at claim
+— not the snapshot, so re-pointing the keys plan updates pending keys),
+upgrade-only: a plan-less client takes it; an existing client takes it only when
+it is a bigger tier (more lines), never a downgrade.
 
 GLOBAL like the plan/gate catalogs — no tenant scope here; the authorization
 boundary is the route's role gate. Each op flushes; the router commits.
@@ -83,7 +84,7 @@ async def generate(
 async def claim(
     session: AsyncSession, *, user_id: int, code: str
 ) -> tuple[User, int, int, int | None]:
-    """Redeem ``code`` for ``user_id``: +days, basic plan if plan-less, +credits.
+    """Redeem ``code`` for ``user_id``: +days, current keys plan (upgrade-only), +credits.
 
     Locks the user row AND the key row (``FOR UPDATE``) so concurrent claims of
     the same key serialize — exactly one wins; the rest see a non-active status.
@@ -111,11 +112,31 @@ async def claim(
         raise key_already_claimed()
     # Days/plan only when the key grants days. A credits-only key (days==0)
     # must never assign a plan (it would expire instantly) nor rewind expiry.
-    # Assign the basic plan ONLY to a plan-less client; an existing client keeps
-    # their tier and only gains days.
     if key.days > 0:
-        if user.plan_id is None:
-            user.plan_id = key.plan_id
+        # Grant the CURRENT keys plan (the live default), NOT the mint-time
+        # snapshot — so changing which plan the keys use updates every pending
+        # key, not just the ones minted afterwards. Fall back to the snapshot
+        # only if the owner cleared the default after minting this key.
+        grant_plan = await plans_repo.get_default(session)
+        if grant_plan is None:
+            grant_plan = await plans_repo.get_by_id(session, key.plan_id)
+        # Assign when plan-less, or UPGRADE to the better tier. Never DOWNGRADE
+        # an existing client: switching the keys plan to a smaller tier must not
+        # strip lines from someone who already holds a bigger one (the line cap
+        # is read live from user.plan_id at send time).
+        # ponytail: "better" is compared by max_lines_per_batch only — the field
+        # the owner tunes; widen the metric if credits/duration ever matter.
+        if grant_plan is not None:
+            current = (
+                await plans_repo.get_by_id(session, user.plan_id)
+                if user.plan_id is not None
+                else None
+            )
+            if (
+                current is None
+                or grant_plan.max_lines_per_batch > current.max_lines_per_batch
+            ):
+                user.plan_id = grant_plan.id
         user.expires_at = plans_service.compute_renewed_expiry(
             user.expires_at, key.days
         )
