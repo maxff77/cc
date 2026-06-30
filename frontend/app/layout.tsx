@@ -3,6 +3,7 @@ import { Metadata, Viewport } from "next";
 import clsx from "clsx";
 
 import { Providers } from "./providers";
+import { RegisterSW } from "./register-sw";
 
 import { siteConfig } from "@/config/site";
 import { fontDisplay, fontMono, fontSans } from "@/config/fonts";
@@ -20,6 +21,18 @@ export const metadata: Metadata = {
       { url: "/brand/favicon-192.png", type: "image/png", sizes: "192x192" },
     ],
     apple: { url: "/brand/favicon-180.png", sizes: "180x180" },
+  },
+  // PWA install on iOS Safari (Add to Home Screen → standalone, no Safari
+  // chrome). The apple-touch-icon comes from icons.apple above. The web app
+  // manifest is auto-linked by app/manifest.ts — do not set metadata.manifest.
+  // statusBarStyle "default" keeps content BELOW the status bar (no notch
+  // overlap) and lets iOS pick readable glyphs in light OR dark theme.
+  // "black-translucent" would float content under the bar and require
+  // viewport-fit=cover + env(safe-area-inset-top) CSS we don't ship.
+  appleWebApp: {
+    capable: true,
+    title: siteConfig.shortName,
+    statusBarStyle: "default",
   },
 };
 
@@ -52,6 +65,7 @@ export default function RootLayout({
         )}
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>
+          <RegisterSW />
           {children}
         </Providers>
       </body>

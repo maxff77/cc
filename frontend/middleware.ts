@@ -213,6 +213,6 @@ export const config = {
   // Exclusions are anchored to a path segment (`login$`/`login/`) so unrelated
   // routes like `/logins` or `/api-keys` are still gated.
   matcher: [
-    "/((?!login(?:/|$)|register(?:/|$)|expired(?:/|$)|api(?:/|$)|ws(?:/|$)|_next/|.+\\.(?:js|css|map|json|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|txt|xml)$).*)",
+    "/((?!login(?:/|$)|register(?:/|$)|expired(?:/|$)|api(?:/|$)|ws(?:/|$)|_next/|.+\\.(?:js|css|map|json|webmanifest|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|txt|xml)$).*)",
   ],
 };
