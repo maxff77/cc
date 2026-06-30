@@ -81,6 +81,13 @@ _SIGNALLING_VERDICTS = frozenset(
     }
 )
 
+# Substring marking an INTERMEDIATE "still working" reply (no verdict yet) the
+# operator does not want surfaced in Completa. A no-glyph reply containing it is
+# DROPPED (no row, no emit) instead of persisting a neutral row; its later ✅/❌
+# edit still attributes and persists. Case-sensitive literal (the bot sends
+# "Processing"); widen here if the bot's wording changes.
+_INTERMEDIATE_MARKER = "Processing"
+
 logger = logging.getLogger(__name__)
 
 # Delay before retrying the SAME item after a DB failure. A module constant,
@@ -405,6 +412,9 @@ async def process_incoming(reply: IncomingReply) -> None:
         )
         previous_status = previous.status if previous is not None else None
         status: str | None
+        # Set in the no-glyph branch for an intermediate "Processing" update —
+        # forces the no-write path (no row, no emit) so it never reaches Completa.
+        drop_intermediate = False
         # Cookie-mode classification state (only meaningful when cookie_mode):
         # the verdict kind handed to the worker, the CC values extracted from
         # the Approved card, and whether this reply marks the line failed.
@@ -456,6 +466,13 @@ async def process_incoming(reply: IncomingReply) -> None:
             status = responses_repo.STATUS_OK
         elif "❌" in clean_text:
             status = responses_repo.STATUS_REJECTED
+        elif _INTERMEDIATE_MARKER in clean_text:
+            # Intermediate "Processing" update (operator request): NOT a terminal
+            # no-verdict answer — drop it so it never reaches Completa. Treat as
+            # the legacy pure ⏳: keep previous status, write nothing, no emit. Its
+            # later ✅/❌ edit arrives with reply_to intact and persists normally.
+            status = previous_status
+            drop_intermediate = True
         elif previous_status is not None:
             # No-verdict EDIT of a message that already has a revision: keep the
             # prior state (legacy parity — a ⏳ edit never downgrades a ✅/❌, and
@@ -494,11 +511,11 @@ async def process_incoming(reply: IncomingReply) -> None:
         ):
             return
 
-        if status is None:
-            # First ⏳ with no emoji: no row (legacy parity — recorded
-            # decision). Its later ✅/❌ edit arrives with reply_to intact and
-            # attributes the same. Commit anyway: resolve() may have
-            # backfilled a pre-3.1 batch binding.
+        if status is None or drop_intermediate:
+            # First ⏳ with no emoji, OR an intermediate "Processing" update: no
+            # row (legacy parity — recorded decision). Its later ✅/❌ edit arrives
+            # with reply_to intact and attributes the same. Commit anyway:
+            # resolve() may have backfilled a pre-3.1 batch binding.
             await session.commit()
             return
 

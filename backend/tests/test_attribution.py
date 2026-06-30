@@ -313,6 +313,44 @@ async def test_first_no_verdict_reply_persists_neutral_row(
     assert captured[1][2]["previous_status"] == "neutral"
 
 
+@pytest.mark.asyncio(loop_scope="session")
+async def test_intermediate_processing_reply_is_dropped(
+    client_user: tuple[AsyncClient, User],
+    gate: dict,
+    fake_gateway: FakeGateway,
+    events: list[tuple],
+) -> None:
+    """An intermediate reply containing "Processing" is NOT surfaced: it writes
+    no row and emits no event (operator request — these are not terminal
+    answers). Its later ✅ edit attributes and persists normally."""
+    http, _ = client_user
+    await _post_batch(http, "uno", gate["id"])
+    await _drain()
+
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=4101, reply_to_msg_id=1, text="⏳ Processing…", edited=False
+        )
+    )
+    assert await _full_rows(4101) == []
+    assert _captured(events) == []
+    assert capture._unmatched_total == 0  # attributed — NOT the bucket
+
+    await capture.process_incoming(
+        IncomingReply(
+            message_id=4101,
+            reply_to_msg_id=1,
+            text="✅ Aprobada CC: 8888 Status x",
+            edited=True,
+        )
+    )
+    fulls = await _full_rows(4101)
+    assert [f.status for f in fulls] == ["ok"]
+    captured = _captured(events)
+    assert len(captured) == 1
+    assert captured[0][2]["previous_status"] is None  # the dropped ⏳ left no state
+
+
 # --- Edits (AC 5) -------------------------------------------------------------
 
 
