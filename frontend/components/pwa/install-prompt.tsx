@@ -12,23 +12,29 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-// Permanent per-browser dismissal. ponytail: a localStorage flag, not a dated
-// re-prompt — the browser's own install affordance stays available if they
-// change their mind. Add a TTL only if we ever want to nudge again.
+// Time-boxed dismissal, not permanent: we store the dismiss timestamp and
+// re-nudge after DISMISS_TTL_MS. This also RESETS legacy installs for free —
+// the old code stored "1", which Number()s to epoch 1ms (1970), always older
+// than the TTL → the banner reappears once for everyone who ever closed it.
+// The browser's own install affordance stays available regardless.
 const DISMISS_KEY = "rx-install-dismissed";
+const DISMISS_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // localStorage can throw (Safari Lockdown, blocked storage, some webviews). A
 // banner must never crash the cockpit, so both paths swallow failures.
 function wasDismissed(): boolean {
   try {
-    return localStorage.getItem(DISMISS_KEY) !== null;
+    const raw = localStorage.getItem(DISMISS_KEY);
+    if (raw === null) return false;
+    const at = Number(raw); // legacy "1" / junk → 1 or NaN → treated as expired
+    return Number.isFinite(at) && Date.now() - at < DISMISS_TTL_MS;
   } catch {
     return false;
   }
 }
 function rememberDismissed(): void {
   try {
-    localStorage.setItem(DISMISS_KEY, "1");
+    localStorage.setItem(DISMISS_KEY, String(Date.now()));
   } catch {
     // storage blocked — the banner just reappears next load. Acceptable.
   }

@@ -8,6 +8,13 @@ import { RegisterSW } from "./register-sw";
 import { siteConfig } from "@/config/site";
 import { fontDisplay, fontMono, fontSans } from "@/config/fonts";
 
+// Cache-bust the icons by URL. Browsers keep a SEPARATE favicon cache that
+// ignores the max-age=0 header Next serves for /public, so a byte swap at a
+// stable path can show the old tab icon for weeks. Pinning ?v=<app version>
+// (inlined from package.json via next.config.mjs) makes it a genuinely new URL
+// on every release — bump package.json's version whenever the icon changes.
+const V = process.env.NEXT_PUBLIC_APP_VERSION ?? "1";
+
 export const metadata: Metadata = {
   title: {
     default: siteConfig.name,
@@ -16,11 +23,15 @@ export const metadata: Metadata = {
   description: siteConfig.description,
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/brand/favicon-32.png", type: "image/png", sizes: "32x32" },
-      { url: "/brand/favicon-192.png", type: "image/png", sizes: "192x192" },
+      { url: `/favicon.ico?v=${V}`, sizes: "any" },
+      { url: `/brand/favicon-32.png?v=${V}`, type: "image/png", sizes: "32x32" },
+      {
+        url: `/brand/favicon-192.png?v=${V}`,
+        type: "image/png",
+        sizes: "192x192",
+      },
     ],
-    apple: { url: "/brand/favicon-180.png", sizes: "180x180" },
+    apple: { url: `/brand/favicon-180.png?v=${V}`, sizes: "180x180" },
   },
   // PWA install on iOS Safari (Add to Home Screen → standalone, no Safari
   // chrome). The apple-touch-icon comes from icons.apple above. The web app

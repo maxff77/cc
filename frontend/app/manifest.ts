@@ -8,6 +8,12 @@ import { siteConfig } from "@/config/site";
 // a live WebSocket relay, so this only makes the app INSTALLABLE (icon +
 // standalone window), nothing more.
 export default function manifest(): MetadataRoute.Manifest {
+  // ?v=<app version> (inlined from package.json) busts the browser favicon
+  // cache AND changes the manifest icon URLs, so an installed PWA re-mints its
+  // home-screen icon on the next update check. Bump package.json when the icon
+  // bytes change. Keep in sync with the same-purpose ?v= in app/layout.tsx.
+  const v = process.env.NEXT_PUBLIC_APP_VERSION ?? "1";
+
   return {
     // Matches start_url. Android keys its WebAPK registry on `id`; the old
     // `/app` value got a poisoned mint entry from the earlier redirecting
@@ -37,14 +43,14 @@ export default function manifest(): MetadataRoute.Manifest {
     dir: "ltr",
     icons: [
       {
-        src: "/brand/favicon-192.png",
+        src: `/brand/favicon-192.png?v=${v}`,
         sizes: "192x192",
         type: "image/png",
         purpose: "any",
       },
       {
         // Reuses the existing 512×512 brand mark — no generated assets.
-        src: "/brand/ranger-x-mark.png",
+        src: `/brand/ranger-x-mark.png?v=${v}`,
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
